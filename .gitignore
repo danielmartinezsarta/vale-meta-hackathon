@@ -7,3 +7,4 @@ node_modules/
 *.tsbuildinfo
 .worktrees/
 next-env.d.ts
+AGENTS.md
