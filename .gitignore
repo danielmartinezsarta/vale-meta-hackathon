@@ -3,3 +3,6 @@
 !.env.example
 .DS_Store
 node_modules/
+.next/
+*.tsbuildinfo
+.worktrees/

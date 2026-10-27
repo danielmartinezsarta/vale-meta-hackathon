@@ -6,6 +6,8 @@ Built for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/m
 
 ## What was built during the hackathon
 
+2026-10-27: base app (Next.js + TypeScript) with a one-tap microphone screen.
+
 Everything in this repository. The repository was created on October 26, 2026 with only this README and the license; all code starts on October 27, 2026. No code from earlier projects is included.
 
 ## License
