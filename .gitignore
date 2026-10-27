@@ -6,3 +6,4 @@ node_modules/
 .next/
 *.tsbuildinfo
 .worktrees/
+next-env.d.ts
