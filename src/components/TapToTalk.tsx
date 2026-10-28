@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { startCapture } from "@/lib/capture";
 import { LevelMeter } from "@/components/LevelMeter";
 import { parseSseStream } from "@/lib/sse";
+import { speak, stopSpeaking } from "@/lib/speak";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
@@ -69,6 +70,7 @@ export function TapToTalk() {
 
   const stopSession = useCallback(() => {
     sessionRef.current = false;
+    stopSpeaking();
     window.clearTimeout(quietTimerRef.current);
     controllersRef.current.forEach((controller) => {
       try {
@@ -305,6 +307,7 @@ export function TapToTalk() {
             if (typeof message.text !== "string") return;
             repliesRef.current.set(id, message.text);
             patchTurn(id, { reply: message.text });
+            speak(message.text);
             break;
           case "notice":
             if (typeof message.message !== "string") return;
@@ -587,6 +590,7 @@ export function TapToTalk() {
               onReply: (text) => {
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
+                speak(text);
               },
               onNotice: (message, code) => {
                 // E-VAD notices pass the silence gate; anything else shows directly.
@@ -636,6 +640,7 @@ export function TapToTalk() {
           },
           onSpeechStart: () => {
             if (!sessionRef.current) return;
+            stopSpeaking();
             window.clearTimeout(quietTimerRef.current);
             // New speech dismisses only the still-open turn's reply.
             const dismissed: number[] = [];
