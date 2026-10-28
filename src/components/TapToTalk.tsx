@@ -177,6 +177,10 @@ export function TapToTalk() {
         ended: boolean;
         settled: boolean;
         failed: boolean;
+        /** The single buffered-POST retry already ran for this turn. */
+        postRetried: boolean;
+        /** Audio as it stood when speech ended (no inter-turn tail). */
+        endFrames: Int16Array[] | null;
       }
       const transports = new Map<number, TurnTransport>();
 
@@ -209,6 +213,8 @@ export function TapToTalk() {
           ended: false,
           settled: false,
           failed: false,
+          postRetried: false,
+          endFrames: null,
         });
         setTurns((prev) => [
           ...prev,
@@ -233,7 +239,15 @@ export function TapToTalk() {
       /** Same turn states as the SSE path, over the live bridge protocol. */
       const handleBridgeMessage = (id: number, raw: unknown) => {
         const transport = transports.get(id);
-        if (!transport || transport.settled || !sessionRef.current) return;
+        // After the buffered-POST retry took over, late socket frames are
+        // stale: ignoring them keeps a single agent call for the turn.
+        if (
+          !transport ||
+          transport.settled ||
+          transport.failed ||
+          !sessionRef.current
+        )
+          return;
         let message: {
           type?: string;
           transcript?: unknown;
@@ -388,7 +402,9 @@ export function TapToTalk() {
           if (!transport.opened) {
             // Never connected: fall back to the buffered single POST with
             // the full audio (Safari-safe path, same as before the bridge).
+            // That POST is the turn's one buffered retry.
             transport.failed = true;
+            transport.postRetried = true;
             try {
               socket.close();
             } catch {
@@ -414,6 +430,27 @@ export function TapToTalk() {
             }, 1000);
             return;
           }
+          if (!transport.postRetried && !finalReceivedRef.current.has(id)) {
+            // Still no final after the reopen: retry the turn ONCE over the
+            // buffered POST under its own id, so the reply lands on the same
+            // bubble. Safe from duplicate agent calls: the bridge never got
+            // a final, so the server never ran the agent for this turn, and
+            // failed=true discards any late socket frames.
+            transport.postRetried = true;
+            transport.failed = true;
+            try {
+              socket.close();
+            } catch {
+              /* already closed */
+            }
+            const retryFrames =
+              transport.endFrames && transport.endFrames.length > 0
+                ? transport.endFrames.slice()
+                : transport.frames.slice();
+            if (id === currentId) pending.splice(0);
+            postTurn(id, retryFrames.length > 0 ? retryFrames : pending.splice(0));
+            return;
+          }
           failTurn(id, "Connection lost. Tap to try again.", "E-NET");
         };
       };
@@ -424,7 +461,12 @@ export function TapToTalk() {
         const socket = transport?.socket ?? null;
         // From here on the turn is over: any socket that (re)opens for it
         // must immediately send endStream after replaying the audio.
-        if (transport) transport.ended = true;
+        if (transport) {
+          transport.ended = true;
+          // Freeze the retry audio here: frames arriving in the gap before
+          // the next turn belong to that turn, not to this retry.
+          transport.endFrames = transport.frames.slice();
+        }
         if (
           socket &&
           transport &&
