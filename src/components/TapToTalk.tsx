@@ -23,6 +23,17 @@ function isPermissionDenied(error: unknown): boolean {
   );
 }
 
+function hasVisibleContent(turn: {
+  interim: string;
+  final: string | null;
+  reply: string | null;
+}): boolean {
+  return (
+    (turn.final ?? turn.interim).trim() !== "" ||
+    (turn.reply?.trim() ?? "") !== ""
+  );
+}
+
 export function TapToTalk() {
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -86,6 +97,13 @@ export function TapToTalk() {
 
   const removeTurn = useCallback((id: number) => {
     setTurns((prev) => prev.filter((turn) => turn.id !== id));
+  }, []);
+
+  /** Drop a closed turn that never showed anything. */
+  const pruneIfEmpty = useCallback((id: number) => {
+    setTurns((prev) =>
+      prev.filter((turn) => turn.id !== id || hasVisibleContent(turn)),
+    );
   }, []);
 
   /** End the whole session with a plain-language banner (tap to retry). */
@@ -295,6 +313,8 @@ export function TapToTalk() {
               }
             }
             settledTurnsRef.current.add(id);
+            // Turns that never showed anything leave no row behind.
+            pruneIfEmpty(id);
             // Fresh silence window for the gap before the next turn;
             // skipped when a newer turn is already collecting so a
             // slow reply cannot cut it off.
@@ -524,6 +544,8 @@ export function TapToTalk() {
                 controllersRef.current.delete(controller);
                 if (!sessionRef.current) return;
                 settledTurnsRef.current.add(id);
+                // Turns that never showed anything leave no row behind.
+                pruneIfEmpty(id);
                 // Fresh silence window for the gap before the next turn;
                 // skipped when a newer turn is already collecting so a
                 // slow reply cannot cut it off.
@@ -616,7 +638,7 @@ export function TapToTalk() {
       openTurn();
       await ended;
     },
-    [patchTurn, removeTurn, endSessionWithAlert],
+    [patchTurn, removeTurn, pruneIfEmpty, endSessionWithAlert],
   );
 
   const handleTap = useCallback(async () => {
@@ -663,11 +685,11 @@ export function TapToTalk() {
       {status === "live" && <LevelMeter level={level} />}
 
       {status === "live" &&
-        turns.every((turn) => !turn.final && !turn.interim && !turn.reply) &&
+        turns.every((turn) => !hasVisibleContent(turn)) &&
         !notice && <p>Your microphone is on. Go ahead, I&apos;m listening.</p>}
 
       <ol aria-label="Conversation turns">
-        {turns.map((turn) => (
+        {turns.filter(hasVisibleContent).map((turn) => (
           <li key={turn.id}>
             {(turn.final ?? turn.interim) !== "" && (
               <p>
