@@ -30,7 +30,9 @@ export function TapToTalk() {
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);
   const turnIdRef = useRef(0);
-  const abortRef = useRef<AbortController | null>(null);
+  const controllersRef = useRef(new Set<AbortController>());
+  const quietTimerRef = useRef(0);
+  const sessionEndRef = useRef<(() => void) | null>(null);
   const captureRef = useRef<{ stop: () => void } | null>(null);
   const repliesRef = useRef(new Map<number, string>());
   const finalReceivedRef = useRef(new Set<number>());
@@ -40,8 +42,15 @@ export function TapToTalk() {
 
   const stopSession = useCallback(() => {
     sessionRef.current = false;
-    abortRef.current?.abort();
-    abortRef.current = null;
+    window.clearTimeout(quietTimerRef.current);
+    controllersRef.current.forEach((controller) => {
+      try {
+        controller.abort();
+      } catch {
+        /* already aborted */
+      }
+    });
+    controllersRef.current.clear();
     try {
       captureRef.current?.stop();
     } catch {
@@ -50,6 +59,8 @@ export function TapToTalk() {
     captureRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    sessionEndRef.current?.();
+    sessionEndRef.current = null;
     setStatus("idle");
   }, []);
 
@@ -67,8 +78,15 @@ export function TapToTalk() {
   const endSessionWithAlert = useCallback(
     (message: string) => {
       sessionRef.current = false;
-      abortRef.current?.abort();
-      abortRef.current = null;
+      window.clearTimeout(quietTimerRef.current);
+      controllersRef.current.forEach((controller) => {
+        try {
+          controller.abort();
+        } catch {
+          /* already aborted */
+        }
+      });
+      controllersRef.current.clear();
       try {
         captureRef.current?.stop();
       } catch {
@@ -82,180 +100,192 @@ export function TapToTalk() {
       repliesRef.current.clear();
       setAlert(message);
       setStatus("idle");
+      sessionEndRef.current?.();
+      sessionEndRef.current = null;
     },
     [],
   );
 
-  const runOneTurn = useCallback(
+  const runSession = useCallback(
     async (stream: MediaStream): Promise<void> => {
-      const id = turnIdRef.current++;
-      setTurns((prev) => [...prev, { id, interim: "", final: null, reply: null }]);
-
-      return new Promise<void>((resolve) => {
-        let posted = false;
-        let settled = false;
-        const settle = (fn: () => void) => {
-          if (settled) return;
-          settled = true;
-          settledTurnsRef.current.add(id);
-          window.clearTimeout(quietTimer);
-          try {
-            capture.stop();
-          } catch {
-            /* already stopped */
-          }
-          if (captureRef.current === capture) captureRef.current = null;
-          fn();
-        };
-        // A failed turn ends the session so the user can tap to retry.
-        // A turn that already showed its final keeps its bubble (test 25).
-        const failTurn = (message: string) => {
-          settle(() => {
-            if (!finalReceivedRef.current.has(id)) removeTurn(id);
-            endSessionWithAlert(message);
-            resolve();
-          });
-        };
-        const quietTimer = window.setTimeout(() => {
-          settle(() => {
-            removeTurn(id);
-            setNotice("I didn't hear anything. Just speak and I'll listen.");
-            resolve();
-          });
-        }, NO_SPEECH_TIMEOUT_MS);
-
-        const postTurn = (frames: Int16Array[]) => {
-          // One buffered body per turn: Safari on iOS rejects streaming
-          // request bodies (`duplex: "half"`), so the audio never left the
-          // phone. The route reads the full body the same way.
-          const total = frames.reduce((n, frame) => n + frame.length, 0);
-          const pcm = new Int16Array(total);
-          let offset = 0;
-          for (const frame of frames) {
-            pcm.set(frame, offset);
-            offset += frame.length;
-          }
-          const body = new Blob([pcm.buffer as ArrayBuffer], {
-            type: "audio/l16",
-          });
-          const controller = new AbortController();
-          abortRef.current = controller;
-          setNotice(null);
-          void fetch("/api/voice", {
-            method: "POST",
-            headers: { "content-type": "audio/l16" },
-            body,
-            signal: controller.signal,
-          })
-            .then(async (response) => {
-              if (!response.ok) {
-                let message = "Connection lost. Tap to try again.";
-                try {
-                  const problem = (await response.json()) as {
-                    error?: unknown;
-                  };
-                  if (typeof problem.error === "string") message = problem.error;
-                } catch {
-                  /* keep the default */
-                }
-                failTurn(message);
-                return;
-              }
-              if (!response.body) {
-                failTurn("Connection lost. Tap to try again.");
-                return;
-              }
-              await parseSseStream(response.body, {
-                onInterim: (transcript) => patchTurn(id, { interim: transcript }),
-                onFinal: (transcript) => {
-                  // Do not settle here: reply/notice/error follow on the
-                  // same stream; the turn ends at `done`.
-                  finalReceivedRef.current.add(id);
-                  patchTurn(id, { final: transcript, interim: "" });
-                },
-                onErrorEvent: (message) => failTurn(message),
-                onReplyDelta: (text) =>
-                  patchTurn(id, {
-                    reply: `${
-                      repliesRef.current.get(id) ?? ""
-                    }${text}`,
-                  }),
-                onReply: (text) => {
-                  repliesRef.current.set(id, text);
-                  patchTurn(id, { reply: text });
-                },
-                onNotice: (message) => setNotice(message),
-                onDone: () => settle(() => resolve()),
-              });
-            })
-            .catch(() => {
-              if (controller.signal.aborted) {
-                settle(() => resolve());
-                return;
-              }
-              failTurn("Connection lost. Tap to try again.");
-            });
-        };
-
-        const pending: Int16Array[] = [];
-        const capture = startCapture(
-          stream,
-          {
-            onFrame: (frame) => {
-              if (!posted) pending.push(frame.slice());
-            },
-            onSpeechStart: () => {
-              if (!sessionRef.current) return;
-              // Interruption (test 18): new speech dismisses only the
-              // still-open turn's reply. Finished turns keep theirs, so a
-              // multi-turn conversation accumulates (tests 11, B2).
-              // No POST here: frames buffer until speech ends (single body).
-              const dismissed: number[] = [];
-              setTurns((prev) =>
-                prev.map((turn) =>
-                  turn.reply && !settledTurnsRef.current.has(turn.id)
-                    ? (dismissed.push(turn.id), { ...turn, reply: null })
-                    : turn,
-                ),
-              );
-              for (const turnId of dismissed) {
-                repliesRef.current.delete(turnId);
-              }
-            },
-            onSpeechEnd: () => {
-              if (posted) return;
-              posted = true;
-              postTurn(pending.splice(0));
-              try {
-                capture.stop();
-              } catch {
-                /* already stopped */
-              }
-            },
-          },
-          { endSilenceMs: 1200 },
-        );
-
-        // Stash the capture handle so session stop can tear it down.
-        captureRef.current = capture;
+      sessionRef.current = true;
+      // One capture for the whole session (bug 2): stopping the mic after
+      // every turn left a gap silent while the POST/SSE round-trip ran, and
+      // anything said in that gap was lost. Turns are delimited by VAD
+      // events only; the capture stops when the session stops.
+      let resolveSession: (() => void) | null = null;
+      const ended = new Promise<void>((resolve) => {
+        resolveSession = resolve;
       });
+      sessionEndRef.current = () => resolveSession?.();
+
+      const pending: Int16Array[] = [];
+      let currentId = -1;
+      let posted = false;
+
+      const armQuiet = () => {
+        window.clearTimeout(quietTimerRef.current);
+        quietTimerRef.current = window.setTimeout(() => {
+          if (!sessionRef.current) return;
+          removeTurn(currentId);
+          setNotice("I didn't hear anything. Just speak and I'll listen.");
+          openTurn();
+        }, NO_SPEECH_TIMEOUT_MS);
+      };
+
+      const openTurn = (arm = true) => {
+        const id = turnIdRef.current++;
+        currentId = id;
+        posted = false;
+        pending.length = 0;
+        setTurns((prev) => [
+          ...prev,
+          { id, interim: "", final: null, reply: null },
+        ]);
+        if (arm) armQuiet();
+      };
+
+      // A failed turn ends the session so the user can tap to retry.
+      // A turn that already showed its final keeps its bubble (test 25).
+      const failTurn = (id: number, message: string) => {
+        if (!finalReceivedRef.current.has(id)) removeTurn(id);
+        endSessionWithAlert(message);
+      };
+
+      const postTurn = (id: number, frames: Int16Array[]) => {
+        // One buffered body per turn: Safari on iOS rejects streaming
+        // request bodies (`duplex: "half"`), so the audio never left the
+        // phone. The route reads the full body the same way.
+        const total = frames.reduce((n, frame) => n + frame.length, 0);
+        const pcm = new Int16Array(total);
+        let offset = 0;
+        for (const frame of frames) {
+          pcm.set(frame, offset);
+          offset += frame.length;
+        }
+        const body = new Blob([pcm.buffer as ArrayBuffer], {
+          type: "audio/l16",
+        });
+        const controller = new AbortController();
+        controllersRef.current.add(controller);
+        setNotice(null);
+        void fetch("/api/voice", {
+          method: "POST",
+          headers: { "content-type": "audio/l16" },
+          body,
+          signal: controller.signal,
+        })
+          .then(async (response) => {
+            if (!response.ok) {
+              let message = "Connection lost. Tap to try again.";
+              try {
+                const problem = (await response.json()) as {
+                  error?: unknown;
+                };
+                if (typeof problem.error === "string") message = problem.error;
+              } catch {
+                /* keep the default */
+              }
+              controllersRef.current.delete(controller);
+              failTurn(id, message);
+              return;
+            }
+            if (!response.body) {
+              controllersRef.current.delete(controller);
+              failTurn(id, "Connection lost. Tap to try again.");
+              return;
+            }
+            await parseSseStream(response.body, {
+              onInterim: (transcript) => patchTurn(id, { interim: transcript }),
+              onFinal: (transcript) => {
+                // Do not settle here: reply/notice/error follow on the
+                // same stream; the turn ends at `done`.
+                finalReceivedRef.current.add(id);
+                patchTurn(id, { final: transcript, interim: "" });
+              },
+              onErrorEvent: (message) => {
+                controllersRef.current.delete(controller);
+                failTurn(id, message);
+              },
+              onReplyDelta: (text) =>
+                patchTurn(id, {
+                  reply: `${
+                    repliesRef.current.get(id) ?? ""
+                  }${text}`,
+                }),
+              onReply: (text) => {
+                repliesRef.current.set(id, text);
+                patchTurn(id, { reply: text });
+              },
+              onNotice: (message) => setNotice(message),
+              onDone: () => {
+                controllersRef.current.delete(controller);
+                if (!sessionRef.current) return;
+                settledTurnsRef.current.add(id);
+                // Fresh silence window for the gap before the next turn;
+                // skipped when a newer turn is already collecting so a
+                // slow reply cannot cut it off.
+                if (id === currentId) armQuiet();
+              },
+            });
+          })
+          .catch(() => {
+            controllersRef.current.delete(controller);
+            if (controller.signal.aborted) {
+              settledTurnsRef.current.add(id);
+              return;
+            }
+            failTurn(id, "Connection lost. Tap to try again.");
+          });
+      };
+
+      const capture = startCapture(
+        stream,
+        {
+          onFrame: (frame) => {
+            if (!sessionRef.current) return;
+            pending.push(frame.slice());
+          },
+          onSpeechStart: () => {
+            if (!sessionRef.current) return;
+            window.clearTimeout(quietTimerRef.current);
+            // Interruption (test 18): new speech dismisses only the
+            // still-open turn's reply. Finished turns keep theirs, so a
+            // multi-turn conversation accumulates (tests 11, B2).
+            // No POST here: frames buffer until speech ends (single body).
+            const dismissed: number[] = [];
+            setTurns((prev) =>
+              prev.map((turn) =>
+                turn.reply && !settledTurnsRef.current.has(turn.id)
+                  ? (dismissed.push(turn.id), { ...turn, reply: null })
+                  : turn,
+              ),
+            );
+            for (const turnId of dismissed) {
+              repliesRef.current.delete(turnId);
+            }
+            // A new utterance after a posted turn opens the next turn on
+            // the same capture: the mic never stops between turns (bug 2).
+            // Stray frames buffered before this event carry over.
+            if (posted) openTurn(false);
+          },
+          onSpeechEnd: () => {
+            if (!sessionRef.current || posted) return;
+            posted = true;
+            postTurn(currentId, pending.splice(0));
+          },
+        },
+        // Calibrated against the speech fixture (bug 2): soft onsets count
+        // from ~200, 1 s of pre-roll, 2 s of end-of-turn silence.
+        { threshold: 200, endSilenceMs: 2000 },
+      );
+
+      // Stash the capture handle so session stop can tear it down.
+      captureRef.current = capture;
+      openTurn();
+      await ended;
     },
     [patchTurn, removeTurn, endSessionWithAlert],
-  );
-
-  const runSession = useCallback(
-    async (stream: MediaStream) => {
-      sessionRef.current = true;
-      try {
-        while (sessionRef.current) {
-          await runOneTurn(stream);
-        }
-      } catch {
-        // Backstop: turn failures already end the session themselves.
-        endSessionWithAlert("Connection lost. Tap to try again.");
-      }
-    },
-    [runOneTurn, endSessionWithAlert],
   );
 
   const handleTap = useCallback(async () => {

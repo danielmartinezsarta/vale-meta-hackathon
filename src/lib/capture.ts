@@ -9,8 +9,12 @@
 export const CAPTURE_RATE = 24000;
 /** 40 ms frames at 24 kHz mono. */
 export const FRAME_SAMPLES = 960;
-/** Pre-roll kept so the first consonant is not clipped. */
-const PREROLL_FRAMES = 10;
+/**
+ * Pre-roll kept so a soft onset is not clipped. 25 frames × 40 ms ≈ 1 s,
+ * enough to cover speech that stays under the VAD threshold on an iPhone
+ * mic at normal pace (bug 2: 10 frames / 400 ms lost the start of phrases).
+ */
+export const PREROLL_FRAMES = 25;
 
 export function floatToPcm16(input: Float32Array): Int16Array {
   const out = new Int16Array(input.length);
@@ -51,11 +55,16 @@ export class SpeechDetector {
   constructor(
     options: { threshold?: number; endSilenceMs?: number; frameMs?: number } = {},
   ) {
-    this.threshold = options.threshold ?? 500;
+    // Mean-abs 200: the speech fixture's softest onset frame scores 244,
+    // so the old 500 missed the start of phrases on an iPhone mic (bug 2).
+    // Digital silence scores 0, far below.
+    this.threshold = options.threshold ?? 200;
     const frameMs = options.frameMs ?? 40;
+    // 2000 ms: a short pause (~1.2 s) inside a phrase no longer splits
+    // the turn (bug 2); only a real 2 s silence ends it.
     this.endSilenceFrames = Math.max(
       1,
-      Math.round((options.endSilenceMs ?? 1200) / frameMs),
+      Math.round((options.endSilenceMs ?? 2000) / frameMs),
     );
   }
 
