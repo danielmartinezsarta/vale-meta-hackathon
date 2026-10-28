@@ -92,15 +92,15 @@ describe("bug 2 VAD calibration (iPhone clipped phrase onsets)", () => {
   it("a short pause inside a phrase does not split the turn", () => {
     const detector = new SpeechDetector();
     expect(detector.feed(toneFrame())).toBe("speech-start");
-    // 1.2 s of pause (the old end-of-turn silence): still one turn.
+    // 0.5 s of pause (under the 800 ms end-of-turn silence): still one turn.
     const silence = new Int16Array(FRAME_SAMPLES);
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 12; i++) {
       expect(detector.feed(silence)).toBe("speech");
     }
     expect(detector.isSpeaking).toBe(true);
-    // A real 2 s silence ends it, exactly once.
+    // A real 0.8 s silence ends it, exactly once.
     const tail: string[] = [];
-    for (let i = 0; i < 30; i++) tail.push(detector.feed(silence));
+    for (let i = 0; i < 8; i++) tail.push(detector.feed(silence));
     expect(tail.filter((event) => event === "speech-end")).toHaveLength(1);
     expect(detector.isSpeaking).toBe(false);
   });

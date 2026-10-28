@@ -42,7 +42,10 @@ export async function POST(request: Request): Promise<Response> {
     // M3: clear server-side log line (the key itself is never logged).
     console.error("[voice] META_API_KEY is not configured; rejecting turn.");
     return Response.json(
-      { error: "Voice service is not configured. Try again later." },
+      {
+        error: "Voice service is not configured. Try again later.",
+        code: "E-NET",
+      },
       { status: 503 },
     );
   }
@@ -85,9 +88,12 @@ export async function POST(request: Request): Promise<Response> {
           /* already closed */
         }
       };
-      const finishError = (message: string) => {
+      // Short on-screen error code next to the plain message, so a phone
+      // test can report the failing layer: E-VAD (silence), E-NET
+      // (service/connection), E-ASR (transcription), E-MODEL (reply).
+      const finishError = (message: string, code: string) => {
         if (closed) return;
-        send("error", { message });
+        send("error", { message, code });
         send("done", {});
         closeStream();
       };
@@ -121,7 +127,7 @@ export async function POST(request: Request): Promise<Response> {
             error: "timeout",
           });
         }
-        finishError("The voice turn timed out. Tap to try again.");
+        finishError("The voice turn timed out. Tap to try again.", "E-NET");
       }, turnTimeoutMs);
 
       const abort = () => {
@@ -201,6 +207,7 @@ export async function POST(request: Request): Promise<Response> {
           });
           send("error", {
             message: "Sorry, I had trouble answering. Tap to try again.",
+            code: "E-MODEL",
           });
         }
       };
@@ -250,14 +257,14 @@ export async function POST(request: Request): Promise<Response> {
                       // M2: fixed plain text to the user; raw provider text
                       // stays in the server log only.
                       console.error(`[voice-asr] transcription error: ${message}`);
-                      finishError("Connection lost. Tap to try again.");
+                      finishError("Connection lost. Tap to try again.", "E-ASR");
                     }
                   },
                 });
               } catch {
                 settled = true;
                 clearTimeout(timeout);
-                finishError("Connection lost. Tap to try again.");
+                finishError("Connection lost. Tap to try again.", "E-NET");
                 return;
               }
             }
@@ -269,19 +276,19 @@ export async function POST(request: Request): Promise<Response> {
 
         if (!opened) {
           clearTimeout(timeout);
-          finishError("I didn't hear anything. Tap and speak.");
+          finishError("I didn't hear anything. Tap and speak.", "E-VAD");
           return;
         }
         asr?.endTurn();
         // Wait for the final on this same stream.
         await waitFor(() => gotFinal || settled, TURN_TIMEOUT_MS);
         if (!gotFinal) {
-          if (!settled) finishError("Connection lost. Tap to try again.");
+          if (!settled) finishError("Connection lost. Tap to try again.", "E-NET");
           return;
         }
         if (finalText.trim() === "") {
           // Heard nothing intelligible: no model call (test 24).
-          send("notice", { message: "I didn't hear anything. Just speak and I'll listen." });
+          send("notice", { message: "I didn't hear anything. Just speak and I'll listen.", code: "E-VAD" });
           logTurn({
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: "",
@@ -301,7 +308,7 @@ export async function POST(request: Request): Promise<Response> {
         clearTimeout(timeout);
         closeStream();
       } catch {
-        if (!settled) finishError("Connection lost. Tap to try again.");
+        if (!settled) finishError("Connection lost. Tap to try again.", "E-NET");
       } finally {
         clearTimeout(timeout);
         try {

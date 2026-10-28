@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { startCapture } from "@/lib/capture";
+import { LevelMeter } from "@/components/LevelMeter";
 import { parseSseStream } from "@/lib/sse";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
@@ -26,7 +27,11 @@ export function TapToTalk() {
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeCode, setNoticeCode] = useState<string | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
+  const [alertCode, setAlertCode] = useState<string | null>(null);
+  const [level, setLevel] = useState(0);
+  const lastLevelRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);
   const turnIdRef = useRef(0);
@@ -76,7 +81,7 @@ export function TapToTalk() {
 
   /** End the whole session with a plain-language banner (tap to retry). */
   const endSessionWithAlert = useCallback(
-    (message: string) => {
+    (message: string, code: string | null = null) => {
       sessionRef.current = false;
       window.clearTimeout(quietTimerRef.current);
       controllersRef.current.forEach((controller) => {
@@ -99,6 +104,7 @@ export function TapToTalk() {
       settledTurnsRef.current.clear();
       repliesRef.current.clear();
       setAlert(message);
+      setAlertCode(code);
       setStatus("idle");
       sessionEndRef.current?.();
       sessionEndRef.current = null;
@@ -123,12 +129,17 @@ export function TapToTalk() {
       let currentId = -1;
       let posted = false;
 
+      const showNotice = (message: string, code: string | null = null) => {
+        setNotice(message);
+        setNoticeCode(code);
+      };
+
       const armQuiet = () => {
         window.clearTimeout(quietTimerRef.current);
         quietTimerRef.current = window.setTimeout(() => {
           if (!sessionRef.current) return;
           removeTurn(currentId);
-          setNotice("I didn't hear anything. Just speak and I'll listen.");
+          showNotice("I didn't hear anything. Just speak and I'll listen.", "E-VAD");
           openTurn();
         }, NO_SPEECH_TIMEOUT_MS);
       };
@@ -147,9 +158,9 @@ export function TapToTalk() {
 
       // A failed turn ends the session so the user can tap to retry.
       // A turn that already showed its final keeps its bubble (test 25).
-      const failTurn = (id: number, message: string) => {
+      const failTurn = (id: number, message: string, code: string | null = null) => {
         if (!finalReceivedRef.current.has(id)) removeTurn(id);
-        endSessionWithAlert(message);
+        endSessionWithAlert(message, code);
       };
 
       const postTurn = (id: number, frames: Int16Array[]) => {
@@ -169,6 +180,7 @@ export function TapToTalk() {
         const controller = new AbortController();
         controllersRef.current.add(controller);
         setNotice(null);
+        setNoticeCode(null);
         void fetch("/api/voice", {
           method: "POST",
           headers: { "content-type": "audio/l16" },
@@ -178,21 +190,24 @@ export function TapToTalk() {
           .then(async (response) => {
             if (!response.ok) {
               let message = "Connection lost. Tap to try again.";
+              let code: string | null = "E-NET";
               try {
                 const problem = (await response.json()) as {
                   error?: unknown;
+                  code?: unknown;
                 };
                 if (typeof problem.error === "string") message = problem.error;
+                if (typeof problem.code === "string") code = problem.code;
               } catch {
                 /* keep the default */
               }
               controllersRef.current.delete(controller);
-              failTurn(id, message);
+              failTurn(id, message, code);
               return;
             }
             if (!response.body) {
               controllersRef.current.delete(controller);
-              failTurn(id, "Connection lost. Tap to try again.");
+              failTurn(id, "Connection lost. Tap to try again.", "E-NET");
               return;
             }
             await parseSseStream(response.body, {
@@ -203,9 +218,9 @@ export function TapToTalk() {
                 finalReceivedRef.current.add(id);
                 patchTurn(id, { final: transcript, interim: "" });
               },
-              onErrorEvent: (message) => {
+              onErrorEvent: (message, code) => {
                 controllersRef.current.delete(controller);
-                failTurn(id, message);
+                failTurn(id, message, code ?? "E-NET");
               },
               onReplyDelta: (text) =>
                 patchTurn(id, {
@@ -217,7 +232,7 @@ export function TapToTalk() {
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
               },
-              onNotice: (message) => setNotice(message),
+              onNotice: (message, code) => showNotice(message, code ?? null),
               onDone: () => {
                 controllersRef.current.delete(controller);
                 if (!sessionRef.current) return;
@@ -235,7 +250,7 @@ export function TapToTalk() {
               settledTurnsRef.current.add(id);
               return;
             }
-            failTurn(id, "Connection lost. Tap to try again.");
+            failTurn(id, "Connection lost. Tap to try again.", "E-NET");
           });
       };
 
@@ -274,10 +289,20 @@ export function TapToTalk() {
             posted = true;
             postTurn(currentId, pending.splice(0));
           },
+          // The meter reads the same samples as the VAD: no extra audio
+          // API, throttled to ~10 Hz so the bar moves without re-render
+          // churn. Works wherever capture works (iPhone Safari/Chrome).
+          onLevel: (value) => {
+            const now = Date.now();
+            if (now - lastLevelRef.current < 100) return;
+            lastLevelRef.current = now;
+            setLevel(value);
+          },
         },
-        // Calibrated against the speech fixture (bug 2): soft onsets count
-        // from ~200, 1 s of pre-roll, 2 s of end-of-turn silence.
-        { threshold: 200, endSilenceMs: 2000 },
+        // Calibrated against the speech fixture (bug 2 onsets stay at
+        // ~200 with 1 s of pre-roll); the end-of-turn silence is 800 ms so
+        // the first text arrives ~1.2 s sooner (feedback ticket).
+        { threshold: 200, endSilenceMs: 800 },
       );
 
       // Stash the capture handle so session stop can tear it down.
@@ -293,11 +318,17 @@ export function TapToTalk() {
     if (status === "live" || status === "error") {
       stopSession();
       setAlert(null);
+      setAlertCode(null);
       setNotice(null);
+      setNoticeCode(null);
+      setLevel(0);
       return;
     }
     setAlert(null);
+    setAlertCode(null);
     setNotice(null);
+    setNoticeCode(null);
+    setLevel(0);
     setStatus("requesting");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -323,6 +354,8 @@ export function TapToTalk() {
             : "Tap to talk"}
       </button>
 
+      {status === "live" && <LevelMeter level={level} />}
+
       {status === "live" &&
         turns.every((turn) => !turn.final && !turn.interim && !turn.reply) &&
         !notice && <p>Your microphone is on. Go ahead, I&apos;m listening.</p>}
@@ -344,9 +377,19 @@ export function TapToTalk() {
         ))}
       </ol>
 
-      {notice && <p role="status">{notice}</p>}
+      {notice && (
+        <p role="status">
+          {notice}
+          {noticeCode ? ` (${noticeCode})` : ""}
+        </p>
+      )}
 
-      {alert && <div role="alert">{alert}</div>}
+      {alert && (
+        <div role="alert">
+          {alert}
+          {alertCode ? ` (${alertCode})` : ""}
+        </div>
+      )}
 
       {status === "blocked" && (
         <div role="alert">

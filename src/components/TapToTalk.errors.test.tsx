@@ -33,13 +33,13 @@ function setupDevice() {
   return seen;
 }
 
-function errorSse(message: string): { getReader: () => {
+function errorSse(message: string, code?: string): { getReader: () => {
   read: () => Promise<{ done: boolean; value?: Uint8Array }>;
   releaseLock: () => void;
 } } {
   const raw =
     'event: final\ndata: {"transcript":"book a refill","audioProcessedMs":800}\n\n' +
-    `event: error\ndata: {"message":${JSON.stringify(message)}}\n\n`;
+    `event: error\ndata: ${JSON.stringify({ message, code })}\n\n`;
   const bytes = new TextEncoder().encode(raw);
   let served = false;
   return {
@@ -99,7 +99,10 @@ describe("plain-language errors (fake-device fallback)", () => {
       "fetch",
       vi.fn(async () => ({
         ok: true,
-        body: errorSse("Sorry, I had trouble answering. Tap to try again."),
+        body: errorSse(
+          "Sorry, I had trouble answering. Tap to try again.",
+          "E-MODEL",
+        ),
       })) as unknown as typeof fetch,
     );
 
@@ -112,10 +115,61 @@ describe("plain-language errors (fake-device fallback)", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/trouble answering/i);
+    expect(alert.textContent).toMatch(/E-MODEL/);
     // The transcript bubble remains visible; the session ended for retry.
     expect(screen.getByText("book a refill")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Tap to talk" }),
     ).toBeTruthy();
+  });
+
+  it("shows the service code when the connection drops (E-NET)", async () => {
+    const seen = setupDevice();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down");
+      }) as unknown as typeof fetch,
+    );
+
+    render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(seen.length).toBeGreaterThan(0);
+    });
+    burst(seen[0]);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/Connection lost/i);
+    expect(alert.textContent).toMatch(/E-NET/);
+  });
+
+  it("shows the meter while live and the code on the not-configured error", async () => {
+    const seen = setupDevice();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 503,
+        json: async () => ({
+          error: "Voice service is not configured. Try again later.",
+          code: "E-NET",
+        }),
+      })) as unknown as typeof fetch,
+    );
+
+    render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(seen.length).toBeGreaterThan(0);
+    });
+    expect(
+      screen.getByRole("meter", { name: "Microphone level" }),
+    ).toBeTruthy();
+    burst(seen[0]);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/not configured/i);
+    expect(alert.textContent).toMatch(/E-NET/);
   });
 });

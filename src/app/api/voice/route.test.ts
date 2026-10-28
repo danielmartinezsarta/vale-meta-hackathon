@@ -225,6 +225,7 @@ describe("POST /api/voice", () => {
     });
     const text = await POST(request).then((response) => response.text());
     expect(text).toContain("event: notice");
+    expect(text).toContain('"code":"E-VAD"');
     expect(text).toContain("event: done");
     expect(text).not.toContain("event: reply");
     expect(modelFetch).not.toHaveBeenCalled();
@@ -285,6 +286,7 @@ describe("POST /api/voice", () => {
     expect(text).toContain("event: final");
     expect(text).toContain("hello, book a gel refill");
     expect(text).toContain("Sorry, I had trouble answering.");
+    expect(text).toContain('"code":"E-MODEL"');
     const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
     expect(turns).toHaveLength(1);
     expect(JSON.parse(turns[0].replace("[voice-turn] ", "")).error).toMatch(

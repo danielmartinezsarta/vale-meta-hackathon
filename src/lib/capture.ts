@@ -60,11 +60,13 @@ export class SpeechDetector {
     // Digital silence scores 0, far below.
     this.threshold = options.threshold ?? 200;
     const frameMs = options.frameMs ?? 40;
-    // 2000 ms: a short pause (~1.2 s) inside a phrase no longer splits
-    // the turn (bug 2); only a real 2 s silence ends it.
+    // 800 ms: the turn posts ~1.2 s earlier than the old 2000 ms wait, so
+    // the first text arrives sooner (feedback ticket). Hesitation pauses
+    // under ~0.8 s stay in one turn; longer pauses open a new turn on the
+    // same gapless capture, so nothing is lost, only split.
     this.endSilenceFrames = Math.max(
       1,
-      Math.round((options.endSilenceMs ?? 2000) / frameMs),
+      Math.round((options.endSilenceMs ?? 800) / frameMs),
     );
   }
 
@@ -102,6 +104,8 @@ export interface CaptureCallbacks {
   onFrame: (frame: Int16Array) => void;
   onSpeechStart: () => void;
   onSpeechEnd: () => void;
+  /** Instant listening feedback, 0..1 mic level. Optional; never required. */
+  onLevel?: (level: number) => void;
 }
 
 export interface CaptureHandle {
@@ -152,6 +156,19 @@ export function startCapture(
       }
     }
     const resampled = resampleLinear(mono, actualRate);
+    // Instant level for the listening meter, from the same samples the VAD
+    // already sees: no extra audio API, so it works wherever capture works
+    // (iPhone Safari and Chrome included).
+    if (callbacks.onLevel) {
+      let sum = 0;
+      for (let i = 0; i < mono.length; i++) sum += Math.abs(mono[i]);
+      const level = mono.length === 0 ? 0 : Math.min(1, sum / mono.length);
+      try {
+        callbacks.onLevel(level);
+      } catch {
+        /* meter must never break capture */
+      }
+    }
     for (let off = 0; off + FRAME_SAMPLES <= resampled.length; off += FRAME_SAMPLES) {
       const frame = floatToPcm16(resampled.subarray(off, off + FRAME_SAMPLES));
       const transition = detector.feed(frame);
