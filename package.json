@@ -9,12 +9,16 @@
     "build": "next build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:audio": "vitest run asr route capture agent"
   },
   "dependencies": {
+    "@types/ws": "^8.18.2",
+    "@vercel/functions": "^3.10.4",
     "next": "^16.0.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@testing-library/react": "^16.0.0",
