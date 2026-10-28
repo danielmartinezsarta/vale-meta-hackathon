@@ -47,6 +47,24 @@ beforeAll(async () => {
   vi.stubEnv("META_ASR_URL", url);
 });
 
+/** Minimal fake of the Model API streaming reply. */
+function fakeAgentReply(text: string): Response {
+  const raw =
+    `event: response.output_text.delta\ndata: ${JSON.stringify({ delta: text.slice(0, 4) })}\n\n` +
+    `event: response.completed\ndata: ${JSON.stringify({
+      response: {
+        id: "resp_test",
+        output: [{ type: "output_text", text }],
+        usage: { input_tokens: 100, output_tokens: 20 },
+      },
+    })}\n\n`;
+  return new Response(new TextEncoder().encode(raw), { status: 200 });
+}
+
+function stubAgent(text = "Got it, all set.") {
+  return vi.fn(async () => fakeAgentReply(text));
+}
+
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   vi.unstubAllEnvs();
@@ -63,7 +81,8 @@ function pcmBody(bytes: number): ReadableStream<Uint8Array> {
 }
 
 describe("POST /api/voice", () => {
-  it("streams PCM to Meta and returns SSE interim/final events", async () => {
+  it("streams PCM to Meta and returns SSE interim/final/reply events", async () => {
+    vi.stubGlobal("fetch", stubAgent("All set, see you soon."));
     const request = new Request("http://localhost/api/voice", {
       method: "POST",
       headers: { "content-type": "audio/l16" },
@@ -76,11 +95,15 @@ describe("POST /api/voice", () => {
     const text = await response.text();
     expect(text).toContain("event: final");
     expect(text).toContain("canned from fake asr");
+    expect(text).toContain("event: reply");
+    expect(text).toContain("All set, see you soon.");
     expect(text).toContain("event: done");
     expect(text).not.toContain("test-key");
+    vi.unstubAllGlobals();
   });
 
   it("accepts a canned transcript without touching ASR (agent-only turn)", async () => {
+    vi.stubGlobal("fetch", stubAgent());
     const request = new Request("http://localhost/api/voice", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -90,6 +113,75 @@ describe("POST /api/voice", () => {
     const text = await response.text();
     expect(text).toContain("event: final");
     expect(text).toContain("hello, book a gel refill");
+    expect(text).toContain("event: reply");
+    vi.unstubAllGlobals();
+  });
+
+  it("emits one per-turn log line with timings, tokens and cost", async () => {
+    vi.stubGlobal("fetch", stubAgent("Done."));
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
+      logs.push(String(line));
+    });
+    const sendTurn = () =>
+      POST(
+        new Request("http://localhost/api/voice", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ transcript: "first turn" }),
+        }),
+      ).then((response) => response.text());
+    await sendTurn();
+    await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ transcript: "second turn" }),
+      }),
+    ).then((response) => response.text());
+    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    expect(turns).toHaveLength(2);
+    const first = JSON.parse(turns[0].replace("[voice-turn] ", ""));
+    expect(first.transcript).toBe("first turn");
+    expect(typeof first.ttftMs).toBe("number");
+    expect(first.inputTokens).toBe(100);
+    expect(first.outputTokens).toBe(20);
+    expect(first.costUsd).toBeGreaterThan(0);
+    expect(typeof first.ts).toBe("string");
+    expect(first.tool).toBeNull();
+    expect(first.error).toBeNull();
+    expect(JSON.parse(turns[1].replace("[voice-turn] ", "")).transcript).toBe(
+      "second turn",
+    );
+    spy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the transcript bubble and logs the error when the model fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("nope", { status: 500 })),
+    );
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
+      logs.push(String(line));
+    });
+    const request = new Request("http://localhost/api/voice", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ transcript: "hello, book a gel refill" }),
+    });
+    const text = await POST(request).then((response) => response.text());
+    expect(text).toContain("event: final");
+    expect(text).toContain("hello, book a gel refill");
+    expect(text).toContain("Sorry, I had trouble answering.");
+    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    expect(turns).toHaveLength(1);
+    expect(JSON.parse(turns[0].replace("[voice-turn] ", "")).error).toMatch(
+      /model error: 500/,
+    );
+    spy.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   it("returns a plain 503 with no stack trace when the key is missing", async () => {

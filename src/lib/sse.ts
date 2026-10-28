@@ -3,6 +3,7 @@ export interface SseHandlers {
   onFinal?: (transcript: string, audioProcessedMs: number | null) => void;
   onReplyDelta?: (text: string) => void;
   onReply?: (text: string) => void;
+  onNotice?: (message: string) => void;
   onErrorEvent?: (message: string) => void;
   onDone?: () => void;
 }
@@ -71,6 +72,11 @@ function dispatch(raw: string, handlers: SseHandlers): void {
       break;
     case "reply":
       if (typeof payload.text === "string") handlers.onReply?.(payload.text);
+      break;
+    case "notice":
+      if (typeof payload.message === "string") {
+        handlers.onNotice?.(payload.message);
+      }
       break;
     case "error":
       if (typeof payload.message === "string") {

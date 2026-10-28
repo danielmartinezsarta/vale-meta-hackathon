@@ -84,6 +84,8 @@ export function TapToTalk() {
   const turnIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const captureRef = useRef<{ stop: () => void } | null>(null);
+  const repliesRef = useRef(new Map<number, string>());
+  const lastInterruptMsRef = useRef(0);
 
   const stopSession = useCallback(() => {
     sessionRef.current = false;
@@ -167,6 +169,17 @@ export function TapToTalk() {
                     removeTurn(id);
                     reject(new Error(message));
                   }),
+                onReplyDelta: (text) =>
+                  patchTurn(id, {
+                    reply: `${
+                      repliesRef.current.get(id) ?? ""
+                    }${text}`,
+                  }),
+                onReply: (text) => {
+                  repliesRef.current.set(id, text);
+                  patchTurn(id, { reply: text });
+                },
+                onNotice: (message) => setNotice(message),
                 onDone: () => settle(() => resolve()),
               });
             })
@@ -193,7 +206,18 @@ export function TapToTalk() {
               else pipe?.push(frame);
             },
             onSpeechStart: () => {
-              if (!sessionRef.current || posted) return;
+              if (!sessionRef.current) return;
+              // Interruption (test 18): new speech dismisses any shown
+              // reply immediately, then starts the next turn.
+              const started = performance.now();
+              setTurns((prev) =>
+                prev.some((turn) => turn.reply)
+                  ? prev.map((turn) => ({ ...turn, reply: null }))
+                  : prev,
+              );
+              repliesRef.current.clear();
+              lastInterruptMsRef.current = performance.now() - started;
+              if (posted) return;
               posted = true;
               postTurn(pending.splice(0));
             },

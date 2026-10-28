@@ -1,8 +1,28 @@
+import { runAgentTurn } from "@/lib/agent";
 import { openAsrConnection } from "@/lib/asr";
+import { estimateCost, formatTurnLog } from "@/lib/turn-log";
 
 export const runtime = "nodejs";
 
 const TURN_TIMEOUT_MS = 120000;
+
+async function waitFor(
+  isDone: () => boolean,
+  timeoutMs: number,
+): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const check = setInterval(() => {
+      if (isDone()) {
+        clearInterval(check);
+        resolve();
+      }
+    }, 25);
+    setTimeout(() => {
+      clearInterval(check);
+      resolve();
+    }, timeoutMs);
+  });
+}
 
 function sse(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -87,9 +107,75 @@ export async function POST(request: Request): Promise<Response> {
       };
       request.signal.addEventListener("abort", abort);
 
+      const logTurn = (fields: {
+        transcript: string;
+        ttftMs: number | null;
+        inputTokens: number;
+        outputTokens: number;
+        audioSeconds: number;
+        tool: string | null;
+        modelSkipped: boolean;
+        error: string | null;
+      }) => {
+        console.log(
+          formatTurnLog({
+            ts: new Date().toISOString(),
+            ...fields,
+            costUsd: estimateCost(
+              { inputTokens: fields.inputTokens, outputTokens: fields.outputTokens },
+              fields.audioSeconds,
+            ),
+          }),
+        );
+      };
+
+      /** Run the agent for a final transcript, then log the turn. */
+      const answerTranscript = async (
+        transcript: string,
+        audioSeconds: number,
+      ): Promise<void> => {
+        const speechEndAt = Date.now();
+        try {
+          const result = await runAgentTurn({
+            key,
+            transcript,
+            url: process.env.META_RESPONSES_URL || undefined,
+            startedAt: speechEndAt,
+            onDelta: (text) => send("reply-delta", { text }),
+          });
+          send("reply", { text: result.text });
+          logTurn({
+            transcript,
+            ttftMs: result.firstTokenMs,
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            audioSeconds,
+            tool: result.toolUsed,
+            modelSkipped: false,
+            error: null,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "failed";
+          logTurn({
+            transcript,
+            ttftMs: null,
+            inputTokens: 0,
+            outputTokens: 0,
+            audioSeconds,
+            tool: null,
+            modelSkipped: false,
+            error: message,
+          });
+          send("error", {
+            message: "Sorry, I had trouble answering. Tap to try again.",
+          });
+        }
+      };
+
       try {
         if (cannedTranscript !== null) {
           send("final", { transcript: cannedTranscript });
+          await answerTranscript(cannedTranscript, 0);
           send("done", {});
           clearTimeout(timeout);
           closeStream();
@@ -97,6 +183,9 @@ export async function POST(request: Request): Promise<Response> {
         }
 
         let opened = false;
+        let gotFinal = false;
+        let finalText = "";
+        let audioSeconds = 0;
         const reader = (request.body as ReadableStream<Uint8Array>).getReader();
         try {
           for (;;) {
@@ -112,7 +201,9 @@ export async function POST(request: Request): Promise<Response> {
                     if (event.kind === "interim") {
                       send("interim", { transcript: event.transcript });
                     } else if (event.kind === "final") {
-                      settled = true;
+                      gotFinal = true;
+                      finalText = event.transcript;
+                      audioSeconds = (event.audioProcessedMs ?? 0) / 1000;
                       send("final", {
                         transcript: event.transcript,
                         audioProcessedMs: event.audioProcessedMs ?? null,
@@ -148,24 +239,29 @@ export async function POST(request: Request): Promise<Response> {
           return;
         }
         asr?.endTurn();
-        // Wait for the final on this same stream: poll the settled flag via
-        // a promise that resolves on final/error/close.
-        await new Promise<void>((resolve) => {
-          const check = setInterval(() => {
-            if (settled) {
-              clearInterval(check);
-              resolve();
-            }
-          }, 25);
-          setTimeout(() => {
-            clearInterval(check);
-            resolve();
-          }, TURN_TIMEOUT_MS);
-        });
-        if (!settled) {
-          finishError("Connection lost. Tap to try again.");
+        // Wait for the final on this same stream.
+        await waitFor(() => gotFinal || settled, TURN_TIMEOUT_MS);
+        if (!gotFinal) {
+          if (!settled) finishError("Connection lost. Tap to try again.");
           return;
         }
+        if (finalText.trim() === "") {
+          // Heard nothing intelligible: no model call (test 24).
+          send("notice", { message: "I didn't hear anything. Just speak and I'll listen." });
+          logTurn({
+            transcript: "",
+            ttftMs: null,
+            inputTokens: 0,
+            outputTokens: 0,
+            audioSeconds,
+            tool: null,
+            modelSkipped: true,
+            error: null,
+          });
+        } else {
+          await answerTranscript(finalText, audioSeconds);
+        }
+        settled = true;
         send("done", {});
         clearTimeout(timeout);
         closeStream();
