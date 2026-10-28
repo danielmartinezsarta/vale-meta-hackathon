@@ -2,6 +2,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
 
+vi.mock("@/lib/capture", () => ({
+  // jsdom has no AudioContext: stay silent, never speak, never throw.
+  startCapture: vi.fn(() => ({ stop: () => {} })),
+}));
+
 function stubGetUserMedia(impl: (...args: never[]) => unknown) {
   const getUserMedia = vi.fn(impl);
   vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
