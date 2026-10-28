@@ -63,6 +63,7 @@ export function openAsrConnection(
       );
     });
 
+    let gotFinal = false;
     ws.on("message", (data) => {
       let message: {
         type?: string;
@@ -85,6 +86,7 @@ export function openAsrConnection(
         return;
       }
       if (message.type === "transcript" && typeof message.transcript === "string") {
+        if (message.final) gotFinal = true;
         options.onEvent(
           message.final
             ? {
@@ -153,7 +155,9 @@ export function openAsrConnection(
         settled = true;
         clearTimeout(timer);
         reject(new Error("asr connection closed before handshake"));
-      } else {
+      } else if (!gotFinal) {
+        // Only a pre-final close is a failure. After the final, Meta
+        // closes the socket as the normal end of a PUSH_TO_TALK turn.
         options.onError?.("connection lost");
       }
     });

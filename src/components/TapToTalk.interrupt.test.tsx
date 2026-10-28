@@ -18,28 +18,50 @@ function burst(callbacks: CaptureCallbacks) {
   callbacks.onSpeechEnd();
 }
 
-function sseTurn(): { getReader: () => {
-  read: () => Promise<{ done: boolean; value?: Uint8Array }>;
-  releaseLock: () => void;
-} } {
-  const raw =
-    'event: final\ndata: {"transcript":"book a refill","audioProcessedMs":800}\n\n' +
-    'event: reply\ndata: {"text":"You are booked in."}\n\n' +
-    "event: done\ndata: {}\n\n";
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((response) => {
+    resolve = response;
+  });
+  return { promise, resolve };
+}
+
+function gatedTurn() {
+  const replyGate = deferred<void>();
+  const doneGate = deferred<void>();
+  const encoder = new TextEncoder();
+  const state = { step: 0 };
+  const body = {
     getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
+      read: async (): Promise<{ done: boolean; value?: Uint8Array }> => {
+        state.step += 1;
+        if (state.step === 1) {
+          return {
+            done: false,
+            value: encoder.encode(
+              'event: final\ndata: {"transcript":"book a refill","audioProcessedMs":800}\n\n',
+            ),
+          };
+        }
+        if (state.step === 2) {
+          await replyGate.promise;
+          return {
+            done: false,
+            value: encoder.encode(
+              'event: reply\ndata: {"text":"You are booked in."}\n\n',
+            ),
+          };
+        }
+        if (state.step === 3) {
+          await doneGate.promise;
+          return { done: true, value: undefined };
         }
         return { done: true, value: undefined };
       },
       releaseLock: () => {},
     }),
   };
+  return { body, replyGate, doneGate };
 }
 
 afterEach(() => {
@@ -61,14 +83,12 @@ describe("interruption (fake-device fallback)", () => {
       seen.push(callbacks);
       return { stop: () => {} };
     });
+    const turn = gatedTurn();
     const fetchMock = vi.fn(() => {
       if (fetchMock.mock.calls.length > 1) {
         return new Promise(() => {}); // later turns hang: session waits
       }
-      return Promise.resolve({
-        ok: true,
-        body: sseTurn(),
-      } as unknown as Response);
+      return Promise.resolve({ ok: true, body: turn.body });
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -80,14 +100,19 @@ describe("interruption (fake-device fallback)", () => {
     });
     burst(seen[0]);
 
-    const reply = await screen.findByText("You are booked in.");
-    expect(reply).toBeTruthy();
-
+    // Final lands, reply still on its way: nothing to dismiss yet.
     await waitFor(() => {
-      expect(seen.length).toBeGreaterThan(1);
+      expect(screen.getByText("book a refill")).toBeTruthy();
     });
+    expect(screen.queryByText("You are booked in.")).toBeNull();
+
+    // The reply arrives and is displayed while the turn stays open.
+    turn.replyGate.resolve();
+    await screen.findByText("You are booked in.");
+
+    // The user speaks over the displayed reply: it goes away fast.
     const started = performance.now();
-    burst(seen[1]);
+    seen[0].onSpeechStart();
     await waitFor(() => {
       expect(screen.queryByText("You are booked in.")).toBeNull();
     });
@@ -96,6 +121,7 @@ describe("interruption (fake-device fallback)", () => {
     // The transcript bubble survives the interruption.
     expect(screen.getByText("book a refill")).toBeTruthy();
 
+    turn.doneGate.resolve();
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
   });
 });

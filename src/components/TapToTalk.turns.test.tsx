@@ -16,7 +16,7 @@ function stubGetUserMedia() {
   });
 }
 
-function sseBody(transcript: string): { getReader: () => {
+function sseBody(transcript: string, reply: string): { getReader: () => {
   read: () => Promise<{ done: boolean; value?: Uint8Array }>;
   releaseLock: () => void;
 } } {
@@ -24,6 +24,7 @@ function sseBody(transcript: string): { getReader: () => {
   const raw =
     `event: interim\ndata: {"transcript":"${transcript.slice(0, 5)}"}\n\n` +
     `event: final\ndata: {"transcript":"${transcript}","audioProcessedMs":800}\n\n` +
+    `event: reply\ndata: {"text":${JSON.stringify(reply)}}\n\n` +
     "event: done\ndata: {}\n\n";
   const bytes = encoder.encode(raw);
   const first = bytes.slice(0, 13);
@@ -64,13 +65,17 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
       return { stop: () => {} };
     });
 
-    const transcripts = ["first final", "second final"];
+    const turns: [string, string][] = [
+      ["first final", "first reply from Vale"],
+      ["second final", "second reply from Vale"],
+    ];
     const fetchMock = vi.fn((..._args: unknown[]) => {
       const call = fetchMock.mock.calls.length;
       if (call > 2) return new Promise(() => {}); // third turn hangs: session waits
+      const [transcript, reply] = turns[call - 1];
       return Promise.resolve({
         ok: true,
-        body: sseBody(transcripts[call - 1]),
+        body: sseBody(transcript, reply),
       });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -87,6 +92,11 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
 
     // Exactly two finished bubbles (a third turn may be listening already).
     expect(screen.getAllByText("You:")).toHaveLength(2);
+
+    // B3: both of Vale's replies are asserted in the same session.
+    expect(screen.getAllByText("Vale:")).toHaveLength(2);
+    expect(screen.getByText("first reply from Vale")).toBeTruthy();
+    expect(screen.getByText("second reply from Vale")).toBeTruthy();
 
     // Interim text is replaced by the final, not duplicated.
     expect(screen.queryByText("first")).toBeNull();

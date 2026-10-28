@@ -54,6 +54,8 @@ beforeAll(async () => {
             audioProcessedMs: 1000,
           }),
         );
+        // Like Meta on PUSH_TO_TALK: the server closes after the final.
+        socket.close(1000, "turn complete");
         return;
       }
       lastHandshake = message;
@@ -148,6 +150,31 @@ describe("server ASR bridge", () => {
     await vi.waitFor(() => {
       expect(closedCount).toBe(1);
     });
+  });
+
+  it("treats the post-final socket close as a normal turn end, not an error", async () => {
+    resetCounters();
+    const events: AsrEvent[] = [];
+    const errors: string[] = [];
+    const conn = await openAsrConnection({
+      key: "test-key",
+      url,
+      onEvent: (event) => events.push(event),
+      onError: (message) => errors.push(message),
+    });
+    conn.sendPcm(new Uint8Array(4800));
+    conn.endTurn();
+    await vi.waitFor(() => {
+      expect(events.some((e) => e.kind === "final")).toBe(true);
+    });
+    // The fake server closes the socket right after the final, like Meta:
+    // this connection (not a global counter) must observe the close.
+    await vi.waitFor(() => {
+      expect(conn.open).toBe(false);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(errors).toEqual([]);
+    conn.close();
   });
 });
 

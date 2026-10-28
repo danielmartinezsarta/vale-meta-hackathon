@@ -7,8 +7,9 @@ let server: WebSocketServer;
 let url = "";
 let closedCount = 0;
 let holdFinal = false;
-let emptyFinal = false;
 let dropOnAudio = false;
+let receivedAudioBytes = 0;
+let receivedAudioSilent = true;
 
 beforeAll(async () => {
   server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
@@ -18,9 +19,37 @@ beforeAll(async () => {
   url = `ws://127.0.0.1:${port}`;
 
   server.on("connection", (socket: WebSocket) => {
+    let interimSent = false;
     socket.on("message", (data, isBinary) => {
       if (isBinary) {
-        if (dropOnAudio) socket.close(1013, "dropped");
+        const bytes = data as Buffer;
+        receivedAudioBytes += bytes.length;
+        const view = new Int16Array(
+          bytes.buffer,
+          bytes.byteOffset,
+          Math.floor(bytes.length / 2),
+        );
+        for (const sample of view) {
+          if (Math.abs(sample) >= 200) {
+            receivedAudioSilent = false;
+            break;
+          }
+        }
+        if (dropOnAudio) {
+          socket.close(1013, "dropped");
+          return;
+        }
+        // A1: live interim while audio flows, ahead of the final.
+        if (!interimSent) {
+          interimSent = true;
+          socket.send(
+            JSON.stringify({
+              type: "transcript",
+              transcript: "canning",
+              final: false,
+            }),
+          );
+        }
         return;
       }
       let message: { type?: string };
@@ -31,16 +60,22 @@ beforeAll(async () => {
       }
       if (message.type === "endStream") {
         if (holdFinal) return;
+        // Silence in, silence out: the fake mimics the real engine.
         socket.send(
           JSON.stringify({
             type: "transcript",
-            transcript: emptyFinal ? "" : "canned from fake asr",
+            transcript: receivedAudioSilent ? "" : "canned from fake asr",
             final: true,
             audioProcessedMs: 800,
           }),
         );
+        // Like Meta on PUSH_TO_TALK: close after the final. The route must
+        // still deliver the agent reply on the same SSE stream (no error).
+        socket.close(1000, "turn complete");
         return;
       }
+      receivedAudioBytes = 0;
+      receivedAudioSilent = true;
       socket.send(JSON.stringify({ sessionId: "route-test" }));
     });
     socket.on("close", () => {
@@ -80,8 +115,10 @@ afterAll(async () => {
   vi.unstubAllEnvs();
 });
 
-function pcmBody(bytes: number): ReadableStream<Uint8Array> {
+function pcmBody(bytes: number, silent = false): ReadableStream<Uint8Array> {
   const chunk = new Uint8Array(bytes);
+  // Non-silent speech-like energy so the fake ASR answers with a transcript.
+  if (!silent) chunk.fill(1000 % 256);
   return new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(chunk);
@@ -103,7 +140,12 @@ describe("POST /api/voice", () => {
     const response = await POST(request);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     const text = await response.text();
-    expect(text).toContain("event: final");
+    // A1: interim arrives live through route → SSE, ahead of the final.
+    const interimAt = text.indexOf("event: interim");
+    const finalAt = text.indexOf("event: final");
+    expect(interimAt).toBeGreaterThan(-1);
+    expect(finalAt).toBeGreaterThan(interimAt);
+    expect(text).toContain("canning");
     expect(text).toContain("canned from fake asr");
     expect(text).toContain("event: reply");
     expect(text).toContain("All set, see you soon.");
@@ -168,7 +210,6 @@ describe("POST /api/voice", () => {
   });
 
   it("stays silent and skips the model when the ASR final is empty", async () => {
-    emptyFinal = true;
     const modelFetch = vi.fn(async () => fakeAgentReply("should not happen"));
     vi.stubGlobal("fetch", modelFetch);
     const logs: string[] = [];
@@ -178,7 +219,7 @@ describe("POST /api/voice", () => {
     const request = new Request("http://localhost/api/voice", {
       method: "POST",
       headers: { "content-type": "audio/l16" },
-      body: pcmBody(4800),
+      body: pcmBody(4800, true),
       // @ts-expect-error Node fetch streaming upload flag
       duplex: "half",
     });
@@ -194,7 +235,6 @@ describe("POST /api/voice", () => {
     expect(logged.ttftMs).toBeNull();
     spy.mockRestore();
     vi.unstubAllGlobals();
-    emptyFinal = false;
   });
 
   it("reports a lost connection and reconnects cleanly on the next tap", async () => {
@@ -267,6 +307,54 @@ describe("POST /api/voice", () => {
     expect(body.error).toMatch(/not configured/i);
     expect(JSON.stringify(body)).not.toMatch(/\n\s*at\s/);
     vi.stubEnv("META_API_KEY", "test-key");
+  });
+
+  it("writes a clear server log line when the key is missing (M3)", async () => {
+    vi.stubEnv("META_API_KEY", "");
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((line: string) => {
+      errors.push(String(line));
+    });
+    await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ transcript: "hi" }),
+      }),
+    );
+    expect(errors.some((line) => line.includes("[voice]"))).toBe(true);
+    expect(errors.join("\n")).not.toMatch(/test-key|Bearer/);
+    spy.mockRestore();
+    vi.stubEnv("META_API_KEY", "test-key");
+  });
+
+  it("logs a timed-out turn instead of dropping it silently (b3)", async () => {
+    process.env.VOICE_TURN_TIMEOUT_MS = "150";
+    holdFinal = true;
+    vi.stubGlobal("fetch", stubAgent("unused"));
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
+      logs.push(String(line));
+    });
+    const text = await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: { "content-type": "audio/l16" },
+        body: pcmBody(4800),
+        // @ts-expect-error Node fetch streaming upload flag
+        duplex: "half",
+      }),
+    ).then((response) => response.text());
+    expect(text).toContain("timed out");
+    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    expect(turns).toHaveLength(1);
+    expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+      error: "timeout",
+    });
+    spy.mockRestore();
+    vi.unstubAllGlobals();
+    holdFinal = false;
+    delete process.env.VOICE_TURN_TIMEOUT_MS;
   });
 
   it("closes the Meta socket when the page disconnects mid-turn", async () => {

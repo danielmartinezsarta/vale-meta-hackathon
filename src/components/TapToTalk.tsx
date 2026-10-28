@@ -85,8 +85,10 @@ export function TapToTalk() {
   const abortRef = useRef<AbortController | null>(null);
   const captureRef = useRef<{ stop: () => void } | null>(null);
   const repliesRef = useRef(new Map<number, string>());
-  const lastInterruptMsRef = useRef(0);
   const finalReceivedRef = useRef(new Set<number>());
+  // Turns whose stream already ended (done/error/timeout): their replies
+  // are history. Only a still-open turn's reply can be interrupted.
+  const settledTurnsRef = useRef(new Set<number>());
 
   const stopSession = useCallback(() => {
     sessionRef.current = false;
@@ -128,6 +130,7 @@ export function TapToTalk() {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       finalReceivedRef.current.clear();
+      settledTurnsRef.current.clear();
       repliesRef.current.clear();
       setAlert(message);
       setStatus("idle");
@@ -147,6 +150,7 @@ export function TapToTalk() {
         const settle = (fn: () => void) => {
           if (settled) return;
           settled = true;
+          settledTurnsRef.current.add(id);
           window.clearTimeout(quietTimer);
           try {
             capture.stop();
@@ -247,16 +251,20 @@ export function TapToTalk() {
             },
             onSpeechStart: () => {
               if (!sessionRef.current) return;
-              // Interruption (test 18): new speech dismisses any shown
-              // reply immediately, then starts the next turn.
-              const started = performance.now();
+              // Interruption (test 18): new speech dismisses only the
+              // still-open turn's reply. Finished turns keep theirs, so a
+              // multi-turn conversation accumulates (tests 11, B2).
+              const dismissed: number[] = [];
               setTurns((prev) =>
-                prev.some((turn) => turn.reply)
-                  ? prev.map((turn) => ({ ...turn, reply: null }))
-                  : prev,
+                prev.map((turn) =>
+                  turn.reply && !settledTurnsRef.current.has(turn.id)
+                    ? (dismissed.push(turn.id), { ...turn, reply: null })
+                    : turn,
+                ),
               );
-              repliesRef.current.clear();
-              lastInterruptMsRef.current = performance.now() - started;
+              for (const turnId of dismissed) {
+                repliesRef.current.delete(turnId);
+              }
               if (posted) return;
               posted = true;
               postTurn(pending.splice(0));
