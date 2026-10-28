@@ -38,7 +38,11 @@ interface ResponsesOutputItem {
 }
 
 function extractDeltaText(eventType: string, data: Record<string, unknown>): string {
+  // Only spoken-text deltas reach the screen. Tool-argument deltas
+  // (e.g. response.function_call_arguments.delta carrying
+  // '{"date":"..."}') must never render as reply text.
   if (!eventType.includes("delta")) return "";
+  if (!eventType.includes("output_text")) return "";
   const delta = data.delta;
   if (typeof delta === "string") return delta;
   if (delta && typeof delta === "object") {

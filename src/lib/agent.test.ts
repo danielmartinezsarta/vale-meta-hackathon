@@ -132,6 +132,68 @@ describe("agent turn", () => {
     expect(result.usage).toEqual({ inputTokens: 200, outputTokens: 40 });
   });
 
+  it("ignores function_call_arguments deltas and streams only reply text", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        const body = JSON.parse(
+          (init as { body: string }).body,
+        ) as Record<string, unknown>;
+        bodies.push(body);
+        if (bodies.length === 1) {
+          return sseResponse([
+            {
+              type: "response.function_call_arguments.delta",
+              data: { delta: '{"date":"2026-11-05"}' },
+            },
+            completed("resp_1", [
+              {
+                type: "function_call",
+                name: "get_invented_slots",
+                arguments: '{"date":"2026-11-05"}',
+                call_id: "call_1",
+              },
+            ]),
+          ]);
+        }
+        return sseResponse([
+          {
+            type: "response.output_text.delta",
+            data: { delta: "El cinco de noviembre tengo " },
+          },
+          {
+            type: "response.output_text.delta",
+            data: { delta: "a las diez." },
+          },
+          completed("resp_2", [
+            {
+              type: "message",
+              content: [
+                {
+                  type: "output_text",
+                  text: "El cinco de noviembre tengo a las diez.",
+                },
+              ],
+            },
+          ]),
+        ]);
+      }),
+    );
+
+    const deltas: string[] = [];
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "que tal el cinco de noviembre?",
+      onDelta: (text) => deltas.push(text),
+    });
+
+    expect(result.text).toBe("El cinco de noviembre tengo a las diez.");
+    // Tool args must never leak into the streamed text.
+    expect(deltas.join("")).toBe("El cinco de noviembre tengo a las diez.");
+    expect(deltas.join("")).not.toContain("2026-11-05");
+  });
+
   it("surfaces model HTTP errors without leaking internals", async () => {
     vi.stubGlobal(
       "fetch",

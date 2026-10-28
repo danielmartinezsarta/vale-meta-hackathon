@@ -319,9 +319,14 @@ export function TapToTalk() {
             break;
           case "reply-delta":
             if (typeof message.text !== "string") return;
-            patchTurn(id, {
-              reply: `${repliesRef.current.get(id) ?? ""}${message.text}`,
-            });
+            // Append: each fragment extends the visible reply. Never
+            // replace, and never clear between the tool step and the
+            // answer — the final "reply" paints the complete text.
+            {
+              const next = `${repliesRef.current.get(id) ?? ""}${message.text}`;
+              repliesRef.current.set(id, next);
+              patchTurn(id, { reply: next });
+            }
             break;
           case "reply":
             if (typeof message.text !== "string") return;
@@ -621,12 +626,13 @@ export function TapToTalk() {
                 controllersRef.current.delete(controller);
                 failTurn(id, message, code ?? "E-NET");
               },
-              onReplyDelta: (text) =>
-                patchTurn(id, {
-                  reply: `${
-                    repliesRef.current.get(id) ?? ""
-                  }${text}`,
-                }),
+              onReplyDelta: (text) => {
+                // Append, same as the bridge path: never replace, never
+                // clear between the tool step and the answer.
+                const next = `${repliesRef.current.get(id) ?? ""}${text}`;
+                repliesRef.current.set(id, next);
+                patchTurn(id, { reply: next });
+              },
               onReply: (text) => {
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
