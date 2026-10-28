@@ -34,6 +34,19 @@ function hasVisibleContent(turn: {
   );
 }
 
+/**
+ * Mean-abs energy above which a captured frame counts as voiced audio.
+ * Mirrors the VAD threshold in capture.ts: pre-roll and near-silence stay
+ * below it, real speech stays above.
+ */
+const VOICE_ENERGY_THRESHOLD = 200;
+
+function countVoiced(frame: Int16Array): boolean {
+  let energy = 0;
+  for (let i = 0; i < frame.length; i++) energy += Math.abs(frame[i]);
+  return frame.length > 0 && energy / frame.length > VOICE_ENERGY_THRESHOLD;
+}
+
 export function TapToTalk() {
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -56,6 +69,10 @@ export function TapToTalk() {
   // Turns whose stream already ended (done/error/timeout): their replies
   // are history. Only a still-open turn's reply can be interrupted.
   const settledTurnsRef = useRef(new Set<number>());
+  // Consecutive silent turns (buffers with no voiced audio). The E-VAD
+  // banner shows only when silence repeats; a single silent turn closes
+  // quietly. Any turn with voice or content resets it to zero.
+  const silentStreakRef = useRef(0);
 
   const stopSession = useCallback(() => {
     sessionRef.current = false;
@@ -181,6 +198,8 @@ export function TapToTalk() {
         postRetried: boolean;
         /** Audio as it stood when speech ended (no inter-turn tail). */
         endFrames: Int16Array[] | null;
+        /** Frames with real voice (energy above the VAD threshold). */
+        voiced: number;
       }
       const transports = new Map<number, TurnTransport>();
 
@@ -189,12 +208,34 @@ export function TapToTalk() {
         setNoticeCode(code);
       };
 
+      /**
+       * E-VAD gate: the "I didn't hear anything" banner shows only for a
+       * turn whose buffer held no voiced audio, and only when silence
+       * repeats on consecutive turns. A single silent turn closes quietly,
+       * and a turn that did carry voice never shows it (that is not
+       * silence, even when the transcript came back empty).
+       */
+      const handleVadCandidate = (id: number) => {
+        const voiced = transports.get(id)?.voiced ?? 0;
+        if (voiced > 0) {
+          silentStreakRef.current = 0;
+          return;
+        }
+        silentStreakRef.current += 1;
+        if (silentStreakRef.current >= 2) {
+          showNotice(
+            "I didn't hear anything. Just speak and I'll listen.",
+            "E-VAD",
+          );
+        }
+      };
+
       const armQuiet = () => {
         window.clearTimeout(quietTimerRef.current);
         quietTimerRef.current = window.setTimeout(() => {
           if (!sessionRef.current) return;
+          handleVadCandidate(currentId);
           removeTurn(currentId);
-          showNotice("I didn't hear anything. Just speak and I'll listen.", "E-VAD");
           openTurn();
         }, NO_SPEECH_TIMEOUT_MS);
       };
@@ -215,6 +256,7 @@ export function TapToTalk() {
           failed: false,
           postRetried: false,
           endFrames: null,
+          voiced: 0,
         });
         setTurns((prev) => [
           ...prev,
@@ -269,6 +311,7 @@ export function TapToTalk() {
             if (typeof message.transcript !== "string") return;
             if ((message as { final?: unknown }).final === true) {
               finalReceivedRef.current.add(id);
+              if (message.transcript.trim() !== "") silentStreakRef.current = 0;
               patchTurn(id, { final: message.transcript, interim: "" });
             } else {
               patchTurn(id, { interim: message.transcript });
@@ -287,6 +330,12 @@ export function TapToTalk() {
             break;
           case "notice":
             if (typeof message.message !== "string") return;
+            if (typeof message.code === "string" && message.code === "E-VAD") {
+              // Server heard nothing intelligible: show it only when the
+              // turn's buffer truly held no voice, and only on repeat.
+              handleVadCandidate(id);
+              break;
+            }
             showNotice(
               message.message,
               typeof message.code === "string" ? message.code : null,
@@ -565,6 +614,7 @@ export function TapToTalk() {
                 // Do not settle here: reply/notice/error follow on the
                 // same stream; the turn ends at `done`.
                 finalReceivedRef.current.add(id);
+                if (transcript.trim() !== "") silentStreakRef.current = 0;
                 patchTurn(id, { final: transcript, interim: "" });
               },
               onErrorEvent: (message, code) => {
@@ -581,7 +631,12 @@ export function TapToTalk() {
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
               },
-              onNotice: (message, code) => showNotice(message, code ?? null),
+              onNotice: (message, code) => {
+                // Empty-transcript notices pass the same silence gate as
+                // the bridge path; anything else shows directly.
+                if (code === "E-VAD") handleVadCandidate(id);
+                else showNotice(message, code ?? null);
+              },
               onDone: () => {
                 controllersRef.current.delete(controller);
                 if (!sessionRef.current) return;
@@ -617,6 +672,7 @@ export function TapToTalk() {
             // the POST fallback.
             const transport = transports.get(currentId);
             if (transport && !transport.failed) {
+              if (countVoiced(frame)) transport.voiced += 1;
               transport.frames.push(frame.slice());
               const socket = transport.socket;
               if (socket && socket.readyState === WebSocket.OPEN) {
