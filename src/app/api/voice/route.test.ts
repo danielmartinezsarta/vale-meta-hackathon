@@ -7,6 +7,8 @@ let server: WebSocketServer;
 let url = "";
 let closedCount = 0;
 let holdFinal = false;
+let emptyFinal = false;
+let dropOnAudio = false;
 
 beforeAll(async () => {
   server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
@@ -17,7 +19,10 @@ beforeAll(async () => {
 
   server.on("connection", (socket: WebSocket) => {
     socket.on("message", (data, isBinary) => {
-      if (isBinary) return;
+      if (isBinary) {
+        if (dropOnAudio) socket.close(1013, "dropped");
+        return;
+      }
       let message: { type?: string };
       try {
         message = JSON.parse(data.toString()) as typeof message;
@@ -29,7 +34,7 @@ beforeAll(async () => {
         socket.send(
           JSON.stringify({
             type: "transcript",
-            transcript: "canned from fake asr",
+            transcript: emptyFinal ? "" : "canned from fake asr",
             final: true,
             audioProcessedMs: 800,
           }),
@@ -54,7 +59,12 @@ function fakeAgentReply(text: string): Response {
     `event: response.completed\ndata: ${JSON.stringify({
       response: {
         id: "resp_test",
-        output: [{ type: "output_text", text }],
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text }],
+          },
+        ],
         usage: { input_tokens: 100, output_tokens: 20 },
       },
     })}\n\n`;
@@ -154,6 +164,66 @@ describe("POST /api/voice", () => {
       "second turn",
     );
     spy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("stays silent and skips the model when the ASR final is empty", async () => {
+    emptyFinal = true;
+    const modelFetch = vi.fn(async () => fakeAgentReply("should not happen"));
+    vi.stubGlobal("fetch", modelFetch);
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
+      logs.push(String(line));
+    });
+    const request = new Request("http://localhost/api/voice", {
+      method: "POST",
+      headers: { "content-type": "audio/l16" },
+      body: pcmBody(4800),
+      // @ts-expect-error Node fetch streaming upload flag
+      duplex: "half",
+    });
+    const text = await POST(request).then((response) => response.text());
+    expect(text).toContain("event: notice");
+    expect(text).toContain("event: done");
+    expect(text).not.toContain("event: reply");
+    expect(modelFetch).not.toHaveBeenCalled();
+    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    expect(turns).toHaveLength(1);
+    const logged = JSON.parse(turns[0].replace("[voice-turn] ", ""));
+    expect(logged.modelSkipped).toBe(true);
+    expect(logged.ttftMs).toBeNull();
+    spy.mockRestore();
+    vi.unstubAllGlobals();
+    emptyFinal = false;
+  });
+
+  it("reports a lost connection and reconnects cleanly on the next tap", async () => {
+    dropOnAudio = true;
+    vi.stubGlobal("fetch", stubAgent("unused"));
+    const dropped = await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: { "content-type": "audio/l16" },
+        body: pcmBody(4800),
+        // @ts-expect-error Node fetch streaming upload flag
+        duplex: "half",
+      }),
+    ).then((response) => response.text());
+    expect(dropped).toContain("event: error");
+    expect(dropped).toMatch(/connection lost|had a problem/i);
+
+    dropOnAudio = false;
+    const retried = await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: { "content-type": "audio/l16" },
+        body: pcmBody(4800),
+        // @ts-expect-error Node fetch streaming upload flag
+        duplex: "half",
+      }),
+    ).then((response) => response.text());
+    expect(retried).toContain("event: final");
+    expect(retried).toContain("event: reply");
     vi.unstubAllGlobals();
   });
 

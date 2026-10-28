@@ -69,6 +69,7 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
       const call = fetchMock.mock.calls.length;
       if (call > 2) return new Promise(() => {}); // third turn hangs: session waits
       return Promise.resolve({
+        ok: true,
         body: sseBody(transcripts[call - 1]),
       });
     });

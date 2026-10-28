@@ -51,12 +51,25 @@ function extractDeltaText(eventType: string, data: Record<string, unknown>): str
   return "";
 }
 
+interface MessageContent {
+  type?: string;
+  text?: string;
+}
+
 function outputText(items: ResponsesOutputItem[] | undefined): string {
   if (!items) return "";
-  return items
-    .filter((item) => item.type === "output_text" && typeof item.text === "string")
-    .map((item) => item.text as string)
-    .join("");
+  const texts: string[] = [];
+  for (const item of items) {
+    if (item.type !== "message") continue;
+    const content = (item as unknown as { content?: MessageContent[] }).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part.type === "output_text" && typeof part.text === "string") {
+        texts.push(part.text);
+      }
+    }
+  }
+  return texts.join("");
 }
 
 function functionCalls(

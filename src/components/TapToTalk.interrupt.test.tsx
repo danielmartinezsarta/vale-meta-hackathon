@@ -65,7 +65,10 @@ describe("interruption (fake-device fallback)", () => {
       if (fetchMock.mock.calls.length > 1) {
         return new Promise(() => {}); // later turns hang: session waits
       }
-      return Promise.resolve({ body: sseTurn() } as unknown as Response);
+      return Promise.resolve({
+        ok: true,
+        body: sseTurn(),
+      } as unknown as Response);
     });
     vi.stubGlobal("fetch", fetchMock);
 

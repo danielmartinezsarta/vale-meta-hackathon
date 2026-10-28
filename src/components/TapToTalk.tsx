@@ -86,6 +86,7 @@ export function TapToTalk() {
   const captureRef = useRef<{ stop: () => void } | null>(null);
   const repliesRef = useRef(new Map<number, string>());
   const lastInterruptMsRef = useRef(0);
+  const finalReceivedRef = useRef(new Set<number>());
 
   const stopSession = useCallback(() => {
     sessionRef.current = false;
@@ -112,12 +113,34 @@ export function TapToTalk() {
     setTurns((prev) => prev.filter((turn) => turn.id !== id));
   }, []);
 
+  /** End the whole session with a plain-language banner (tap to retry). */
+  const endSessionWithAlert = useCallback(
+    (message: string) => {
+      sessionRef.current = false;
+      abortRef.current?.abort();
+      abortRef.current = null;
+      try {
+        captureRef.current?.stop();
+      } catch {
+        /* already stopped */
+      }
+      captureRef.current = null;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      finalReceivedRef.current.clear();
+      repliesRef.current.clear();
+      setAlert(message);
+      setStatus("idle");
+    },
+    [],
+  );
+
   const runOneTurn = useCallback(
     async (stream: MediaStream): Promise<void> => {
       const id = turnIdRef.current++;
       setTurns((prev) => [...prev, { id, interim: "", final: null, reply: null }]);
 
-      return new Promise<void>((resolve, reject) => {
+      return new Promise<void>((resolve) => {
         let pipe: ReturnType<typeof makePcmPipe> | null = null;
         let posted = false;
         let settled = false;
@@ -132,6 +155,15 @@ export function TapToTalk() {
           }
           if (captureRef.current === capture) captureRef.current = null;
           fn();
+        };
+        // A failed turn ends the session so the user can tap to retry.
+        // A turn that already showed its final keeps its bubble (test 25).
+        const failTurn = (message: string) => {
+          settle(() => {
+            if (!finalReceivedRef.current.has(id)) removeTurn(id);
+            endSessionWithAlert(message);
+            resolve();
+          });
         };
         const quietTimer = window.setTimeout(() => {
           settle(() => {
@@ -156,19 +188,32 @@ export function TapToTalk() {
             signal: controller.signal,
           })
             .then(async (response) => {
-              if (!response.body) throw new Error("empty response");
+              if (!response.ok) {
+                let message = "Connection lost. Tap to try again.";
+                try {
+                  const problem = (await response.json()) as {
+                    error?: unknown;
+                  };
+                  if (typeof problem.error === "string") message = problem.error;
+                } catch {
+                  /* keep the default */
+                }
+                failTurn(message);
+                return;
+              }
+              if (!response.body) {
+                failTurn("Connection lost. Tap to try again.");
+                return;
+              }
               await parseSseStream(response.body, {
                 onInterim: (transcript) => patchTurn(id, { interim: transcript }),
-                onFinal: (transcript) =>
-                  settle(() => {
-                    patchTurn(id, { final: transcript, interim: "" });
-                    resolve();
-                  }),
-                onErrorEvent: (message) =>
-                  settle(() => {
-                    removeTurn(id);
-                    reject(new Error(message));
-                  }),
+                onFinal: (transcript) => {
+                  // Do not settle here: reply/notice/error follow on the
+                  // same stream; the turn ends at `done`.
+                  finalReceivedRef.current.add(id);
+                  patchTurn(id, { final: transcript, interim: "" });
+                },
+                onErrorEvent: (message) => failTurn(message),
                 onReplyDelta: (text) =>
                   patchTurn(id, {
                     reply: `${
@@ -183,17 +228,12 @@ export function TapToTalk() {
                 onDone: () => settle(() => resolve()),
               });
             })
-            .catch((error: unknown) => {
+            .catch(() => {
               if (controller.signal.aborted) {
                 settle(() => resolve());
                 return;
               }
-              settle(() => {
-                removeTurn(id);
-                reject(
-                  error instanceof Error ? error : new Error("Connection lost."),
-                );
-              });
+              failTurn("Connection lost. Tap to try again.");
             });
         };
 
@@ -237,7 +277,7 @@ export function TapToTalk() {
         captureRef.current = capture;
       });
     },
-    [patchTurn, removeTurn],
+    [patchTurn, removeTurn, endSessionWithAlert],
   );
 
   const runSession = useCallback(
@@ -247,23 +287,12 @@ export function TapToTalk() {
         while (sessionRef.current) {
           await runOneTurn(stream);
         }
-      } catch (error) {
-        sessionRef.current = false;
-        setAlert(
-          error instanceof Error ? error.message : "Connection lost. Tap to try again.",
-        );
-        setStatus("idle");
-        try {
-          captureRef.current?.stop();
-        } catch {
-          /* already stopped */
-        }
-        captureRef.current = null;
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
+      } catch {
+        // Backstop: turn failures already end the session themselves.
+        endSessionWithAlert("Connection lost. Tap to try again.");
       }
     },
-    [runOneTurn],
+    [runOneTurn, endSessionWithAlert],
   );
 
   const handleTap = useCallback(async () => {

@@ -47,7 +47,12 @@ describe("agent turn", () => {
         );
         return sseResponse([
           { type: "response.output_text.delta", data: { delta: "Got it." } },
-          completed("resp_1", [{ type: "output_text", text: "Got it." }]),
+          completed("resp_1", [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "Got it." }],
+            },
+          ]),
         ]);
       }),
     );
@@ -96,7 +101,15 @@ describe("agent turn", () => {
         }
         return sseResponse([
           completed("resp_2", [
-            { type: "output_text", text: "You have slots at 10:00 and 14:30." },
+            {
+              type: "message",
+              content: [
+                {
+                  type: "output_text",
+                  text: "You have slots at 10:00 and 14:30.",
+                },
+              ],
+            },
           ]),
         ]);
       }),
