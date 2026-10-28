@@ -22,58 +22,6 @@ function isPermissionDenied(error: unknown): boolean {
   );
 }
 
-function makePcmPipe(): {
-  readable: ReadableStream<Uint8Array>;
-  push: (frame: Int16Array) => void;
-  close: () => void;
-} {
-  const queue: Uint8Array[] = [];
-  let waiting: ((chunk: Uint8Array | null) => void) | null = null;
-  let closed = false;
-  const push = (frame: Int16Array) => {
-    const bytes = new Uint8Array(frame.buffer, frame.byteOffset, frame.byteLength);
-    if (waiting) {
-      const resolve = waiting;
-      waiting = null;
-      resolve(bytes);
-    } else {
-      queue.push(bytes);
-    }
-  };
-  const close = () => {
-    closed = true;
-    if (waiting) {
-      const resolve = waiting;
-      waiting = null;
-      resolve(null);
-    }
-  };
-  const readable = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      const next = queue.shift();
-      if (next) {
-        controller.enqueue(next);
-        return;
-      }
-      if (closed) {
-        controller.close();
-        return;
-      }
-      return new Promise<void>((resolve) => {
-        waiting = (chunk) => {
-          if (chunk) controller.enqueue(chunk);
-          else controller.close();
-          resolve();
-        };
-      });
-    },
-    cancel() {
-      close();
-    },
-  });
-  return { readable, push, close };
-}
-
 export function TapToTalk() {
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -144,7 +92,6 @@ export function TapToTalk() {
       setTurns((prev) => [...prev, { id, interim: "", final: null, reply: null }]);
 
       return new Promise<void>((resolve) => {
-        let pipe: ReturnType<typeof makePcmPipe> | null = null;
         let posted = false;
         let settled = false;
         const settle = (fn: () => void) => {
@@ -177,18 +124,27 @@ export function TapToTalk() {
           });
         }, NO_SPEECH_TIMEOUT_MS);
 
-        const postTurn = (firstFrames: Int16Array[]) => {
-          pipe = makePcmPipe();
-          for (const frame of firstFrames) pipe.push(frame);
+        const postTurn = (frames: Int16Array[]) => {
+          // One buffered body per turn: Safari on iOS rejects streaming
+          // request bodies (`duplex: "half"`), so the audio never left the
+          // phone. The route reads the full body the same way.
+          const total = frames.reduce((n, frame) => n + frame.length, 0);
+          const pcm = new Int16Array(total);
+          let offset = 0;
+          for (const frame of frames) {
+            pcm.set(frame, offset);
+            offset += frame.length;
+          }
+          const body = new Blob([pcm.buffer as ArrayBuffer], {
+            type: "audio/l16",
+          });
           const controller = new AbortController();
           abortRef.current = controller;
           setNotice(null);
           void fetch("/api/voice", {
             method: "POST",
             headers: { "content-type": "audio/l16" },
-            body: pipe.readable,
-            // @ts-expect-error streaming upload flag (supported in browsers)
-            duplex: "half",
+            body,
             signal: controller.signal,
           })
             .then(async (response) => {
@@ -247,13 +203,13 @@ export function TapToTalk() {
           {
             onFrame: (frame) => {
               if (!posted) pending.push(frame.slice());
-              else pipe?.push(frame);
             },
             onSpeechStart: () => {
               if (!sessionRef.current) return;
               // Interruption (test 18): new speech dismisses only the
               // still-open turn's reply. Finished turns keep theirs, so a
               // multi-turn conversation accumulates (tests 11, B2).
+              // No POST here: frames buffer until speech ends (single body).
               const dismissed: number[] = [];
               setTurns((prev) =>
                 prev.map((turn) =>
@@ -265,12 +221,11 @@ export function TapToTalk() {
               for (const turnId of dismissed) {
                 repliesRef.current.delete(turnId);
               }
+            },
+            onSpeechEnd: () => {
               if (posted) return;
               posted = true;
               postTurn(pending.splice(0));
-            },
-            onSpeechEnd: () => {
-              pipe?.close();
               try {
                 capture.stop();
               } catch {
