@@ -9,7 +9,6 @@ vi.mock("@/lib/capture", () => ({
 
 const mockStartCapture = vi.mocked(startCapture);
 
-/** Scriptable stand-in for the browser WebSocket (proposal A bridge). */
 class FakeWs {
   static instances: FakeWs[] = [];
   static CONNECTING = 0;
@@ -40,7 +39,6 @@ class FakeWs {
     this.readyState = 1;
     this.onopen?.();
   }
-  /** Mid-turn drop after a live connection. */
   drop(): void {
     this.readyState = 3;
     this.onclose?.();
@@ -79,7 +77,6 @@ function speechFrame(): Int16Array {
   return new Int16Array(960).fill(4000);
 }
 
-// Buffered-POST answer for the retried turn: final, reply, done.
 function sseRetryTurn() {
   const raw =
     `event: final\ndata: {"transcript":"second final","audioProcessedMs":800}\n\n` +
@@ -127,7 +124,6 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
       expect(driver).not.toBeNull();
     });
 
-    // First turn completes cleanly over the bridge.
     driver!.onFrame(speechFrame());
     driver!.onSpeechStart();
     await waitFor(() => {
@@ -148,7 +144,6 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
       expect(screen.getByText("first reply from Vale")).toBeTruthy();
     });
 
-    // Second turn: speech ends, then the socket drops twice pre-final.
     driver!.onFrame(speechFrame());
     driver!.onSpeechStart();
     await waitFor(() => {
@@ -164,7 +159,6 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
       ).toBe(true);
     });
 
-    // First drop: reopen once. Second drop, still no final: one POST retry.
     second.drop();
     await waitFor(
       () => {
@@ -176,8 +170,6 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
     third.open();
     third.drop();
 
-    // The retried turn answers over POST under its own id: a single agent
-    // call, and the earlier turn keeps its own reply.
     await waitFor(() => {
       expect(screen.getByText("second reply from Vale")).toBeTruthy();
     });

@@ -86,7 +86,6 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
       expect(seen.length).toBe(1);
     });
 
-    // First utterance: posts the first turn.
     burst(seen[0]);
     await waitFor(() => {
       expect(screen.getByText("first phrase here")).toBeTruthy();
@@ -95,8 +94,6 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
       expect(screen.getByText("First reply.")).toBeTruthy();
     });
 
-    // Second utterance on the SAME capture, straight after the first
-    // turn's reply: no mic restart in between, nothing lost in a gap.
     burst(seen[0]);
     await waitFor(() => {
       expect(screen.getByText("second phrase here")).toBeTruthy();
@@ -105,8 +102,6 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
       expect(screen.getByText("Second reply.")).toBeTruthy();
     });
 
-    // One capture for the whole session: the mic never stopped and no
-    // second capture was started between the turns.
     expect(mockStartCapture).toHaveBeenCalledTimes(1);
     expect(stopMock).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(2);

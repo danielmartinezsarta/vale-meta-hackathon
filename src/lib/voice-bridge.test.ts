@@ -8,7 +8,6 @@ import {
   type BridgeAgentResult,
 } from "./voice-bridge";
 
-/** Minimal browser side: the bridge only uses send/close/on/readyState. */
 class FakeBrowser extends EventEmitter {
   readonly OPEN = 1;
   readyState = 1;
@@ -22,7 +21,6 @@ class FakeBrowser extends EventEmitter {
     this.closed = { code, reason };
     this.emit("close");
   }
-  /** Simulate an inbound frame from the browser tab. */
   peerMessage(data: unknown): void {
     this.emit("message", data);
   }
@@ -141,7 +139,6 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
         ).toBe(true);
       });
 
-      // Speech audio while the person talks: partial arrives live, pre-final.
       browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
       await vi.waitFor(() => {
         expect(
@@ -152,9 +149,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
         ).toBe(true);
       });
 
-      // End of speech arrives as a Buffer (browser text frames reach the
-      // handler as Buffer, never as string): it must end the turn, never
-      // travel to Meta disguised as audio.
+      // Control frames arrive as Buffer too; they must never travel to Meta as audio.
       const audioBefore = receivedBinaryBytes;
       browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
       await vi.waitFor(() => {

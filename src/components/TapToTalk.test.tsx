@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
 
 vi.mock("@/lib/capture", () => ({
-  // jsdom has no AudioContext: stay silent, never speak, never throw.
+  // jsdom has no AudioContext.
   startCapture: vi.fn(() => ({ stop: () => {} })),
 }));
 
@@ -50,13 +50,11 @@ describe("microphone permission", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/microphone is blocked/i);
-    // Re-enable guidance for Safari on iPhone and Chrome.
     expect(alert.textContent).toMatch(/iPhone.*Safari/i);
     expect(alert.textContent).toMatch(/Chrome/i);
-    // Exactly one prompt for one tap: no loops, no crash.
     expect(getUserMedia).toHaveBeenCalledTimes(1);
 
-    // Tapping again retries once more (user-initiated), still no loop.
+    // Tapping again retries once more, still no loop.
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(getUserMedia).toHaveBeenCalledTimes(2);

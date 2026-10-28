@@ -39,7 +39,6 @@ function silentFrame(): Int16Array {
   return new Int16Array(960).fill(0);
 }
 
-// Server heard nothing intelligible: E-VAD notice, then the turn ends.
 function sseVadNotice() {
   const raw =
     `event: notice\ndata: {"message":"I didn't hear anything. Just speak and I'll listen.","code":"E-VAD"}\n\n` +
@@ -101,8 +100,6 @@ describe("silence-aware E-VAD banner (fix 3)", () => {
       driver!.onSpeechEnd();
     };
 
-    // Turn with real voice in the buffer: not silence, never a banner,
-    // even though the transcript came back empty.
     speak(voiceFrame());
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -112,7 +109,6 @@ describe("silence-aware E-VAD banner (fix 3)", () => {
     });
     expect(vadBanner()).toBeNull();
 
-    // First silent turn: closes quietly, no banner.
     speak(silentFrame());
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -122,7 +118,6 @@ describe("silence-aware E-VAD banner (fix 3)", () => {
     });
     expect(vadBanner()).toBeNull();
 
-    // Silence repeats on the next turn: now the banner shows.
     speak(silentFrame());
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(3);

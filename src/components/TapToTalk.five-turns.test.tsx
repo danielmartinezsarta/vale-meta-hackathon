@@ -46,9 +46,7 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
       mediaDevices: { getUserMedia },
     });
 
-    // Fake device: one capture for the whole session fires one burst per
-    // turn on the same callbacks (six bursts: five turns plus a sixth
-    // whose fetch hangs, so the session stays open).
+    // Six bursts: five turns plus a sixth whose fetch hangs.
     mockStartCapture.mockImplementation((_stream, callbacks) => {
       const frame = new Int16Array(960).fill(4000);
       let fired = 0;
@@ -83,7 +81,6 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<TapToTalk />);
-    // Exactly one tap for the whole conversation.
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     expect(getUserMedia).toHaveBeenCalledTimes(1);
 
@@ -96,12 +93,8 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
       });
     }
 
-    // Five transcript bubbles and five Vale replies, all in one session.
     expect(screen.getAllByText("You:")).toHaveLength(5);
     expect(screen.getAllByText("Vale:")).toHaveLength(5);
-    // The sixth burst posts a sixth turn whose fetch hangs: the session
-    // stays open on the same capture. Wait for the post (burst cadence
-    // is independent of reply rendering).
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(6);
     });

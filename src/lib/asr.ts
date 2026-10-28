@@ -3,8 +3,7 @@ import WebSocket from "ws";
 export const ASR_URL = "wss://api.meta.ai/v1/asr/realtime";
 export const ASR_MODEL = "muse-voice-transcribe-1.0";
 export const ASR_ENCODING = "PCM_24KHZ";
-/** Native engine rate: 24 kHz mono 16-bit = 48 000 bytes/s. */
-export const ASR_SAMPLE_RATE = 24000;
+export const ASR_SAMPLE_RATE = 24000; // 24 kHz mono 16-bit = 48 000 bytes/s.
 const HANDSHAKE_TIMEOUT_MS = 10000;
 
 export type AsrEvent =
@@ -27,10 +26,7 @@ export interface OpenAsrOptions {
   onError?: (message: string) => void;
 }
 
-/**
- * Server-side bridge to Muse Voice Transcribe realtime.
- * Holds the Meta key: never import this module (or the key) from client code.
- */
+// Server-side only: holds the Meta key, never import from client code.
 export function openAsrConnection(
   options: OpenAsrOptions,
 ): Promise<AsrConnection> {
@@ -156,8 +152,7 @@ export function openAsrConnection(
         clearTimeout(timer);
         reject(new Error("asr connection closed before handshake"));
       } else if (!gotFinal) {
-        // Only a pre-final close is a failure. After the final, Meta
-        // closes the socket as the normal end of a PUSH_TO_TALK turn.
+        // Only a pre-final close is a failure; after the final Meta closes the socket normally.
         options.onError?.("connection lost");
       }
     });

@@ -39,7 +39,6 @@ beforeAll(async () => {
           socket.close(1013, "dropped");
           return;
         }
-        // A1: live interim while audio flows, ahead of the final.
         if (!interimSent) {
           interimSent = true;
           socket.send(
@@ -60,7 +59,7 @@ beforeAll(async () => {
       }
       if (message.type === "endStream") {
         if (holdFinal) return;
-        // Silence in, silence out: the fake mimics the real engine.
+        // The fake mimics the real engine: silence in, silence out.
         socket.send(
           JSON.stringify({
             type: "transcript",
@@ -69,8 +68,7 @@ beforeAll(async () => {
             audioProcessedMs: 800,
           }),
         );
-        // Like Meta on PUSH_TO_TALK: close after the final. The route must
-        // still deliver the agent reply on the same SSE stream (no error).
+        // Meta closes after the final on PUSH_TO_TALK.
         socket.close(1000, "turn complete");
         return;
       }
@@ -87,7 +85,6 @@ beforeAll(async () => {
   vi.stubEnv("META_ASR_URL", url);
 });
 
-/** Minimal fake of the Model API streaming reply. */
 function fakeAgentReply(text: string): Response {
   const raw =
     `event: response.output_text.delta\ndata: ${JSON.stringify({ delta: text.slice(0, 4) })}\n\n` +
@@ -117,7 +114,7 @@ afterAll(async () => {
 
 function pcmBody(bytes: number, silent = false): ReadableStream<Uint8Array> {
   const chunk = new Uint8Array(bytes);
-  // Non-silent speech-like energy so the fake ASR answers with a transcript.
+  // Speech-like energy so the fake ASR answers with a transcript.
   if (!silent) chunk.fill(1000 % 256);
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -140,7 +137,6 @@ describe("POST /api/voice", () => {
     const response = await POST(request);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     const text = await response.text();
-    // A1: interim arrives live through route → SSE, ahead of the final.
     const interimAt = text.indexOf("event: interim");
     const finalAt = text.indexOf("event: final");
     expect(interimAt).toBeGreaterThan(-1);

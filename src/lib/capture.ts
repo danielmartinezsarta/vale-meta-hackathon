@@ -1,19 +1,8 @@
-/**
- * Browser microphone capture: mono 16-bit PCM at 24 kHz (the native rate of
- * the realtime transcription engine), with a tiny energy-based voice activity
- * detector. Emits exactly one utterance per speech burst: pre-roll + speech
- * frames, bracketed by onSpeechStart/onSpeechEnd. Silence emits nothing, so
- * a silent turn never reaches the server (and never calls the model).
- */
+// Mic capture: mono 16-bit PCM at 24 kHz with energy VAD; silence emits nothing.
 
 export const CAPTURE_RATE = 24000;
-/** 40 ms frames at 24 kHz mono. */
-export const FRAME_SAMPLES = 960;
-/**
- * Pre-roll kept so a soft onset is not clipped. 25 frames × 40 ms ≈ 1 s,
- * enough to cover speech that stays under the VAD threshold on an iPhone
- * mic at normal pace (bug 2: 10 frames / 400 ms lost the start of phrases).
- */
+export const FRAME_SAMPLES = 960; // 40 ms frames at 24 kHz mono.
+// 25 frames x 40 ms ≈ 1 s of pre-roll so a soft onset is never clipped.
 export const PREROLL_FRAMES = 25;
 
 export function floatToPcm16(input: Float32Array): Int16Array {
@@ -45,7 +34,6 @@ export function resampleLinear(
 
 export type DetectorEvent = "silence" | "speech-start" | "speech" | "speech-end";
 
-/** Tiny energy VAD over 16-bit mono frames. */
 export class SpeechDetector {
   private speaking = false;
   private quietFrames = 0;
@@ -55,15 +43,10 @@ export class SpeechDetector {
   constructor(
     options: { threshold?: number; endSilenceMs?: number; frameMs?: number } = {},
   ) {
-    // Mean-abs 200: the speech fixture's softest onset frame scores 244,
-    // so the old 500 missed the start of phrases on an iPhone mic (bug 2).
-    // Digital silence scores 0, far below.
+    // Mean-abs 200: the fixture's softest onset scores 244, silence scores 0.
     this.threshold = options.threshold ?? 200;
     const frameMs = options.frameMs ?? 40;
-    // 800 ms: the turn posts ~1.2 s earlier than the old 2000 ms wait, so
-    // the first text arrives sooner (feedback ticket). Hesitation pauses
-    // under ~0.8 s stay in one turn; longer pauses open a new turn on the
-    // same gapless capture, so nothing is lost, only split.
+    // 800 ms: short pauses stay in one turn, longer ones split without losing audio.
     this.endSilenceFrames = Math.max(
       1,
       Math.round((options.endSilenceMs ?? 800) / frameMs),
@@ -104,7 +87,7 @@ export interface CaptureCallbacks {
   onFrame: (frame: Int16Array) => void;
   onSpeechStart: () => void;
   onSpeechEnd: () => void;
-  /** Instant listening feedback, 0..1 mic level. Optional; never required. */
+  /** Listening feedback, 0..1 mic level; optional. */
   onLevel?: (level: number) => void;
 }
 
@@ -112,10 +95,6 @@ export interface CaptureHandle {
   stop: () => void;
 }
 
-/**
- * Capture from a mic stream. Frames flow only inside an utterance
- * (pre-roll + speech up to speech-end); silence flows nowhere.
- */
 export function startCapture(
   stream: MediaStream,
   callbacks: CaptureCallbacks,
@@ -156,9 +135,7 @@ export function startCapture(
       }
     }
     const resampled = resampleLinear(mono, actualRate);
-    // Instant level for the listening meter, from the same samples the VAD
-    // already sees: no extra audio API, so it works wherever capture works
-    // (iPhone Safari and Chrome included).
+    // Same samples as the VAD: no extra audio API.
     if (callbacks.onLevel) {
       let sum = 0;
       for (let i = 0; i < mono.length; i++) sum += Math.abs(mono[i]);

@@ -15,7 +15,6 @@ function stubMic() {
   });
 }
 
-// SSE body for a turn that closed with an empty transcript and no reply.
 function sseEmptyTurn() {
   const raw =
     `event: final\ndata: {"transcript":"","audioProcessedMs":800}\n\n` +
@@ -46,8 +45,6 @@ describe("empty turns stay hidden (fix 1)", () => {
   it("an empty open turn draws no row and keeps the listening hint", async () => {
     stubMic();
 
-    // Capture opens the session but no speech ever arrives: the single
-    // open turn stays empty and the session waits.
     mockStartCapture.mockImplementation(() => ({ stop: () => {} }));
     const fetchMock = vi.fn(() => new Promise(() => {}));
     vi.stubGlobal("fetch", fetchMock);
@@ -61,7 +58,6 @@ describe("empty turns stay hidden (fix 1)", () => {
       ).toBeTruthy();
     });
 
-    // The open but empty turn leaves no row behind.
     expect(
       screen.getByLabelText("Conversation turns").querySelectorAll("li"),
     ).toHaveLength(0);
@@ -76,8 +72,7 @@ describe("empty turns stay hidden (fix 1)", () => {
   it("a closed turn that never showed anything is pruned", async () => {
     stubMic();
 
-    // One speech burst whose stream ends with an empty final and no
-    // reply; later turns stay silent so the session waits.
+    // Later turns stay silent so the session waits.
     let fired = false;
     mockStartCapture.mockImplementation((_stream, callbacks) => {
       if (fired) return { stop: () => {} };
@@ -101,8 +96,6 @@ describe("empty turns stay hidden (fix 1)", () => {
     render(<TapToTalk />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
-    // The empty turn closes: fetch ran, but no row remains and the
-    // listening hint is back.
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });

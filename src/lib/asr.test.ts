@@ -54,7 +54,7 @@ beforeAll(async () => {
             audioProcessedMs: 1000,
           }),
         );
-        // Like Meta on PUSH_TO_TALK: the server closes after the final.
+        // Meta closes after the final on PUSH_TO_TALK.
         socket.close(1000, "turn complete");
         return;
       }
@@ -122,7 +122,6 @@ describe("server ASR bridge", () => {
       expect(events.some((e) => e.kind === "final")).toBe(true);
     });
     expect(binaryBytes).toBe(4800);
-    // Partials arrive in order; CUMULATIVE means the UI replaces, not appends.
     expect(events.map((e) => e.kind)).toEqual(["interim", "interim", "final"]);
     expect(events[events.length - 1]).toMatchObject({
       kind: "final",
@@ -167,8 +166,6 @@ describe("server ASR bridge", () => {
     await vi.waitFor(() => {
       expect(events.some((e) => e.kind === "final")).toBe(true);
     });
-    // The fake server closes the socket right after the final, like Meta:
-    // this connection (not a global counter) must observe the close.
     await vi.waitFor(() => {
       expect(conn.open).toBe(false);
     });

@@ -100,25 +100,20 @@ describe("interruption (fake-device fallback)", () => {
     });
     burst(seen[0]);
 
-    // Final lands, reply still on its way: nothing to dismiss yet.
     await waitFor(() => {
       expect(screen.getByText("book a refill")).toBeTruthy();
     });
     expect(screen.queryByText("You are booked in.")).toBeNull();
 
-    // The reply arrives and is displayed while the turn stays open.
     turn.replyGate.resolve();
     await screen.findByText("You are booked in.");
 
-    // The user speaks over the displayed reply: it goes away fast.
     const started = performance.now();
     seen[0].onSpeechStart();
     await waitFor(() => {
       expect(screen.queryByText("You are booked in.")).toBeNull();
     });
     expect(performance.now() - started).toBeLessThan(300);
-
-    // The transcript bubble survives the interruption.
     expect(screen.getByText("book a refill")).toBeTruthy();
 
     turn.doneGate.resolve();

@@ -20,7 +20,7 @@ export interface BridgeAgentResult {
 }
 
 export interface VoiceBridgeOptions {
-  /** Browser side of the upgraded Vercel socket (one per turn). */
+  /** Browser side of the upgraded Vercel socket, one per turn. */
   browser: WebSocket;
   key: string;
   metaUrl?: string;
@@ -35,11 +35,7 @@ export interface VoiceBridgeOptions {
   turnTimeoutMs?: number;
 }
 
-/**
- * Browser text frames arrive at the handler as string OR Buffer (never trust
- * the type: try JSON.parse first, treat the rest as binary audio). A control
- * frame is never forwarded to Meta as audio — otherwise the turn never ends.
- */
+// Browser text frames may arrive as Buffer: try JSON first; never forward a control frame as audio.
 export function tryParseControl(
   data: unknown,
 ): { type: "endStream" } | null {
@@ -67,15 +63,7 @@ function sendJson(browser: WebSocket, payload: unknown): void {
   }
 }
 
-/**
- * One live turn: browser <--WS--> Vercel <--WS--> Meta realtime
- * (PUSH_TO_TALK). CUMULATIVE partials stream to the browser while the person
- * speaks; the final freezes the bubble and triggers the Spark reply with the
- * toy tool. The Meta key never leaves the server. Closes both sockets when
- * the turn settles. Reconnection is the client's job: any pre-final drop
- * arrives as an error frame plus a 1011 close, and the client reopens a
- * fresh turn (Meta has no resume; a new socket is a new session).
- */
+// One live turn: browser <--WS--> Vercel <--WS--> Meta (PUSH_TO_TALK); the client reconnects, Meta has no resume.
 export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const {
     browser,
@@ -385,8 +373,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         pendingAudio.push(chunk);
       }
     }
-    // Anything else (ArrayBuffer views from other runtimes) is ignored:
-    // only Buffer audio and JSON control frames are part of the protocol.
+    // Only Buffer audio and JSON control frames are part of the protocol.
   });
 
   const onBrowserGone = () => {

@@ -86,7 +86,6 @@ describe("plain-language errors (fake-device fallback)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/not configured/i);
     expect(alert.textContent).not.toMatch(/at .*:[0-9]+/);
-    // No transcript was ever shown; tapping again retries.
     expect(screen.queryByText("You:")).toBeNull();
     expect(
       screen.getByRole("button", { name: "Tap to talk" }),
@@ -116,7 +115,6 @@ describe("plain-language errors (fake-device fallback)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/trouble answering/i);
     expect(alert.textContent).toMatch(/E-MODEL/);
-    // The transcript bubble remains visible; the session ended for retry.
     expect(screen.getByText("book a refill")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Tap to talk" }),

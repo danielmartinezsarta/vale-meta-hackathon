@@ -2,9 +2,7 @@
 
 const BAR_WIDTH = 120;
 
-/** Instant listening feedback: a plain level bar driven by the mic.
- * Flat single color, no glow or gradient. Starts moving with the first
- * sound because it reads the same samples as the voice detector. */
+// Listening level bar driven by the same samples as the voice detector.
 export function LevelMeter({ level }: { level: number }) {
   const clamped = Math.max(0, Math.min(1, level));
   const pct = Math.round(clamped * 100);

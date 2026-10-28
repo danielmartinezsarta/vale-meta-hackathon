@@ -34,11 +34,7 @@ function hasVisibleContent(turn: {
   );
 }
 
-/**
- * Mean-abs energy above which a captured frame counts as voiced audio.
- * Mirrors the VAD threshold in capture.ts: pre-roll and near-silence stay
- * below it, real speech stays above.
- */
+// Mirrors the VAD threshold in capture.ts.
 const VOICE_ENERGY_THRESHOLD = 200;
 
 function countVoiced(frame: Int16Array): boolean {
@@ -66,12 +62,9 @@ export function TapToTalk() {
   const captureRef = useRef<{ stop: () => void } | null>(null);
   const repliesRef = useRef(new Map<number, string>());
   const finalReceivedRef = useRef(new Set<number>());
-  // Turns whose stream already ended (done/error/timeout): their replies
-  // are history. Only a still-open turn's reply can be interrupted.
+  // Only a still-open turn's reply can be interrupted.
   const settledTurnsRef = useRef(new Set<number>());
-  // Consecutive silent turns (buffers with no voiced audio). The E-VAD
-  // banner shows only when silence repeats; a single silent turn closes
-  // quietly. Any turn with voice or content resets it to zero.
+  // Silent streak: the banner shows only on repeated silence.
   const silentStreakRef = useRef(0);
 
   const stopSession = useCallback(() => {
@@ -116,14 +109,12 @@ export function TapToTalk() {
     setTurns((prev) => prev.filter((turn) => turn.id !== id));
   }, []);
 
-  /** Drop a closed turn that never showed anything. */
   const pruneIfEmpty = useCallback((id: number) => {
     setTurns((prev) =>
       prev.filter((turn) => turn.id !== id || hasVisibleContent(turn)),
     );
   }, []);
 
-  /** End the whole session with a plain-language banner (tap to retry). */
   const endSessionWithAlert = useCallback(
     (message: string, code: string | null = null) => {
       sessionRef.current = false;
@@ -167,10 +158,7 @@ export function TapToTalk() {
   const runSession = useCallback(
     async (stream: MediaStream): Promise<void> => {
       sessionRef.current = true;
-      // One capture for the whole session (bug 2): stopping the mic after
-      // every turn left a gap silent while the POST/SSE round-trip ran, and
-      // anything said in that gap was lost. Turns are delimited by VAD
-      // events only; the capture stops when the session stops.
+      // One capture for the whole session; VAD events delimit turns.
       let resolveSession: (() => void) | null = null;
       const ended = new Promise<void>((resolve) => {
         resolveSession = resolve;
@@ -180,10 +168,7 @@ export function TapToTalk() {
       const pending: Int16Array[] = [];
       let currentId = -1;
       let posted = false;
-      // Live bridge transports: one WebSocket per turn (proposal A). Frames
-      // stream live over the socket AND stay buffered, so a mid-turn drop
-      // replays them on the reopened socket, or falls back to the buffered
-      // POST when the socket never connects (Safari-safe path).
+      // One WebSocket per turn; frames stay buffered for replay or POST fallback.
       interface TurnTransport {
         socket: WebSocket | null;
         frames: Int16Array[];
@@ -208,13 +193,6 @@ export function TapToTalk() {
         setNoticeCode(code);
       };
 
-      /**
-       * E-VAD gate: the "I didn't hear anything" banner shows only for a
-       * turn whose buffer held no voiced audio, and only when silence
-       * repeats on consecutive turns. A single silent turn closes quietly,
-       * and a turn that did carry voice never shows it (that is not
-       * silence, even when the transcript came back empty).
-       */
       const handleVadCandidate = (id: number) => {
         const voiced = transports.get(id)?.voiced ?? 0;
         if (voiced > 0) {
@@ -266,7 +244,6 @@ export function TapToTalk() {
       };
 
       // A failed turn ends the session so the user can tap to retry.
-      // A turn that already showed its final keeps its bubble (test 25).
       const failTurn = (id: number, message: string, code: string | null = null) => {
         if (!finalReceivedRef.current.has(id)) removeTurn(id);
         endSessionWithAlert(message, code);
@@ -278,11 +255,9 @@ export function TapToTalk() {
         );
       };
 
-      /** Same turn states as the SSE path, over the live bridge protocol. */
       const handleBridgeMessage = (id: number, raw: unknown) => {
         const transport = transports.get(id);
-        // After the buffered-POST retry took over, late socket frames are
-        // stale: ignoring them keeps a single agent call for the turn.
+        // Late socket frames after the POST retry are stale; ignore them.
         if (
           !transport ||
           transport.settled ||
@@ -319,9 +294,7 @@ export function TapToTalk() {
             break;
           case "reply-delta":
             if (typeof message.text !== "string") return;
-            // Append: each fragment extends the visible reply. Never
-            // replace, and never clear between the tool step and the
-            // answer — the final "reply" paints the complete text.
+            // Append fragments; the final "reply" paints the complete text.
             {
               const next = `${repliesRef.current.get(id) ?? ""}${message.text}`;
               repliesRef.current.set(id, next);
@@ -336,8 +309,6 @@ export function TapToTalk() {
           case "notice":
             if (typeof message.message !== "string") return;
             if (typeof message.code === "string" && message.code === "E-VAD") {
-              // Server heard nothing intelligible: show it only when the
-              // turn's buffer truly held no voice, and only on repeat.
               handleVadCandidate(id);
               break;
             }
@@ -381,11 +352,8 @@ export function TapToTalk() {
               }
             }
             settledTurnsRef.current.add(id);
-            // Turns that never showed anything leave no row behind.
             pruneIfEmpty(id);
-            // Fresh silence window for the gap before the next turn;
-            // skipped when a newer turn is already collecting so a
-            // slow reply cannot cut it off.
+            // Fresh silence window, unless a newer turn is already collecting.
             if (id === currentId) armQuiet();
             break;
           default:
@@ -393,7 +361,7 @@ export function TapToTalk() {
         }
       };
 
-      /** One bridge socket per turn. Replays buffered frames on (re)open. */
+      // One bridge socket per turn; replays buffered frames on (re)open.
       const openTurnSocket = (id: number) => {
         const transport = transports.get(id);
         if (!transport || transport.socket || typeof WebSocket === "undefined") {
@@ -421,8 +389,7 @@ export function TapToTalk() {
           }
           transport.opened = true;
           for (const frame of transport.frames) sendFrameBytes(socket, frame);
-          // The turn already ended (speech end, or a replay after a drop):
-          // close it on the fresh socket so the final can arrive.
+          // The turn already ended: close it on the fresh socket.
           if (transport.ended || transport.endQueued) {
             transport.endQueued = false;
             try {
@@ -454,9 +421,7 @@ export function TapToTalk() {
             return;
           }
           if (!transport.opened) {
-            // Never connected: fall back to the buffered single POST with
-            // the full audio (Safari-safe path, same as before the bridge).
-            // That POST is the turn's one buffered retry.
+            // Never connected: fall back to the buffered POST.
             transport.failed = true;
             transport.postRetried = true;
             try {
@@ -468,10 +433,7 @@ export function TapToTalk() {
             return;
           }
           if (!transport.reconnected) {
-            // Mid-turn drop (including the 300 s cap): reopen once after a
-            // short backoff and replay the buffered frames. Meta has no
-            // resume, so the reopened socket is a new session with the same
-            // audio — no duplicate agent call, the turn keeps its bubble.
+            // Mid-turn drop: reopen once and replay; Meta has no resume.
             transport.reconnected = true;
             window.setTimeout(() => {
               if (
@@ -485,11 +447,7 @@ export function TapToTalk() {
             return;
           }
           if (!transport.postRetried && !finalReceivedRef.current.has(id)) {
-            // Still no final after the reopen: retry the turn ONCE over the
-            // buffered POST under its own id, so the reply lands on the same
-            // bubble. Safe from duplicate agent calls: the bridge never got
-            // a final, so the server never ran the agent for this turn, and
-            // failed=true discards any late socket frames.
+            // No final after reopen: one POST retry; the bridge never ran the agent, so no duplicate call.
             transport.postRetried = true;
             transport.failed = true;
             try {
@@ -509,16 +467,14 @@ export function TapToTalk() {
         };
       };
 
-      /** Speech end: live endStream when the socket is up, else the POST. */
+      // Speech end: live endStream when the socket is up, else the POST.
       const endTurnTransport = (id: number) => {
         const transport = transports.get(id);
         const socket = transport?.socket ?? null;
-        // From here on the turn is over: any socket that (re)opens for it
-        // must immediately send endStream after replaying the audio.
+        // The turn is over: any (re)open must send endStream after replay.
         if (transport) {
           transport.ended = true;
-          // Freeze the retry audio here: frames arriving in the gap before
-          // the next turn belong to that turn, not to this retry.
+          // Freeze the retry audio here; gap frames belong to the next turn.
           transport.endFrames = transport.frames.slice();
         }
         if (
@@ -541,8 +497,7 @@ export function TapToTalk() {
           !transport.failed &&
           socket.readyState === WebSocket.CONNECTING
         ) {
-          // Still dialing (same-origin opens take ms; speech lasts seconds):
-          // queue the end and fall back to POST only if it never connects.
+          // Still dialing: queue the end, POST only if it never connects.
           transport.endQueued = true;
           window.setTimeout(() => {
             const current = transports.get(id);
@@ -567,9 +522,7 @@ export function TapToTalk() {
       };
 
       const postTurn = (id: number, frames: Int16Array[]) => {
-        // One buffered body per turn: Safari on iOS rejects streaming
-        // request bodies (`duplex: "half"`), so the audio never left the
-        // phone. The route reads the full body the same way.
+        // One buffered body per turn: Safari iOS rejects streaming request bodies.
         const total = frames.reduce((n, frame) => n + frame.length, 0);
         const pcm = new Int16Array(total);
         let offset = 0;
@@ -616,8 +569,7 @@ export function TapToTalk() {
             await parseSseStream(response.body, {
               onInterim: (transcript) => patchTurn(id, { interim: transcript }),
               onFinal: (transcript) => {
-                // Do not settle here: reply/notice/error follow on the
-                // same stream; the turn ends at `done`.
+                // The turn ends at `done`; reply/notice/error follow on this stream.
                 finalReceivedRef.current.add(id);
                 if (transcript.trim() !== "") silentStreakRef.current = 0;
                 patchTurn(id, { final: transcript, interim: "" });
@@ -627,8 +579,7 @@ export function TapToTalk() {
                 failTurn(id, message, code ?? "E-NET");
               },
               onReplyDelta: (text) => {
-                // Append, same as the bridge path: never replace, never
-                // clear between the tool step and the answer.
+                // Append fragments, same as the bridge path.
                 const next = `${repliesRef.current.get(id) ?? ""}${text}`;
                 repliesRef.current.set(id, next);
                 patchTurn(id, { reply: next });
@@ -638,8 +589,7 @@ export function TapToTalk() {
                 patchTurn(id, { reply: text });
               },
               onNotice: (message, code) => {
-                // Empty-transcript notices pass the same silence gate as
-                // the bridge path; anything else shows directly.
+                // E-VAD notices pass the silence gate; anything else shows directly.
                 if (code === "E-VAD") handleVadCandidate(id);
                 else showNotice(message, code ?? null);
               },
@@ -647,11 +597,8 @@ export function TapToTalk() {
                 controllersRef.current.delete(controller);
                 if (!sessionRef.current) return;
                 settledTurnsRef.current.add(id);
-                // Turns that never showed anything leave no row behind.
                 pruneIfEmpty(id);
-                // Fresh silence window for the gap before the next turn;
-                // skipped when a newer turn is already collecting so a
-                // slow reply cannot cut it off.
+                // Fresh silence window, unless a newer turn is already collecting.
                 if (id === currentId) armQuiet();
               },
             });
@@ -672,10 +619,7 @@ export function TapToTalk() {
           onFrame: (frame) => {
             if (!sessionRef.current) return;
             pending.push(frame.slice());
-            // Live path: the same frame streams over the bridge socket as
-            // it is captured (the meter already moves at 0 ms from these
-            // samples). It also stays buffered for a reconnect replay or
-            // the POST fallback.
+            // Stream each frame live and keep it buffered for replay or POST fallback.
             const transport = transports.get(currentId);
             if (transport && !transport.failed) {
               if (countVoiced(frame)) transport.voiced += 1;
@@ -693,10 +637,7 @@ export function TapToTalk() {
           onSpeechStart: () => {
             if (!sessionRef.current) return;
             window.clearTimeout(quietTimerRef.current);
-            // Interruption (test 18): new speech dismisses only the
-            // still-open turn's reply. Finished turns keep theirs, so a
-            // multi-turn conversation accumulates (tests 11, B2).
-            // No POST here: frames buffer until speech ends (single body).
+            // New speech dismisses only the still-open turn's reply.
             const dismissed: number[] = [];
             setTurns((prev) =>
               prev.map((turn) =>
@@ -708,12 +649,9 @@ export function TapToTalk() {
             for (const turnId of dismissed) {
               repliesRef.current.delete(turnId);
             }
-            // A new utterance after a posted turn opens the next turn on
-            // the same capture: the mic never stops between turns (bug 2).
-            // Stray frames buffered before this event carry over.
+            // A new utterance after a posted turn opens the next turn on the same capture.
             if (posted) openTurn(false);
-            // One bridge socket per turn, opened when speech starts so the
-            // Meta handshake (~0.9 s) hides inside the utterance.
+            // Open the socket at speech start so the ~0.9 s handshake hides inside the utterance.
             openTurnSocket(currentId);
           },
           onSpeechEnd: () => {
@@ -721,9 +659,7 @@ export function TapToTalk() {
             posted = true;
             endTurnTransport(currentId);
           },
-          // The meter reads the same samples as the VAD: no extra audio
-          // API, throttled to ~10 Hz so the bar moves without re-render
-          // churn. Works wherever capture works (iPhone Safari/Chrome).
+          // Same samples as the VAD, throttled to ~10 Hz.
           onLevel: (value) => {
             const now = Date.now();
             if (now - lastLevelRef.current < 100) return;
@@ -731,13 +667,10 @@ export function TapToTalk() {
             setLevel(value);
           },
         },
-        // Calibrated against the speech fixture (bug 2 onsets stay at
-        // ~200 with 1 s of pre-roll); the end-of-turn silence is 800 ms so
-        // the first text arrives ~1.2 s sooner (feedback ticket).
+        // Threshold 200 with 1 s pre-roll; 800 ms end silence posts ~1.2 s sooner.
         { threshold: 200, endSilenceMs: 800 },
       );
 
-      // Stash the capture handle so session stop can tear it down.
       captureRef.current = capture;
       openTurn();
       await ended;

@@ -9,7 +9,6 @@ vi.mock("@/lib/capture", () => ({
 
 const mockStartCapture = vi.mocked(startCapture);
 
-/** Scriptable stand-in for the browser WebSocket (proposal A bridge). */
 class FakeWs {
   static instances: FakeWs[] = [];
   static CONNECTING = 0;
@@ -40,13 +39,11 @@ class FakeWs {
     this.readyState = 1;
     this.onopen?.();
   }
-  /** Never connects: refused, like a blocked upgrade. */
   fail(): void {
     this.readyState = 3;
     this.onerror?.();
     this.onclose?.();
   }
-  /** Mid-turn drop after a live connection. */
   drop(): void {
     this.readyState = 3;
     this.onclose?.();
@@ -111,7 +108,6 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
       expect(driver).not.toBeNull();
     });
 
-    // Speech starts: one bridge socket for the turn, no POST.
     driver!.onFrame(speechFrame());
     driver!.onSpeechStart();
     await waitFor(() => {
@@ -121,7 +117,6 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
     expect(ws.url).toContain("/api/voice");
     ws.open();
 
-    // Live audio streams as binary while the person still speaks.
     driver!.onFrame(speechFrame());
     expect(ws.sentBinaryCount()).toBeGreaterThan(0);
 
@@ -133,7 +128,6 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
       ).toBe(true);
     });
 
-    // CUMULATIVE partials replace the interim bubble while talking.
     ws.serverMessage({ type: "transcript", transcript: "hel", final: false });
     await waitFor(() => {
       expect(screen.getByText("hel")).toBeTruthy();
@@ -154,7 +148,7 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
     });
     ws.serverMessage({ type: "done" });
 
-    // The whole turn ran over the socket: the POST fallback never fired.
+    // Whole turn over the socket: the POST fallback never fired.
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -186,7 +180,6 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
       ).toBe(true);
     });
 
-    // Drop before any final: the client reopens once and replays the turn.
     first.drop();
     await waitFor(
       () => {

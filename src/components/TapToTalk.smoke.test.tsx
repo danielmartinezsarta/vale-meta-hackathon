@@ -15,7 +15,6 @@ describe("TapToTalk smoke", () => {
       screen.getByRole("button", { name: "Tap to talk" }),
     ).toBeDefined();
     expect(screen.queryByRole("alert")).toBeNull();
-    // No mic prompt before the first tap.
     expect(getUserMedia).not.toHaveBeenCalled();
 
     vi.unstubAllGlobals();

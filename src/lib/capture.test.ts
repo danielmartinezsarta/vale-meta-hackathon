@@ -58,7 +58,6 @@ describe("capture DSP", () => {
   it("stays silent on digital silence (silence fixture never emits speech)", () => {
     const detector = new SpeechDetector();
     const silence = new Int16Array(FRAME_SAMPLES);
-    // 5 s of silence: no speech-start, so no frames reach the server.
     for (let i = 0; i < 125; i++) {
       expect(detector.feed(silence)).toBe("silence");
     }
@@ -68,37 +67,29 @@ describe("capture DSP", () => {
 
 describe("bug 2 VAD calibration (iPhone clipped phrase onsets)", () => {
   it("catches a soft onset on the first frame that the old threshold missed", () => {
-    // Decoded speech fixture: its softest onset frame scores mean-abs 244.
+    // Softest onset frame scores mean-abs 244.
     const softOnset = new Int16Array(FRAME_SAMPLES).fill(244);
-    // Old default: the first frame stayed silent, so the turn buffer
-    // started mid-phrase.
     expect(new SpeechDetector({ threshold: 500 }).feed(softOnset)).toBe(
       "silence",
     );
-    // New default: speech-start on the very first frame, nothing to lose.
     const detector = new SpeechDetector();
     expect(detector.feed(softOnset)).toBe("speech-start");
     expect(detector.isSpeaking).toBe(true);
   });
 
   it("keeps a full second of pre-roll for speech under the threshold", () => {
-    // 25 frames × 40 ms ≈ 1 s: covers a soft onset that ramps up slowly
-    // on an iPhone mic at normal pace (10 frames / 400 ms did not).
     expect(PREROLL_FRAMES).toBe(25);
-    // Frames are 40 ms each: 25 of them cover a full second of onset.
     expect(PREROLL_FRAMES * 40).toBeGreaterThanOrEqual(1000);
   });
 
   it("a short pause inside a phrase does not split the turn", () => {
     const detector = new SpeechDetector();
     expect(detector.feed(toneFrame())).toBe("speech-start");
-    // 0.5 s of pause (under the 800 ms end-of-turn silence): still one turn.
     const silence = new Int16Array(FRAME_SAMPLES);
     for (let i = 0; i < 12; i++) {
       expect(detector.feed(silence)).toBe("speech");
     }
     expect(detector.isSpeaking).toBe(true);
-    // A real 0.8 s silence ends it, exactly once.
     const tail: string[] = [];
     for (let i = 0; i < 8; i++) tail.push(detector.feed(silence));
     expect(tail.filter((event) => event === "speech-end")).toHaveLength(1);

@@ -3,11 +3,7 @@ import { TOY_TOOL, runToyTool } from "./tools";
 export const AGENT_MODEL = "muse-spark-1.3";
 export const RESPONSES_URL = "https://api.meta.ai/v1/responses";
 
-/**
- * Hardened spoken-style system prompt: plain text only, 1-2 short sentences,
- * no invented capabilities. The no-markdown rule is enforced by wording and
- * verified by the style test (5 canned prompts, no lists/URLs/emoji).
- */
+// Spoken-style prompt: plain text, 1-2 short sentences, no invented capabilities.
 export const SPOKEN_SYSTEM_PROMPT = [
   "You are Vale, a hands-free voice helper for nail technicians.",
   "The user hears your reply read aloud, so reply in exactly one or two short spoken sentences.",
@@ -38,9 +34,7 @@ interface ResponsesOutputItem {
 }
 
 function extractDeltaText(eventType: string, data: Record<string, unknown>): string {
-  // Only spoken-text deltas reach the screen. Tool-argument deltas
-  // (e.g. response.function_call_arguments.delta carrying
-  // '{"date":"..."}') must never render as reply text.
+  // Only spoken-text deltas reach the screen; tool-argument deltas must never render.
   if (!eventType.includes("delta")) return "";
   if (!eventType.includes("output_text")) return "";
   const delta = data.delta;
@@ -196,10 +190,6 @@ export interface AgentTurnOptions {
   startedAt?: number;
 }
 
-/**
- * One agent turn: transcript -> (tool call?) -> spoken-style reply text.
- * Key stays server-side; the caller streams deltas to the user.
- */
 export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResult> {
   const url = options.url ?? RESPONSES_URL;
   const startedAt = options.startedAt ?? Date.now();
@@ -213,7 +203,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       instructions,
       input: options.transcript,
       tools: [TOY_TOOL],
-      // Cheapest reasoning mode: latency budget depends on it (probe B).
+      // Cheapest reasoning mode; the latency budget depends on it.
       reasoning: { effort: "minimal" },
       ...(options.previousResponseId
         ? { previous_response_id: options.previousResponseId }

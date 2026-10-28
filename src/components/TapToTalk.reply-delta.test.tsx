@@ -9,7 +9,6 @@ vi.mock("@/lib/capture", () => ({
 
 const mockStartCapture = vi.mocked(startCapture);
 
-/** Scriptable stand-in for the browser WebSocket (proposal A bridge). */
 class FakeWs {
   static instances: FakeWs[] = [];
   static CONNECTING = 0;
@@ -106,7 +105,6 @@ describe("reply streaming (transient output fix)", () => {
       expect(screen.getByText("five november")).toBeTruthy();
     });
 
-    // Two streamed fragments: the screen must show both appended.
     ws.serverMessage({ type: "reply-delta", text: "El cinco de noviembre tengo " });
     await waitFor(() => {
       expect(screen.getByText("El cinco de noviembre tengo")).toBeTruthy();

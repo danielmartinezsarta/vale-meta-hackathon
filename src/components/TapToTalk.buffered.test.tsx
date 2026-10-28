@@ -9,7 +9,6 @@ vi.mock("@/lib/capture", () => ({
 
 const mockStartCapture = vi.mocked(startCapture);
 
-// SSE body: interim then final, reply, done.
 function sseWithInterim(final: string, reply: string) {
   const raw =
     `event: interim\ndata: {"transcript":${JSON.stringify(final.slice(0, 5))}}\n\n` +
@@ -44,8 +43,7 @@ describe("buffered turn upload (Safari iOS has no streaming request body)", () =
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
 
-    // One speech burst on the first capture only; later turns stay silent
-    // so the session waits and fetch is called exactly once.
+    // One speech burst on the first capture only; later turns stay silent.
     let fired = false;
     mockStartCapture.mockImplementation((_stream, callbacks) => {
       if (fired) return { stop: () => {} };
@@ -79,7 +77,6 @@ describe("buffered turn upload (Safari iOS has no streaming request body)", () =
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, options] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
-    // Single buffered body, never a streaming one.
     expect(
       options.body instanceof Blob || options.body instanceof Uint8Array,
     ).toBe(true);
@@ -87,7 +84,7 @@ describe("buffered turn upload (Safari iOS has no streaming request body)", () =
     // No streaming-upload flag: Safari iOS rejects `duplex: "half"`.
     expect(options).not.toHaveProperty("duplex");
 
-    // Interim from the same SSE stream renders (replaced by the final).
+    // Interim is replaced by the final.
     expect(screen.queryByText("hello")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));

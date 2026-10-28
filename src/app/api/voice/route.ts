@@ -7,13 +7,7 @@ import { attachVoiceBridge } from "@/lib/voice-bridge";
 
 export const runtime = "nodejs";
 
-/**
- * GET /api/voice — live bridge: browser <--WS--> Vercel <--WS--> Meta.
- * One browser socket = one Meta socket = one PUSH_TO_TALK turn. CUMULATIVE
- * partials stream while the person speaks; the final freezes the bubble and
- * triggers the Spark reply. POST below stays as the fallback transport
- * (and the agent-only path for canned transcripts).
- */
+// Live bridge: one browser socket = one Meta socket = one PUSH_TO_TALK turn.
 export async function GET(): Promise<Response> {
   const key = process.env.META_API_KEY;
   if (!key) {
@@ -60,18 +54,11 @@ function sse(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
-/**
- * POST /api/voice — one push-to-talk turn.
- * Body: raw PCM_24KHZ mono 16-bit audio bytes (streamed while the user speaks)
- * or JSON { "transcript": "..." } to skip ASR (agent-only turn).
- * Returns a text/event-stream of `interim`, `final`, `reply`, `done`,
- * `error` events. One Meta WS connection per turn, closed when done or when
- * the page disconnects. The Meta key never leaves the server.
- */
+// One push-to-talk turn: raw PCM_24KHZ body or JSON transcript; answers an SSE stream.
 export async function POST(request: Request): Promise<Response> {
   const key = process.env.META_API_KEY;
   if (!key) {
-    // M3: clear server-side log line (the key itself is never logged).
+    // Server-side log only; the key itself is never logged.
     console.error("[voice] META_API_KEY is not configured; rejecting turn.");
     return Response.json(
       {
@@ -120,9 +107,7 @@ export async function POST(request: Request): Promise<Response> {
           /* already closed */
         }
       };
-      // Short on-screen error code next to the plain message, so a phone
-      // test can report the failing layer: E-VAD (silence), E-NET
-      // (service/connection), E-ASR (transcription), E-MODEL (reply).
+      // Error codes name the failing layer: E-VAD silence, E-NET service, E-ASR transcription, E-MODEL reply.
       const finishError = (message: string, code: string) => {
         if (closed) return;
         send("error", { message, code });
@@ -137,14 +122,12 @@ export async function POST(request: Request): Promise<Response> {
       let finalAtMs = 0;
       let audioSeconds = 0;
       let agentRan = false;
-      // b3: overridable in tests so the timeout path is exercisable.
       const turnTimeoutMs = Math.max(
         1,
         Number(process.env.VOICE_TURN_TIMEOUT_MS) || TURN_TIMEOUT_MS,
       );
       const timeout = setTimeout(() => {
         asr?.close();
-        // b3: a timed-out turn leaves a log line too.
         if (!settled) {
           settled = true;
           logTurn({
@@ -174,7 +157,7 @@ export async function POST(request: Request): Promise<Response> {
       request.signal.addEventListener("abort", abort);
 
       const logTurn = (fields: {
-        // b1: ts is the real end-of-speech moment, supplied by the caller.
+        // ts is the caller-supplied end-of-speech moment.
         ts: string;
         transcript: string;
         ttftMs: number | null;
@@ -196,7 +179,6 @@ export async function POST(request: Request): Promise<Response> {
         );
       };
 
-      /** Run the agent for a final transcript, then log the turn. */
       const answerTranscript = async (
         transcript: string,
         audioSeconds: number,
@@ -272,7 +254,6 @@ export async function POST(request: Request): Promise<Response> {
                       send("interim", { transcript: event.transcript });
                     } else if (event.kind === "final") {
                       gotFinal = true;
-                      // b1: the final arrives right at end of speech.
                       finalAtMs = Date.now();
                       finalText = event.transcript;
                       audioSeconds = (event.audioProcessedMs ?? 0) / 1000;
@@ -286,8 +267,7 @@ export async function POST(request: Request): Promise<Response> {
                     if (!settled) {
                       settled = true;
                       clearTimeout(timeout);
-                      // M2: fixed plain text to the user; raw provider text
-                      // stays in the server log only.
+                      // Plain text to the user; raw provider text stays in the server log only.
                       console.error(`[voice-asr] transcription error: ${message}`);
                       finishError("Connection lost. Tap to try again.", "E-ASR");
                     }
@@ -312,14 +292,13 @@ export async function POST(request: Request): Promise<Response> {
           return;
         }
         asr?.endTurn();
-        // Wait for the final on this same stream.
         await waitFor(() => gotFinal || settled, TURN_TIMEOUT_MS);
         if (!gotFinal) {
           if (!settled) finishError("Connection lost. Tap to try again.", "E-NET");
           return;
         }
         if (finalText.trim() === "") {
-          // Heard nothing intelligible: no model call (test 24).
+          // Empty final: no model call, just the notice.
           send("notice", { message: "I didn't hear anything. Just speak and I'll listen.", code: "E-VAD" });
           logTurn({
             ts: new Date(finalAtMs || Date.now()).toISOString(),

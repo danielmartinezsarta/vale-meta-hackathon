@@ -69,7 +69,6 @@ describe("agent turn", () => {
     expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 20 });
     expect(typeof result.firstTokenMs).toBe("number");
     expect(deltas.join("")).toBe("Got it.");
-    // One request, cheapest reasoning, spoken prompt, no persistence tricks.
     expect(bodies).toHaveLength(1);
     expect(bodies[0].model).toBe(AGENT_MODEL);
     expect(bodies[0].reasoning).toEqual({ effort: "minimal" });
@@ -189,7 +188,6 @@ describe("agent turn", () => {
     });
 
     expect(result.text).toBe("El cinco de noviembre tengo a las diez.");
-    // Tool args must never leak into the streamed text.
     expect(deltas.join("")).toBe("El cinco de noviembre tengo a las diez.");
     expect(deltas.join("")).not.toContain("2026-11-05");
   });

@@ -1,7 +1,4 @@
-/**
- * One toy tool with invented demo data. The agent may call it when asked
- * about booking availability; the reply must use its result.
- */
+// One toy tool with invented demo data for booking availability.
 
 export interface ToyToolDefinition {
   type: "function";
@@ -39,7 +36,6 @@ export function runToyTool(name: string, args: unknown): InventedSlots {
   const date = typeof params.date === "string" && params.date.trim() !== ""
     ? params.date.trim().slice(0, 10)
     : "soon";
-  // Invented demo data: derived from the date string, nothing real.
   const morning = date.length % 2 === 0 ? "10:00" : "09:30";
   return { date, slots: [morning, "14:30"] };
 }

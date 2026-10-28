@@ -1,12 +1,5 @@
 // @vitest-environment node
-/**
- * B1: automatic replay of the real fixtures through the ASR path.
- * Decodes fixtures/*.webm to PCM_24KHZ mono 16-bit with ffmpeg (dev
- * dependency of this workflow), feeds the bytes through POST /api/voice
- * with a silence-aware fake ASR, and asserts the pipeline behavior.
- * Real-engine word recognition is covered by the budgeted live replay run
- * (see the builder report); this suite runs on every gate with no budget.
- */
+// Fixture replay through the ASR path: ffmpeg decodes fixtures/*.webm, POST asserts pipeline behavior.
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -135,7 +128,6 @@ describe("fixture replay through the ASR path (B1)", () => {
       vi.fn(async () => new Response("unused", { status: 200 })),
     );
     const text = await postPcm(pcm);
-    // The whole fixture crossed into the ASR socket.
     expect(receivedBytes).toBe(pcm.length);
     expect(receivedSilent).toBe(false);
     expect(text).toContain("event: final");

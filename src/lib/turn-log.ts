@@ -33,7 +33,7 @@ export function estimateCost(
   );
 }
 
-/** One log line per turn (tests 19-20): single JSON line, all five fields. */
+/** One JSON log line per turn. */
 export function formatTurnLog(fields: TurnLogFields): string {
   return `[voice-turn] ${JSON.stringify(fields)}`;
 }

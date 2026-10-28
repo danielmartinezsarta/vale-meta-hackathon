@@ -53,9 +53,7 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
   it("speaking twice yields two transcript bubbles and two replies slots", async () => {
     stubGetUserMedia();
 
-    // Fake device: one capture for the whole session fires one burst per
-    // turn on the same callbacks (three bursts: two turns plus a third
-    // whose fetch hangs, so the session stays open).
+    // Three bursts: two turns plus a third whose fetch hangs.
     mockStartCapture.mockImplementation((_stream, callbacks) => {
       const frame = new Int16Array(960).fill(4000);
       let fired = 0;
@@ -97,15 +95,11 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
       expect(screen.getByText("second final")).toBeTruthy();
     });
 
-    // Exactly two finished bubbles (a third turn may be listening already).
     expect(screen.getAllByText("You:")).toHaveLength(2);
-
-    // B3: both of Vale's replies are asserted in the same session.
     expect(screen.getAllByText("Vale:")).toHaveLength(2);
     expect(screen.getByText("first reply from Vale")).toBeTruthy();
     expect(screen.getByText("second reply from Vale")).toBeTruthy();
 
-    // Interim text is replaced by the final, not duplicated.
     expect(screen.queryByText("first")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));

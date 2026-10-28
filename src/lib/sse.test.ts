@@ -20,7 +20,6 @@ describe("SSE parser", () => {
       'event: interim\ndata: {"transcript":"hello"}\n\n' +
       'event: final\ndata: {"transcript":"hello","audioProcessedMs":800}\n\n' +
       "event: done\ndata: {}\n\n";
-    // Split mid-line on purpose.
     const chunks = [raw.slice(0, 17), raw.slice(17, 55), raw.slice(55)];
     await parseSseStream(
       streamFromChunks(chunks),

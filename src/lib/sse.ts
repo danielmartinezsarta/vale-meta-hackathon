@@ -8,7 +8,6 @@ export interface SseHandlers {
   onDone?: () => void;
 }
 
-/** Parse a text/event-stream of `{event, data}` frames from a byte stream. */
 export async function parseSseStream(
   body: ReadableStream<Uint8Array>,
   handlers: SseHandlers,
