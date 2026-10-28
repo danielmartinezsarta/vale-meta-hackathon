@@ -1,8 +1,40 @@
+import { connection } from "next/server";
+import { upgradeWebSocket } from "@vercel/functions";
 import { runAgentTurn } from "@/lib/agent";
 import { openAsrConnection } from "@/lib/asr";
 import { estimateCost, formatTurnLog } from "@/lib/turn-log";
+import { attachVoiceBridge } from "@/lib/voice-bridge";
 
 export const runtime = "nodejs";
+
+/**
+ * GET /api/voice — live bridge: browser <--WS--> Vercel <--WS--> Meta.
+ * One browser socket = one Meta socket = one PUSH_TO_TALK turn. CUMULATIVE
+ * partials stream while the person speaks; the final freezes the bubble and
+ * triggers the Spark reply. POST below stays as the fallback transport
+ * (and the agent-only path for canned transcripts).
+ */
+export async function GET(): Promise<Response> {
+  const key = process.env.META_API_KEY;
+  if (!key) {
+    console.error("[voice] META_API_KEY is not configured; rejecting turn.");
+    return Response.json(
+      {
+        error: "Voice service is not configured. Try again later.",
+        code: "E-NET",
+      },
+      { status: 503 },
+    );
+  }
+  await connection();
+  return upgradeWebSocket((browser) => {
+    attachVoiceBridge({
+      browser,
+      key,
+      metaUrl: process.env.META_ASR_URL || undefined,
+    });
+  });
+}
 
 const TURN_TIMEOUT_MS = 120000;
 

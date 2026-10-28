@@ -36,6 +36,7 @@ export function TapToTalk() {
   const sessionRef = useRef(false);
   const turnIdRef = useRef(0);
   const controllersRef = useRef(new Set<AbortController>());
+  const socketsRef = useRef(new Set<WebSocket>());
   const quietTimerRef = useRef(0);
   const sessionEndRef = useRef<(() => void) | null>(null);
   const captureRef = useRef<{ stop: () => void } | null>(null);
@@ -64,6 +65,14 @@ export function TapToTalk() {
     captureRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    socketsRef.current.forEach((socket) => {
+      try {
+        socket.close();
+      } catch {
+        /* already closed */
+      }
+    });
+    socketsRef.current.clear();
     sessionEndRef.current?.();
     sessionEndRef.current = null;
     setStatus("idle");
@@ -103,6 +112,14 @@ export function TapToTalk() {
       finalReceivedRef.current.clear();
       settledTurnsRef.current.clear();
       repliesRef.current.clear();
+      socketsRef.current.forEach((socket) => {
+        try {
+          socket.close();
+        } catch {
+          /* already closed */
+        }
+      });
+      socketsRef.current.clear();
       setAlert(message);
       setAlertCode(code);
       setStatus("idle");
@@ -128,6 +145,22 @@ export function TapToTalk() {
       const pending: Int16Array[] = [];
       let currentId = -1;
       let posted = false;
+      // Live bridge transports: one WebSocket per turn (proposal A). Frames
+      // stream live over the socket AND stay buffered, so a mid-turn drop
+      // replays them on the reopened socket, or falls back to the buffered
+      // POST when the socket never connects (Safari-safe path).
+      interface TurnTransport {
+        socket: WebSocket | null;
+        frames: Int16Array[];
+        opened: boolean;
+        reconnected: boolean;
+        endQueued: boolean;
+        /** Speech already ended: every (re)open must close the turn. */
+        ended: boolean;
+        settled: boolean;
+        failed: boolean;
+      }
+      const transports = new Map<number, TurnTransport>();
 
       const showNotice = (message: string, code: string | null = null) => {
         setNotice(message);
@@ -149,6 +182,16 @@ export function TapToTalk() {
         currentId = id;
         posted = false;
         pending.length = 0;
+        transports.set(id, {
+          socket: null,
+          frames: [],
+          opened: false,
+          reconnected: false,
+          endQueued: false,
+          ended: false,
+          settled: false,
+          failed: false,
+        });
         setTurns((prev) => [
           ...prev,
           { id, interim: "", final: null, reply: null },
@@ -161,6 +204,250 @@ export function TapToTalk() {
       const failTurn = (id: number, message: string, code: string | null = null) => {
         if (!finalReceivedRef.current.has(id)) removeTurn(id);
         endSessionWithAlert(message, code);
+      };
+
+      const sendFrameBytes = (socket: WebSocket, frame: Int16Array) => {
+        socket.send(
+          frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength),
+        );
+      };
+
+      /** Same turn states as the SSE path, over the live bridge protocol. */
+      const handleBridgeMessage = (id: number, raw: unknown) => {
+        const transport = transports.get(id);
+        if (!transport || transport.settled || !sessionRef.current) return;
+        let message: {
+          type?: string;
+          transcript?: unknown;
+          text?: unknown;
+          message?: unknown;
+          code?: unknown;
+        };
+        try {
+          const text =
+            typeof raw === "string"
+              ? raw
+              : new TextDecoder().decode(raw as ArrayBuffer);
+          message = JSON.parse(text) as typeof message;
+        } catch {
+          return;
+        }
+        switch (message.type) {
+          case "transcript":
+            if (typeof message.transcript !== "string") return;
+            if ((message as { final?: unknown }).final === true) {
+              finalReceivedRef.current.add(id);
+              patchTurn(id, { final: message.transcript, interim: "" });
+            } else {
+              patchTurn(id, { interim: message.transcript });
+            }
+            break;
+          case "reply-delta":
+            if (typeof message.text !== "string") return;
+            patchTurn(id, {
+              reply: `${repliesRef.current.get(id) ?? ""}${message.text}`,
+            });
+            break;
+          case "reply":
+            if (typeof message.text !== "string") return;
+            repliesRef.current.set(id, message.text);
+            patchTurn(id, { reply: message.text });
+            break;
+          case "notice":
+            if (typeof message.message !== "string") return;
+            showNotice(
+              message.message,
+              typeof message.code === "string" ? message.code : null,
+            );
+            break;
+          case "error": {
+            if (typeof message.message !== "string") return;
+            transport.settled = true;
+            const socket = transport.socket;
+            transport.socket = null;
+            if (socket) {
+              socketsRef.current.delete(socket);
+              try {
+                socket.close();
+              } catch {
+                /* already closed */
+              }
+            }
+            failTurn(
+              id,
+              message.message,
+              typeof message.code === "string" ? message.code : "E-NET",
+            );
+            break;
+          }
+          case "done":
+            transport.settled = true;
+            {
+              const socket = transport.socket;
+              transport.socket = null;
+              if (socket) {
+                socketsRef.current.delete(socket);
+                try {
+                  socket.close();
+                } catch {
+                  /* already closed */
+                }
+              }
+            }
+            settledTurnsRef.current.add(id);
+            // Fresh silence window for the gap before the next turn;
+            // skipped when a newer turn is already collecting so a
+            // slow reply cannot cut it off.
+            if (id === currentId) armQuiet();
+            break;
+          default:
+            break;
+        }
+      };
+
+      /** One bridge socket per turn. Replays buffered frames on (re)open. */
+      const openTurnSocket = (id: number) => {
+        const transport = transports.get(id);
+        if (!transport || transport.socket || typeof WebSocket === "undefined") {
+          return;
+        }
+        let socket: WebSocket;
+        try {
+          socket = new WebSocket(
+            `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api/voice`,
+          );
+        } catch {
+          return; // The speech-end fallback posts the buffered audio instead.
+        }
+        transport.socket = socket;
+        socketsRef.current.add(socket);
+        socket.binaryType = "arraybuffer";
+        socket.onopen = () => {
+          if (transport.failed) {
+            try {
+              socket.close();
+            } catch {
+              /* already closed */
+            }
+            return;
+          }
+          transport.opened = true;
+          for (const frame of transport.frames) sendFrameBytes(socket, frame);
+          // The turn already ended (speech end, or a replay after a drop):
+          // close it on the fresh socket so the final can arrive.
+          if (transport.ended || transport.endQueued) {
+            transport.endQueued = false;
+            try {
+              socket.send(JSON.stringify({ type: "endStream" }));
+            } catch {
+              /* the close handler decides: reconnect or fail */
+            }
+          }
+        };
+        socket.onmessage = (event: MessageEvent) => {
+          handleBridgeMessage(id, event.data);
+        };
+        socket.onerror = () => {
+          // The close event follows with the decision (fallback/reconnect).
+        };
+        socket.onclose = () => {
+          socketsRef.current.delete(socket);
+          if (transport.socket === socket) transport.socket = null;
+          if (
+            transport.settled ||
+            transport.failed ||
+            !sessionRef.current
+          ) {
+            return;
+          }
+          if (finalReceivedRef.current.has(id)) {
+            // The transcript bubble stays; only the reply is lost.
+            failTurn(id, "Connection lost. Tap to try again.", "E-NET");
+            return;
+          }
+          if (!transport.opened) {
+            // Never connected: fall back to the buffered single POST with
+            // the full audio (Safari-safe path, same as before the bridge).
+            transport.failed = true;
+            try {
+              socket.close();
+            } catch {
+              /* already closed */
+            }
+            postTurn(id, pending.splice(0));
+            return;
+          }
+          if (!transport.reconnected) {
+            // Mid-turn drop (including the 300 s cap): reopen once after a
+            // short backoff and replay the buffered frames. Meta has no
+            // resume, so the reopened socket is a new session with the same
+            // audio — no duplicate agent call, the turn keeps its bubble.
+            transport.reconnected = true;
+            window.setTimeout(() => {
+              if (
+                sessionRef.current &&
+                !transport.settled &&
+                !transport.failed
+              ) {
+                openTurnSocket(id);
+              }
+            }, 1000);
+            return;
+          }
+          failTurn(id, "Connection lost. Tap to try again.", "E-NET");
+        };
+      };
+
+      /** Speech end: live endStream when the socket is up, else the POST. */
+      const endTurnTransport = (id: number) => {
+        const transport = transports.get(id);
+        const socket = transport?.socket ?? null;
+        // From here on the turn is over: any socket that (re)opens for it
+        // must immediately send endStream after replaying the audio.
+        if (transport) transport.ended = true;
+        if (
+          socket &&
+          transport &&
+          !transport.failed &&
+          socket.readyState === WebSocket.OPEN
+        ) {
+          try {
+            socket.send(JSON.stringify({ type: "endStream" }));
+          } catch {
+            transport.failed = true;
+            postTurn(id, pending.splice(0));
+          }
+          return;
+        }
+        if (
+          socket &&
+          transport &&
+          !transport.failed &&
+          socket.readyState === WebSocket.CONNECTING
+        ) {
+          // Still dialing (same-origin opens take ms; speech lasts seconds):
+          // queue the end and fall back to POST only if it never connects.
+          transport.endQueued = true;
+          window.setTimeout(() => {
+            const current = transports.get(id);
+            if (
+              current &&
+              !current.settled &&
+              !current.failed &&
+              socket.readyState !== WebSocket.OPEN
+            ) {
+              current.failed = true;
+              try {
+                socket.close();
+              } catch {
+                /* already closed */
+              }
+              postTurn(id, pending.splice(0));
+            }
+          }, 5000);
+          return;
+        }
+        postTurn(id, pending.splice(0));
       };
 
       const postTurn = (id: number, frames: Int16Array[]) => {
@@ -260,6 +547,22 @@ export function TapToTalk() {
           onFrame: (frame) => {
             if (!sessionRef.current) return;
             pending.push(frame.slice());
+            // Live path: the same frame streams over the bridge socket as
+            // it is captured (the meter already moves at 0 ms from these
+            // samples). It also stays buffered for a reconnect replay or
+            // the POST fallback.
+            const transport = transports.get(currentId);
+            if (transport && !transport.failed) {
+              transport.frames.push(frame.slice());
+              const socket = transport.socket;
+              if (socket && socket.readyState === WebSocket.OPEN) {
+                try {
+                  sendFrameBytes(socket, frame);
+                } catch {
+                  /* the close handler decides: reconnect or fail */
+                }
+              }
+            }
           },
           onSpeechStart: () => {
             if (!sessionRef.current) return;
@@ -283,11 +586,14 @@ export function TapToTalk() {
             // the same capture: the mic never stops between turns (bug 2).
             // Stray frames buffered before this event carry over.
             if (posted) openTurn(false);
+            // One bridge socket per turn, opened when speech starts so the
+            // Meta handshake (~0.9 s) hides inside the utterance.
+            openTurnSocket(currentId);
           },
           onSpeechEnd: () => {
             if (!sessionRef.current || posted) return;
             posted = true;
-            postTurn(currentId, pending.splice(0));
+            endTurnTransport(currentId);
           },
           // The meter reads the same samples as the VAD: no extra audio
           // API, throttled to ~10 Hz so the bar moves without re-render
