@@ -323,6 +323,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             error: null,
             ignored: true,
           });
+          sendJson(browser, { type: "ignored" });
           sendJson(browser, { type: "done" });
           finish(1000, "turn-complete");
         } else {

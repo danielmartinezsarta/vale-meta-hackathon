@@ -264,6 +264,7 @@ export async function POST(request: Request): Promise<Response> {
               error: null,
               ignored: true,
             });
+            send("ignored", {});
             send("done", {});
             clearTimeout(timeout);
             closeStream();
@@ -366,6 +367,7 @@ export async function POST(request: Request): Promise<Response> {
             error: null,
             ignored: true,
           });
+          send("ignored", {});
         } else {
           await answerTranscript(finalText, audioSeconds, finalAtMs);
         }

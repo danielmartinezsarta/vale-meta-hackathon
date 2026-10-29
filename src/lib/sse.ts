@@ -8,6 +8,7 @@ export interface SseHandlers {
   onBoard?: (board: Board) => void;
   onNotice?: (message: string, code?: string) => void;
   onErrorEvent?: (message: string, code?: string) => void;
+  onIgnored?: () => void;
   onDone?: () => void;
 }
 
@@ -95,6 +96,9 @@ function dispatch(raw: string, handlers: SseHandlers): void {
           typeof payload.code === "string" ? payload.code : undefined,
         );
       }
+      break;
+    case "ignored":
+      handlers.onIgnored?.();
       break;
     case "done":
       handlers.onDone?.();
