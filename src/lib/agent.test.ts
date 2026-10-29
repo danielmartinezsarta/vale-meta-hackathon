@@ -67,6 +67,13 @@ describe("agent prompt", () => {
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/never claim a write happened/i);
   });
 
+  it("orders direct action without asking and asks only on doubt", () => {
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/right away/i);
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/in doubt/i);
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/ambiguous/i);
+    expect(SPOKEN_SYSTEM_PROMPT).not.toMatch(/need a short confirmation first/);
+  });
+
   it("sends the Vale tools with the cheapest reasoning mode", async () => {
     const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal(
@@ -203,6 +210,41 @@ describe("agent turn with tools", () => {
     await expect(
       runAgentTurn({ key: "test-key", transcript: "hello", db: freshTestDb() }),
     ).rejects.toThrow(/model error: 500/);
+  });
+});
+
+describe("agent narration buffering", () => {
+  it("holds pre-tool narration back and streams tool-free rounds", async () => {
+    const deltas: string[] = [];
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return sseResponse([
+            { type: "response.output_text.delta", data: { delta: "Abro la sesión ahora." } },
+            toolCall("resp_1", "find_client", { name: "Ana" }, "call_1"),
+          ]);
+        }
+        return sseResponse([
+          { type: "response.output_text.delta", data: { delta: "Esta es " } },
+          { type: "response.output_text.delta", data: { delta: "la ficha." } },
+          spoken("resp_2", "Esta es la ficha."),
+        ]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "busca a ana",
+      db: freshTestDb(),
+      onDelta: (text) => deltas.push(text),
+    });
+
+    expect(result.text).toBe("Esta es la ficha.");
+    expect(deltas.join("")).toBe("Esta es la ficha.");
+    expect(deltas.join("")).not.toContain("Abro");
   });
 });
 

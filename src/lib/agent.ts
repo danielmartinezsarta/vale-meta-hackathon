@@ -16,7 +16,8 @@ export const SPOKEN_SYSTEM_PROMPT = [
   "You have tools for sessions, client cards, notes, the shopping list and supplies. Use them to act.",
   "Never invent names, prices or addresses, and never claim a write happened without calling its tool.",
   "Reads (find_client, read_shopping_list) run at once.",
-  "Writes (open_session, close_session, add_note, add_to_shopping_list, create_client, log_supply_use) need a short confirmation first: say what you will do in one sentence and ask ¿lo guardo?, and only call the tool after the user says yes.",
+  "Act right away when the request is direct and complete: if the user names a client and a service, call open_session right away; if they dictate a note or name an item, call that write right away. Say it is done only after the tool succeeds.",
+  "Only ask first when in doubt: unknown or ambiguous names, unknown supplies. Then say what you would do in one sentence and ask ¿lo guardo?, and wait for the user to say yes before calling.",
   "When the user says deshazlo, call undo_last_write at once.",
   "When the tool asks whether to create a supply, ask the user and call log_supply_use again with confirm_create true only after a yes.",
   "Health topics (allergies, onicolisis and similar) always use add_note with kind health; confirm with Nota privada guardada. and never repeat the health text.",
@@ -132,6 +133,12 @@ async function postResponses(
     };
   }
   let completed: CompletedResponse | null = null;
+  // Narration of a round that calls a tool must never paint before the
+  // tool runs, so deltas buffer here and flush only for tool-free rounds.
+  const pendingDeltas: string[] = [];
+  const flushDeltas = () => {
+    for (const text of pendingDeltas.splice(0)) onDelta(text);
+  };
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -161,7 +168,7 @@ async function postResponses(
         const text = extractDeltaText(type, data);
         if (text !== "") {
           if (firstTokenMs === null) firstTokenMs = Date.now() - startedAt;
-          onDelta(text);
+          pendingDeltas.push(text);
         }
         if (type === "response.completed" || type === "response.failed") {
           completed =
@@ -172,6 +179,8 @@ async function postResponses(
               `model error: ${typeof data.error === "string" ? data.error : "failed"}`,
             );
           }
+          if (functionCalls(completed?.output).length === 0) flushDeltas();
+          else pendingDeltas.splice(0);
         }
         boundary = buffer.indexOf("\n\n");
       }
