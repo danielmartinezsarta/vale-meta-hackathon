@@ -8,6 +8,7 @@ import {
   chainSucceeded,
   nextPreviousResponseId,
 } from "@/lib/response-chain";
+import { checkWake, requestClientIp } from "@/lib/wake";
 import { openAsrConnection } from "@/lib/asr";
 import { estimateCost, formatTurnLog } from "@/lib/turn-log";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
@@ -149,6 +150,7 @@ export async function POST(request: Request): Promise<Response> {
             tool: null,
             modelSkipped: !agentRan,
             error: "timeout",
+            ignored: false,
           });
         }
         finishError("The voice turn timed out. Tap to try again.", "E-NET");
@@ -178,6 +180,7 @@ export async function POST(request: Request): Promise<Response> {
         tool: string | null;
         modelSkipped: boolean;
         error: string | null;
+        ignored: boolean;
       }) => {
         console.log(
           formatTurnLog({
@@ -219,6 +222,7 @@ export async function POST(request: Request): Promise<Response> {
             tool: result.toolUsed,
             modelSkipped: false,
             error: null,
+            ignored: false,
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : "failed";
@@ -233,6 +237,7 @@ export async function POST(request: Request): Promise<Response> {
             tool: null,
             modelSkipped: false,
             error: message,
+            ignored: false,
           });
           send("error", {
             message: "Sorry, I had trouble answering. Tap to try again.",
@@ -244,6 +249,26 @@ export async function POST(request: Request): Promise<Response> {
       try {
         if (cannedTranscript !== null) {
           send("final", { transcript: cannedTranscript });
+          // Name gate first: background chatter never reaches the model, the
+          // board or the response chain.
+          if (!checkWake(cannedTranscript, requestClientIp(request)).execute) {
+            logTurn({
+              ts: new Date().toISOString(),
+              transcript: cannedTranscript,
+              ttftMs: null,
+              inputTokens: 0,
+              outputTokens: 0,
+              audioSeconds: 0,
+              tool: null,
+              modelSkipped: true,
+              error: null,
+              ignored: true,
+            });
+            send("done", {});
+            clearTimeout(timeout);
+            closeStream();
+            return;
+          }
           await answerTranscript(cannedTranscript, 0, Date.now());
           send("done", {});
           clearTimeout(timeout);
@@ -325,6 +350,21 @@ export async function POST(request: Request): Promise<Response> {
             tool: null,
             modelSkipped: true,
             error: null,
+            ignored: false,
+          });
+        } else if (!checkWake(finalText, requestClientIp(request)).execute) {
+          // Background chatter without the name: silent discard.
+          logTurn({
+            ts: new Date(finalAtMs || Date.now()).toISOString(),
+            transcript: finalText,
+            ttftMs: null,
+            inputTokens: 0,
+            outputTokens: 0,
+            audioSeconds,
+            tool: null,
+            modelSkipped: true,
+            error: null,
+            ignored: true,
           });
         } else {
           await answerTranscript(finalText, audioSeconds, finalAtMs);

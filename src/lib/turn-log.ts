@@ -19,6 +19,8 @@ export interface TurnLogFields {
   tool: string | null;
   modelSkipped: boolean;
   error: string | null;
+  /** Discarded by the wake gate: no model call, no board. */
+  ignored: boolean;
 }
 
 export function estimateCost(

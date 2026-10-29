@@ -34,7 +34,7 @@ let server: WebSocketServer;
 let url = "";
 let dropOnAudio = false;
 let holdFinal = false;
-let finalTranscript = "live from the bridge";
+let finalTranscript = "vale, live from the bridge";
 let receivedBinaryBytes = 0;
 let receivedEndStream = 0;
 
@@ -128,7 +128,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
   it("relays live partials, ends the turn on a Buffer control frame, then replies", async () => {
     receivedBinaryBytes = 0;
     receivedEndStream = 0;
-    finalTranscript = "live from the bridge";
+    finalTranscript = "vale, live from the bridge";
     const logs: string[] = [];
     const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
       logs.push(String(line));
@@ -166,7 +166,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
             (frame) =>
               frame.type === "transcript" &&
               frame.final === true &&
-              frame.transcript === "live from the bridge",
+              frame.transcript === "vale, live from the bridge",
           ),
         ).toBe(true);
       });
@@ -194,7 +194,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
       expect(turns).toHaveLength(1);
       const logged = JSON.parse(turns[0].replace("[voice-turn] ", ""));
-      expect(logged.transcript).toBe("live from the bridge");
+      expect(logged.transcript).toBe("vale, live from the bridge");
       expect(logged.inputTokens).toBe(100);
       expect(logged.outputTokens).toBe(20);
       expect(logged.error).toBeNull();
@@ -259,14 +259,14 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
         modelSkipped: true,
       });
     } finally {
-      finalTranscript = "live from the bridge";
+      finalTranscript = "vale, live from the bridge";
       spy.mockRestore();
     }
   });
 
   it("threads the previous response across taps and drops it after a failure", async () => {
     chainFailed();
-    finalTranscript = "si";
+    finalTranscript = "vale, si";
     const seen: (string | undefined)[] = [];
     let calls = 0;
     const agent: AgentFn = async (args) => {
@@ -303,7 +303,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       await runTap();
       expect(seen).toEqual([undefined, "resp_b1", undefined]);
     } finally {
-      finalTranscript = "live from the bridge";
+      finalTranscript = "vale, live from the bridge";
       chainFailed();
     }
   });

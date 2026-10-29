@@ -7,6 +7,7 @@ import {
   chainSucceeded,
   nextPreviousResponseId,
 } from "./response-chain";
+import { checkWake } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { estimateCost, formatTurnLog } from "./turn-log";
 
@@ -42,6 +43,8 @@ export interface VoiceBridgeOptions {
   }) => Promise<BridgeAgentResult>;
   now?: () => number;
   turnTimeoutMs?: number;
+  /** Key for the wake attention window; defaults to the socket peer. */
+  clientId?: string;
 }
 
 // Browser text frames may arrive as Buffer: try JSON first; never forward a control frame as audio.
@@ -120,6 +123,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     finish(1011, "turn-failed");
   };
 
+  const clientId =
+    options.clientId ??
+    (browser as unknown as { _socket?: { remoteAddress?: string } })._socket
+      ?.remoteAddress ??
+    "unknown";
   const logTurn = (fields: {
     ts: string;
     transcript: string;
@@ -130,6 +138,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     tool: string | null;
     modelSkipped: boolean;
     error: string | null;
+    ignored: boolean;
   }) => {
     console.log(
       formatTurnLog({
@@ -157,6 +166,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       tool: null,
       modelSkipped: !agentRan,
       error: "timeout",
+      ignored: false,
     });
     failTurn("The voice turn timed out. Tap to try again.", "E-NET");
   }, turnTimeoutMs);
@@ -208,6 +218,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         tool: result.toolUsed,
         modelSkipped: false,
         error: null,
+        ignored: false,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed";
@@ -225,6 +236,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         tool: null,
         modelSkipped: false,
         error: message,
+        ignored: false,
       });
       sendJson(browser, {
         type: "error",
@@ -290,6 +302,26 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             tool: null,
             modelSkipped: true,
             error: null,
+            ignored: false,
+          });
+          sendJson(browser, { type: "done" });
+          finish(1000, "turn-complete");
+        } else if (!checkWake(message.transcript, clientId).execute) {
+          // Background chatter without the name: silent discard.
+          logTurn({
+            ts: new Date(speechEndAt).toISOString(),
+            transcript: message.transcript,
+            ttftMs: null,
+            inputTokens: 0,
+            outputTokens: 0,
+            audioSeconds:
+              audioProcessedMs !== null
+                ? audioProcessedMs / 1000
+                : bufferedBytes / 48000,
+            tool: null,
+            modelSkipped: true,
+            error: null,
+            ignored: true,
           });
           sendJson(browser, { type: "done" });
           finish(1000, "turn-complete");
