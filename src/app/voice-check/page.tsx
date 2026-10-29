@@ -6,38 +6,47 @@ import { speak, stopSpeaking } from "@/lib/speak";
 const PHRASE =
   "Hola, soy Vale. Te anoto para el relleno de gel mañana a las tres.";
 
+type Voice = "browser" | "seamless";
+
 // Temporary comparison page for the voice verdict: same invented phrase
-// through the browser voice and through MMS on Modal. Removed once decided.
+// through the browser voice or Seamless voice 10. Removed once decided.
 export default function VoiceCheck() {
-  const [browserStatus, setBrowserStatus] = useState("Not played yet.");
-  const [mmsStatus, setMmsStatus] = useState("Not played yet.");
-  const mmsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [voice, setVoice] = useState<Voice>("browser");
+  const [status, setStatus] = useState("Not played yet.");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(
     () => () => {
       stopSpeaking();
-      mmsAudioRef.current?.pause();
-      mmsAudioRef.current = null;
+      audioRef.current?.pause();
+      audioRef.current = null;
     },
     [],
   );
 
-  const playBrowser = () => {
-    mmsAudioRef.current?.pause();
-    const started = performance.now();
-    speak(PHRASE);
-    setBrowserStatus(
-      `Playing with the browser voice (${Math.round(performance.now() - started)} ms to start).`,
-    );
+  const selectVoice = (next: Voice) => {
+    setVoice(next);
+    stopSpeaking();
+    audioRef.current?.pause();
+    setStatus("Not played yet.");
   };
 
-  const playMms = async () => {
+  const play = async () => {
+    if (voice === "browser") {
+      audioRef.current?.pause();
+      const started = performance.now();
+      speak(PHRASE);
+      setStatus(
+        `Playing with the browser voice (${Math.round(performance.now() - started)} ms to start).`,
+      );
+      return;
+    }
     stopSpeaking();
-    mmsAudioRef.current?.pause();
-    setMmsStatus("Generating with MMS...");
+    audioRef.current?.pause();
+    setStatus("Generating with Seamless voice 10...");
     const started = performance.now();
     try {
-      const url = `/api/mms-voice?text=${encodeURIComponent(PHRASE)}`;
+      const url = `/api/seamless-voice?text=${encodeURIComponent(PHRASE)}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("bad status");
       const blob = await res.blob();
@@ -49,13 +58,13 @@ export default function VoiceCheck() {
         audioUrl = url;
       }
       const audio = new Audio(audioUrl);
-      mmsAudioRef.current = audio;
+      audioRef.current = audio;
       await audio.play();
-      setMmsStatus(
-        `Playing the MMS voice (synthesis ${seconds ?? "?"} s, ${((performance.now() - started) / 1000).toFixed(1)} s total).`,
+      setStatus(
+        `Playing Seamless voice 10 (synthesis ${seconds ?? "?"} s, ${((performance.now() - started) / 1000).toFixed(1)} s total).`,
       );
     } catch {
-      setMmsStatus("The MMS voice failed. Try again later.");
+      setStatus("Seamless voice 10 failed. Try again later.");
     }
   };
 
@@ -66,20 +75,31 @@ export default function VoiceCheck() {
       <p>
         <q>{PHRASE}</q>
       </p>
-      <section>
-        <h2>Option A: browser voice</h2>
-        <button type="button" onClick={playBrowser}>
-          Play browser voice
-        </button>
-        <p>{browserStatus}</p>
-      </section>
-      <section>
-        <h2>Option B: MMS voice</h2>
-        <button type="button" onClick={playMms}>
-          Play MMS voice
-        </button>
-        <p>{mmsStatus}</p>
-      </section>
+      <fieldset>
+        <legend>Voice</legend>
+        <label>
+          <input
+            type="radio"
+            name="voice"
+            checked={voice === "browser"}
+            onChange={() => selectVoice("browser")}
+          />
+          Browser voice
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="voice"
+            checked={voice === "seamless"}
+            onChange={() => selectVoice("seamless")}
+          />
+          Seamless voice 10
+        </label>
+      </fieldset>
+      <button type="button" onClick={play}>
+        Play
+      </button>
+      <p>{status}</p>
     </main>
   );
 }

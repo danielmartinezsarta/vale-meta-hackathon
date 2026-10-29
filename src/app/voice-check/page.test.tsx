@@ -32,18 +32,18 @@ afterEach(() => {
 });
 
 describe("voice check page", () => {
-  it("plays the same phrase through the browser voice", () => {
+  it("plays the same phrase through the browser voice by default", () => {
     render(<VoiceCheck />);
-    fireEvent.click(screen.getByRole("button", { name: "Play browser voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
     expect(mockSpeak).toHaveBeenCalledWith(PHRASE);
     expect(screen.getByText(/Playing with the browser voice/)).toBeTruthy();
   });
 
-  it("plays the same phrase through MMS and shows the synthesis time", async () => {
+  it("plays the same phrase through Seamless voice 10 when selected", async () => {
     const fetchMock = vi.fn(
       async (..._args: unknown[]) =>
         new Response(new Uint8Array([1, 2, 3]).buffer, {
-          headers: { "X-Synthesis-Seconds": "0.89" },
+          headers: { "X-Synthesis-Seconds": "6.15" },
         }),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -51,16 +51,20 @@ describe("voice check page", () => {
     vi.stubGlobal("URL", { createObjectURL: () => "blob:fake" });
 
     render(<VoiceCheck />);
-    fireEvent.click(screen.getByRole("button", { name: "Play MMS voice" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Seamless voice 10" }));
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
     await waitFor(() => {
       expect(FakeAudio.last).not.toBeNull();
     });
     expect(FakeAudio.last!.play).toHaveBeenCalled();
     expect(String(fetchMock.mock.calls[0][0])).toContain(
-      `/api/mms-voice?text=${encodeURIComponent(PHRASE)}`,
+      `/api/seamless-voice?text=${encodeURIComponent(PHRASE)}`,
     );
     await waitFor(() => {
-      expect(screen.getByText(/synthesis 0.89 s/)).toBeTruthy();
+      expect(screen.getByText(/Playing Seamless voice 10/)).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/synthesis 6.15 s/)).toBeTruthy();
     });
   });
 });

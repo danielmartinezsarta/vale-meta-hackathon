@@ -32,6 +32,7 @@ export function speak(text: string): void {
   try {
     s.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.9;
     const voice = pickVoice(s.getVoices());
     utterance.lang = voice?.lang ?? "es-CO";
     if (voice) utterance.voice = voice;
