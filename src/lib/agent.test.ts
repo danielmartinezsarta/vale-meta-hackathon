@@ -2,9 +2,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_MODEL,
+  PRIVACY_LINE,
   SPOKEN_SYSTEM_PROMPT,
   runAgentTurn,
 } from "./agent";
+import { freshTestDb } from "./db";
+import { VALE_TOOLS, runValeTool } from "./vale-tools";
 
 function sseResponse(events: { type: string; data: unknown }[]): Response {
   const raw = events
@@ -31,13 +34,40 @@ function completed(
   };
 }
 
+function toolCall(id: string, name: string, args: unknown, callId: string) {
+  return completed(id, [
+    {
+      type: "function_call",
+      name,
+      arguments: JSON.stringify(args),
+      call_id: callId,
+    },
+  ]);
+}
+
+function spoken(id: string, text: string) {
+  return completed(id, [
+    { type: "message", content: [{ type: "output_text", text }] },
+  ]);
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-describe("agent turn", () => {
-  it("returns spoken-style text without a tool call", async () => {
+describe("agent prompt", () => {
+  it("states the confirm, undo and privacy rules", () => {
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/plain text/i);
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/no markdown/i);
+    expect(SPOKEN_SYSTEM_PROMPT).toContain("¿lo guardo?");
+    expect(SPOKEN_SYSTEM_PROMPT).toContain("deshazlo");
+    expect(SPOKEN_SYSTEM_PROMPT).toContain("undo_last_write");
+    expect(SPOKEN_SYSTEM_PROMPT).toContain("Nota privada guardada.");
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/never claim a write happened/i);
+  });
+
+  it("sends the Vale tools with the cheapest reasoning mode", async () => {
     const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal(
       "fetch",
@@ -46,38 +76,27 @@ describe("agent turn", () => {
           JSON.parse((init as { body: string }).body) as Record<string, unknown>,
         );
         return sseResponse([
-          { type: "response.output_text.delta", data: { delta: "Got it." } },
-          completed("resp_1", [
-            {
-              type: "message",
-              content: [{ type: "output_text", text: "Got it." }],
-            },
-          ]),
+          { type: "response.output_text.delta", data: { delta: "Hola." } },
+          spoken("resp_1", "Hola."),
         ]);
       }),
     );
 
-    const deltas: string[] = [];
-    const result = await runAgentTurn({
-      key: "test-key",
-      transcript: "hello",
-      onDelta: (text) => deltas.push(text),
-    });
+    const result = await runAgentTurn({ key: "test-key", transcript: "hola", db: freshTestDb() });
 
-    expect(result.text).toBe("Got it.");
+    expect(result.text).toBe("Hola.");
     expect(result.toolUsed).toBeNull();
-    expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 20 });
-    expect(typeof result.firstTokenMs).toBe("number");
-    expect(deltas.join("")).toBe("Got it.");
     expect(bodies).toHaveLength(1);
     expect(bodies[0].model).toBe(AGENT_MODEL);
     expect(bodies[0].reasoning).toEqual({ effort: "minimal" });
     expect(bodies[0].instructions).toBe(SPOKEN_SYSTEM_PROMPT);
-    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/plain text/i);
-    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/no markdown/i);
+    expect(bodies[0].tools).toEqual(VALE_TOOLS);
   });
+});
 
-  it("calls the toy tool and answers with its result", async () => {
+describe("agent turn with tools", () => {
+  it("executes the called tool against the database", async () => {
+    const db = freshTestDb();
     const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal(
       "fetch",
@@ -88,47 +107,26 @@ describe("agent turn", () => {
         bodies.push(body);
         if (bodies.length === 1) {
           return sseResponse([
-            completed("resp_1", [
-              {
-                type: "function_call",
-                name: "get_invented_slots",
-                arguments: '{"date":"2026-10-29"}',
-                call_id: "call_1",
-              },
-            ]),
+            toolCall("resp_1", "add_note", { client_name: "Ana", text: "prefiere viernes" }, "call_1"),
           ]);
         }
-        return sseResponse([
-          completed("resp_2", [
-            {
-              type: "message",
-              content: [
-                {
-                  type: "output_text",
-                  text: "You have slots at 10:00 and 14:30.",
-                },
-              ],
-            },
-          ]),
-        ]);
+        return sseResponse([spoken("resp_2", "Nota guardada en la ficha de Ana.")]);
       }),
     );
 
-    const result = await runAgentTurn({
-      key: "test-key",
-      transcript: "any slots tomorrow?",
-    });
+    const result = await runAgentTurn({ key: "test-key", transcript: "anota que prefiere viernes", db });
 
-    expect(result.toolUsed).toBe("get_invented_slots");
-    expect(result.text).toContain("10:00");
-    expect(bodies).toHaveLength(2);
+    expect(result.toolUsed).toBe("add_note");
+    expect(result.text).toBe("Nota guardada en la ficha de Ana.");
+    expect(result.usage).toEqual({ inputTokens: 200, outputTokens: 40 });
     const followUp = bodies[1];
     expect(followUp.previous_response_id).toBe("resp_1");
     const input = followUp.input as Record<string, unknown>[];
     expect(input[0].type).toBe("function_call_output");
-    expect(input[0].call_id).toBe("call_1");
-    expect(JSON.stringify(input[0].output)).toContain("2026-10-29");
-    expect(result.usage).toEqual({ inputTokens: 200, outputTokens: 40 });
+    expect(JSON.parse(input[0].output as string).ok).toBe(true);
+    const notes = db.prepare("SELECT COUNT(*) AS n FROM notes").get() as { n: number };
+    expect(notes.n).toBe(1);
+    db.close();
   });
 
   it("ignores function_call_arguments deltas and streams only reply text", async () => {
@@ -136,46 +134,20 @@ describe("agent turn", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_url: unknown, init: unknown) => {
-        const body = JSON.parse(
-          (init as { body: string }).body,
-        ) as Record<string, unknown>;
-        bodies.push(body);
+        bodies.push(JSON.parse((init as { body: string }).body) as Record<string, unknown>);
         if (bodies.length === 1) {
           return sseResponse([
             {
               type: "response.function_call_arguments.delta",
-              data: { delta: '{"date":"2026-11-05"}' },
+              data: { delta: '{"name":"Ana"}' },
             },
-            completed("resp_1", [
-              {
-                type: "function_call",
-                name: "get_invented_slots",
-                arguments: '{"date":"2026-11-05"}',
-                call_id: "call_1",
-              },
-            ]),
+            toolCall("resp_1", "find_client", { name: "Ana" }, "call_1"),
           ]);
         }
         return sseResponse([
-          {
-            type: "response.output_text.delta",
-            data: { delta: "El cinco de noviembre tengo " },
-          },
-          {
-            type: "response.output_text.delta",
-            data: { delta: "a las diez." },
-          },
-          completed("resp_2", [
-            {
-              type: "message",
-              content: [
-                {
-                  type: "output_text",
-                  text: "El cinco de noviembre tengo a las diez.",
-                },
-              ],
-            },
-          ]),
+          { type: "response.output_text.delta", data: { delta: "Esta es " } },
+          { type: "response.output_text.delta", data: { delta: "la ficha." } },
+          spoken("resp_2", "Esta es la ficha."),
         ]);
       }),
     );
@@ -183,13 +155,44 @@ describe("agent turn", () => {
     const deltas: string[] = [];
     const result = await runAgentTurn({
       key: "test-key",
-      transcript: "que tal el cinco de noviembre?",
+      transcript: "busca a ana",
+      db: freshTestDb(),
       onDelta: (text) => deltas.push(text),
     });
 
-    expect(result.text).toBe("El cinco de noviembre tengo a las diez.");
-    expect(deltas.join("")).toBe("El cinco de noviembre tengo a las diez.");
-    expect(deltas.join("")).not.toContain("2026-11-05");
+    expect(result.text).toBe("Esta es la ficha.");
+    expect(deltas.join("")).toBe("Esta es la ficha.");
+    expect(deltas.join("")).not.toContain("Ana");
+  });
+
+  it("appends the privacy line once per session for health notes", async () => {
+    const db = freshTestDb();
+    runValeTool(db, "open_session", { client_name: "Ana", service_name: "Retiro de gel" });
+    const stubHealthTurn = () => {
+      const bodies: Record<string, unknown>[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: unknown, init: unknown) => {
+          bodies.push(JSON.parse((init as { body: string }).body) as Record<string, unknown>);
+          if (bodies.length === 1) {
+            return sseResponse([
+              toolCall("resp_1", "add_note", { client_name: "Ana", text: "onicolisis", kind: "health" }, "call_1"),
+            ]);
+          }
+          return sseResponse([spoken("resp_2", "Nota privada guardada.")]);
+        }),
+      );
+    };
+
+    stubHealthTurn();
+    const first = await runAgentTurn({ key: "test-key", transcript: "anota onicolisis", db });
+    expect(first.text).toBe(`Nota privada guardada. ${PRIVACY_LINE}`);
+
+    stubHealthTurn();
+    const second = await runAgentTurn({ key: "test-key", transcript: "anota otra cosa de salud", db });
+    expect(second.text).toBe("Nota privada guardada.");
+    expect(second.text).not.toContain("infraestructura dedicada");
+    db.close();
   });
 
   it("surfaces model HTTP errors without leaking internals", async () => {
@@ -198,7 +201,7 @@ describe("agent turn", () => {
       vi.fn(async () => new Response("nope", { status: 500 })),
     );
     await expect(
-      runAgentTurn({ key: "test-key", transcript: "hello" }),
+      runAgentTurn({ key: "test-key", transcript: "hello", db: freshTestDb() }),
     ).rejects.toThrow(/model error: 500/);
   });
 });

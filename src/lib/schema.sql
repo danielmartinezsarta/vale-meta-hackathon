@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   service_id INTEGER NOT NULL REFERENCES services(id),
   started_at TEXT NOT NULL,
   ended_at TEXT,
-  duration_s INTEGER
+  duration_s INTEGER,
+  privacy_notice_sent INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS session_supplies (
   session_id INTEGER NOT NULL REFERENCES sessions(id),
