@@ -6,6 +6,7 @@ import { LevelMeter } from "@/components/LevelMeter";
 import { ValeBoard } from "@/components/ValeBoard";
 import type { Board } from "@/lib/board";
 import { parseSseStream } from "@/lib/sse";
+import { speak, stopSpeaking } from "@/lib/speak";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
@@ -72,6 +73,7 @@ export function TapToTalk() {
 
   const stopSession = useCallback(() => {
     sessionRef.current = false;
+    stopSpeaking();
     window.clearTimeout(quietTimerRef.current);
     controllersRef.current.forEach((controller) => {
       try {
@@ -308,6 +310,7 @@ export function TapToTalk() {
             if (typeof message.text !== "string") return;
             repliesRef.current.set(id, message.text);
             patchTurn(id, { reply: message.text });
+            speak(message.text);
             break;
           case "board": {
             const board = (message as { board?: unknown }).board;
@@ -597,6 +600,7 @@ export function TapToTalk() {
               onReply: (text) => {
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
+                speak(text);
               },
               onBoard: (next) => setBoard(next),
               onNotice: (message, code) => {
@@ -647,6 +651,7 @@ export function TapToTalk() {
           },
           onSpeechStart: () => {
             if (!sessionRef.current) return;
+            stopSpeaking();
             window.clearTimeout(quietTimerRef.current);
             // New speech dismisses only the still-open turn's reply.
             const dismissed: number[] = [];
