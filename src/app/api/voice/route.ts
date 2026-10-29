@@ -22,7 +22,7 @@ export async function GET(): Promise<Response> {
     console.error("[voice] META_API_KEY is not configured; rejecting turn.");
     return Response.json(
       {
-        error: "Voice service is not configured. Try again later.",
+        error: "La voz no está configurada. Intenta de nuevo más tarde.",
         code: "E-NET",
       },
       { status: 503 },
@@ -70,7 +70,7 @@ export async function POST(request: Request): Promise<Response> {
     console.error("[voice] META_API_KEY is not configured; rejecting turn.");
     return Response.json(
       {
-        error: "Voice service is not configured. Try again later.",
+        error: "La voz no está configurada. Intenta de nuevo más tarde.",
         code: "E-NET",
       },
       { status: 503 },
@@ -153,7 +153,7 @@ export async function POST(request: Request): Promise<Response> {
             ignored: false,
           });
         }
-        finishError("The voice turn timed out. Tap to try again.", "E-NET");
+        finishError("El turno de voz se agotó. Toca para intentar de nuevo.", "E-NET");
       }, turnTimeoutMs);
 
       const abort = () => {
@@ -209,7 +209,7 @@ export async function POST(request: Request): Promise<Response> {
             startedAt: speechEndAt,
             onDelta: (text) => send("reply-delta", { text }),
           });
-          if (!aborted) chainSucceeded(result.responseId);
+          if (!aborted) chainSucceeded(result.responseId, result.chainNext);
           send("reply", { text: result.text });
           send("board", { board: getBoard(getDb()) });
           logTurn({
@@ -240,7 +240,7 @@ export async function POST(request: Request): Promise<Response> {
             ignored: false,
           });
           send("error", {
-            message: "Sorry, I had trouble answering. Tap to try again.",
+            message: "Perdón, tuve un problema. Toca para intentar de nuevo.",
             code: "E-MODEL",
           });
         }
@@ -310,14 +310,14 @@ export async function POST(request: Request): Promise<Response> {
                       clearTimeout(timeout);
                       // Plain text to the user; raw provider text stays in the server log only.
                       console.error(`[voice-asr] transcription error: ${message}`);
-                      finishError("Connection lost. Tap to try again.", "E-ASR");
+                      finishError("Se perdió la conexión. Toca para intentar de nuevo.", "E-ASR");
                     }
                   },
                 });
               } catch {
                 settled = true;
                 clearTimeout(timeout);
-                finishError("Connection lost. Tap to try again.", "E-NET");
+                finishError("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
                 return;
               }
             }
@@ -329,18 +329,18 @@ export async function POST(request: Request): Promise<Response> {
 
         if (!opened) {
           clearTimeout(timeout);
-          finishError("I didn't hear anything. Tap and speak.", "E-VAD");
+          finishError("No te escuché. Toca y habla.", "E-VAD");
           return;
         }
         asr?.endTurn();
         await waitFor(() => gotFinal || settled, TURN_TIMEOUT_MS);
         if (!gotFinal) {
-          if (!settled) finishError("Connection lost. Tap to try again.", "E-NET");
+          if (!settled) finishError("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
           return;
         }
         if (finalText.trim() === "") {
           // Empty final: no model call, just the notice.
-          send("notice", { message: "I didn't hear anything. Just speak and I'll listen.", code: "E-VAD" });
+          send("notice", { message: "No te escuché. Habla y te escucho.", code: "E-VAD" });
           logTurn({
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: "",
@@ -376,7 +376,7 @@ export async function POST(request: Request): Promise<Response> {
         clearTimeout(timeout);
         closeStream();
       } catch {
-        if (!settled) finishError("Connection lost. Tap to try again.", "E-NET");
+        if (!settled) finishError("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
       } finally {
         clearTimeout(timeout);
         try {

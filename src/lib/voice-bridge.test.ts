@@ -47,6 +47,7 @@ function fakeAgent(text = "All set, see you soon."): (
     toolUsed: null,
     firstTokenMs: 120,
     responseId: "resp_bridge",
+    chainNext: true,
   });
 }
 
@@ -279,6 +280,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
         toolUsed: null,
         firstTokenMs: 1,
         responseId: `resp_b${calls}`,
+        chainNext: true,
       };
     };
     const runTap = async () => {

@@ -248,7 +248,7 @@ describe("POST /api/voice", () => {
       }),
     ).then((response) => response.text());
     expect(dropped).toContain("event: error");
-    expect(dropped).toMatch(/connection lost|had a problem/i);
+    expect(dropped).toMatch(/Se perdió la conexión|tuve un problema/);
 
     dropOnAudio = false;
     const retried = await POST(
@@ -282,7 +282,7 @@ describe("POST /api/voice", () => {
     const text = await POST(request).then((response) => response.text());
     expect(text).toContain("event: final");
     expect(text).toContain("hello, book a gel refill");
-    expect(text).toContain("Sorry, I had trouble answering.");
+    expect(text).toContain("Perdón, tuve un problema.");
     expect(text).toContain('"code":"E-MODEL"');
     const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
     expect(turns).toHaveLength(1);
@@ -303,7 +303,7 @@ describe("POST /api/voice", () => {
     const response = await POST(request);
     expect(response.status).toBe(503);
     const body = (await response.json()) as { error: string };
-    expect(body.error).toMatch(/not configured/i);
+    expect(body.error).toMatch(/configurada/i);
     expect(JSON.stringify(body)).not.toMatch(/\n\s*at\s/);
     vi.stubEnv("META_API_KEY", "test-key");
   });
@@ -344,7 +344,7 @@ describe("POST /api/voice", () => {
         duplex: "half",
       }),
     ).then((response) => response.text());
-    expect(text).toContain("timed out");
+    expect(text).toContain("agotó");
     const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
     expect(turns).toHaveLength(1);
     expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({

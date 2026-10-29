@@ -74,6 +74,15 @@ describe("agent prompt", () => {
     expect(SPOKEN_SYSTEM_PROMPT).not.toMatch(/need a short confirmation first/);
   });
 
+  it("speaks always de tú with fixed templates for missing data", () => {
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/siempre de tú/i);
+    expect(SPOKEN_SYSTEM_PROMPT).toContain("¿Qué servicio le hago a {clienta}?");
+    expect(SPOKEN_SYSTEM_PROMPT).toContain("¿Para qué clienta es?");
+    expect(SPOKEN_SYSTEM_PROMPT).toContain(
+      "¿Para qué clienta es y qué servicio le hago?",
+    );
+  });
+
   it("sends the Vale tools with the cheapest reasoning mode", async () => {
     const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal(
@@ -248,6 +257,91 @@ describe("agent narration buffering", () => {
   });
 });
 
+describe("agent clean retry", () => {
+  it("retries once without the chain after a 400 with no tool yet", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        calls += 1;
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (calls === 1) return new Response("bad chain", { status: 400 });
+        return sseResponse([spoken("resp_2", "Listo.")]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "hola",
+      previousResponseId: "resp_stale",
+      db: freshTestDb(),
+    });
+
+    expect(calls).toBe(2);
+    expect(bodies[0].previous_response_id).toBe("resp_stale");
+    expect(bodies[1].previous_response_id).toBeUndefined();
+    expect(result.responseId).toBe("resp_2");
+  });
+
+  it("does not retry when a tool already ran before the 400", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return sseResponse([
+            toolCall("resp_1", "find_client", { name: "Ana" }, "call_1"),
+          ]);
+        }
+        return new Response("bad round", { status: 400 });
+      }),
+    );
+
+    await expect(
+      runAgentTurn({ key: "test-key", transcript: "hola", db: freshTestDb() }),
+    ).rejects.toThrow(/model error: 400/);
+    expect(calls).toBe(2);
+  });
+
+  it("does not retry non-chain errors", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        return new Response("nope", { status: 500 });
+      }),
+    );
+
+    await expect(
+      runAgentTurn({
+        key: "test-key",
+        transcript: "hola",
+        previousResponseId: "resp_0",
+        db: freshTestDb(),
+      }),
+    ).rejects.toThrow(/model error: 500/);
+    expect(calls).toBe(1);
+  });
+
+  it("marks the chain to continue after questions and doubt, not after writes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => sseResponse([spoken("resp_1", "Hola, dime.")])),
+    );
+    const ask = await runAgentTurn({
+      key: "test-key",
+      transcript: "hola",
+      db: freshTestDb(),
+    });
+    expect(ask.chainNext).toBe(true);
+  });
+});
+
 describe("agent response chaining", () => {
   it("returns the last round id and sends a prior id on the first request", async () => {
     const bodies: Record<string, unknown>[] = [];
@@ -276,5 +370,31 @@ describe("agent response chaining", () => {
     expect(bodies[0].previous_response_id).toBe("resp_0");
     expect(result.responseId).toBe("resp_2");
     expect(result.toolUsed).toBe("find_client");
+    expect(result.chainNext).toBe(false);
+  });
+
+  it("keeps the chain when the tool reports doubt", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return sseResponse([
+            toolCall("resp_1", "add_to_shopping_list", { item_name: "esmalte" }, "call_1"),
+          ]);
+        }
+        return sseResponse([spoken("resp_2", "¿Cuál?")]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "agrega esmalte",
+      db: freshTestDb(),
+    });
+
+    expect(result.toolUsed).toBe("add_to_shopping_list");
+    expect(result.chainNext).toBe(true);
   });
 });

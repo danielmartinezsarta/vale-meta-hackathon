@@ -234,7 +234,7 @@ export function TapToTalk() {
         silentStreakRef.current += 1;
         if (silentStreakRef.current >= 2) {
           showNotice(
-            "I didn't hear anything. Just speak and I'll listen.",
+            "No te escuché. Habla y te escucho.",
             "E-VAD",
           );
         }
@@ -478,7 +478,7 @@ export function TapToTalk() {
           }
           if (finalReceivedRef.current.has(id)) {
             // The transcript bubble stays; only the reply is lost.
-            failTurn(id, "Connection lost. Tap to try again.", "E-NET");
+            failTurn(id, "Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
             return;
           }
           if (!transport.opened) {
@@ -524,7 +524,7 @@ export function TapToTalk() {
             postTurn(id, retryFrames.length > 0 ? retryFrames : pending.splice(0));
             return;
           }
-          failTurn(id, "Connection lost. Tap to try again.", "E-NET");
+          failTurn(id, "Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
         };
       };
 
@@ -606,7 +606,7 @@ export function TapToTalk() {
         })
           .then(async (response) => {
             if (!response.ok) {
-              let message = "Connection lost. Tap to try again.";
+              let message = "Se perdió la conexión. Toca para intentar de nuevo.";
               let code: string | null = "E-NET";
               try {
                 const problem = (await response.json()) as {
@@ -624,7 +624,7 @@ export function TapToTalk() {
             }
             if (!response.body) {
               controllersRef.current.delete(controller);
-              failTurn(id, "Connection lost. Tap to try again.", "E-NET");
+              failTurn(id, "Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
               return;
             }
             await parseSseStream(response.body, {
@@ -673,7 +673,7 @@ export function TapToTalk() {
               settledTurnsRef.current.add(id);
               return;
             }
-            failTurn(id, "Connection lost. Tap to try again.", "E-NET");
+            failTurn(id, "Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
           });
       };
 

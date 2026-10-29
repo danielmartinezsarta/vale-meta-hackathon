@@ -71,7 +71,7 @@ describe("plain-language errors (fake-device fallback)", () => {
         ok: false,
         status: 503,
         json: async () => ({
-          error: "Voice service is not configured. Try again later.",
+          error: "La voz no está configurada. Intenta de nuevo más tarde.",
         }),
       })) as unknown as typeof fetch,
     );
@@ -84,7 +84,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     burst(seen[0]);
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/not configured/i);
+    expect(alert.textContent).toMatch(/configurada/i);
     expect(alert.textContent).not.toMatch(/at .*:[0-9]+/);
     expect(screen.queryByText("You:")).toBeNull();
     expect(
@@ -99,7 +99,7 @@ describe("plain-language errors (fake-device fallback)", () => {
       vi.fn(async () => ({
         ok: true,
         body: errorSse(
-          "Sorry, I had trouble answering. Tap to try again.",
+          "Perdón, tuve un problema. Toca para intentar de nuevo.",
           "E-MODEL",
         ),
       })) as unknown as typeof fetch,
@@ -113,7 +113,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     burst(seen[0]);
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/trouble answering/i);
+    expect(alert.textContent).toMatch(/tuve un problema/i);
     expect(alert.textContent).toMatch(/E-MODEL/);
     expect(screen.getByText("book a refill")).toBeTruthy();
     expect(
@@ -138,7 +138,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     burst(seen[0]);
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/Connection lost/i);
+    expect(alert.textContent).toMatch(/perdió la conexión/i);
     expect(alert.textContent).toMatch(/E-NET/);
   });
 
@@ -150,7 +150,7 @@ describe("plain-language errors (fake-device fallback)", () => {
         ok: false,
         status: 503,
         json: async () => ({
-          error: "Voice service is not configured. Try again later.",
+          error: "La voz no está configurada. Intenta de nuevo más tarde.",
           code: "E-NET",
         }),
       })) as unknown as typeof fetch,
@@ -167,7 +167,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     burst(seen[0]);
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/not configured/i);
+    expect(alert.textContent).toMatch(/configurada/i);
     expect(alert.textContent).toMatch(/E-NET/);
   });
 });

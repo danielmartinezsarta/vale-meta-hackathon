@@ -26,6 +26,8 @@ export interface BridgeAgentResult {
   toolUsed: string | null;
   firstTokenMs: number | null;
   responseId: string;
+  /** False after a completed write: the next turn starts the chain fresh. */
+  chainNext: boolean;
 }
 
 export interface VoiceBridgeOptions {
@@ -168,7 +170,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       error: "timeout",
       ignored: false,
     });
-    failTurn("The voice turn timed out. Tap to try again.", "E-NET");
+    failTurn("El turno de voz se agotó. Toca para intentar de nuevo.", "E-NET");
   }, turnTimeoutMs);
 
   const flushPending = () => {
@@ -202,7 +204,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           onDelta: (text) => sendJson(browser, { type: "reply-delta", text }),
         },
       );
-      if (!browserGone) chainSucceeded(result.responseId);
+      if (!browserGone) chainSucceeded(result.responseId, result.chainNext);
       sendJson(browser, { type: "reply", text: result.text });
       sendJson(browser, { type: "board", board: getBoard(getDb()) });
       logTurn({
@@ -240,7 +242,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       });
       sendJson(browser, {
         type: "error",
-        message: "Sorry, I had trouble answering. Tap to try again.",
+        message: "Perdón, tuve un problema. Toca para intentar de nuevo.",
         code: "E-MODEL",
       });
     }
@@ -286,7 +288,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         if (message.transcript.trim() === "") {
           sendJson(browser, {
             type: "notice",
-            message: "I didn't hear anything. Just speak and I'll listen.",
+            message: "No te escuché. Habla y te escucho.",
             code: "E-VAD",
           });
           logTurn({
@@ -347,7 +349,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         console.error(
           `[voice-asr] transcription error: ${message.message ?? "unknown"}`,
         );
-        failTurn("Connection lost. Tap to try again.", "E-ASR");
+        failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-ASR");
       }
     }
   };
@@ -356,7 +358,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   try {
     meta = createMetaSocket ? createMetaSocket(metaUrl) : new WebSocket(metaUrl);
   } catch {
-    failTurn("Connection lost. Tap to try again.", "E-NET");
+    failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
     return;
   }
 
@@ -371,7 +373,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         }),
       );
     } catch {
-      failTurn("Connection lost. Tap to try again.", "E-NET");
+      failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
     }
   });
 
@@ -379,7 +381,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
 
   meta.on("error", () => {
     if (!settled && !metaOpen) {
-      failTurn("Connection lost. Tap to try again.", "E-NET");
+      failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
     }
   });
 
@@ -387,7 +389,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     if (settled) return;
     if (gotFinal) return; // Meta closes after the final; the reply is on its way.
     console.error("[voice-asr] connection closed before final transcript");
-    failTurn("Connection lost. Tap to try again.", "E-ASR");
+    failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-ASR");
   });
 
   browser.on("message", (data: unknown) => {
@@ -397,7 +399,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         try {
           meta.send(JSON.stringify({ type: "endStream" }));
         } catch {
-          failTurn("Connection lost. Tap to try again.", "E-NET");
+          failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
         }
       } else {
         pendingEnd = true;
@@ -408,14 +410,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       const chunk = data as Buffer;
       bufferedBytes += chunk.length;
       if (bufferedBytes > MAX_BUFFERED_BYTES) {
-        failTurn("Connection lost. Tap to try again.", "E-NET");
+        failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
         return;
       }
       if (metaOpen) {
         try {
           meta.send(chunk);
         } catch {
-          failTurn("Connection lost. Tap to try again.", "E-NET");
+          failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
         }
       } else {
         pendingAudio.push(chunk);

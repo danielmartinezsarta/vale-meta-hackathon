@@ -13,6 +13,8 @@ export const SPOKEN_SYSTEM_PROMPT = [
   "You are Vale, a hands-free voice helper for nail technicians.",
   "The user hears your reply read aloud, so reply in the user's language (default Spanish) in exactly one or two short spoken sentences.",
   "Use plain text only. No markdown. No bold or italics. No lists. No links. No URLs. No emoji.",
+  "Habla siempre de tú, nunca de usted.",
+  "When you lack data, ask with these exact templates, filling only the braces: missing service -> ¿Qué servicio le hago a {clienta}?; missing client -> ¿Para qué clienta es?; missing both -> ¿Para qué clienta es y qué servicio le hago?. Never invent other wordings for these questions.",
   "You have tools for sessions, client cards, notes, the shopping list and supplies. Use them to act.",
   "Never invent names, prices or addresses, and never claim a write happened without calling its tool.",
   "Reads (find_client, read_shopping_list) run at once.",
@@ -35,6 +37,13 @@ export interface AgentResult {
   firstTokenMs: number | null;
   /** Last completed response id: chain it as previous_response_id next turn. */
   responseId: string;
+  /** Keep chaining: no tool ran, or a tool reported doubt. Drop after writes. */
+  chainNext: boolean;
+}
+
+/** A 400 on a chained first round means the chain went stale: retry clean. */
+export function isChainError(error: unknown): boolean {
+  return error instanceof Error && /^model error: 400/.test(error.message);
 }
 
 interface ResponsesOutputItem {
@@ -242,55 +251,80 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   let text = "";
   let responseId = "";
   let toolUsed: string | null = null;
+  let sawDoubt = false;
   let healthSaved = false;
   const usage: AgentUsage = { inputTokens: 0, outputTokens: 0 };
   let firstTokenMs: number | null = null;
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const turn = await postResponses(
-      options.key,
-      url,
-      {
-        instructions,
-        ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
-        input,
-        tools: VALE_TOOLS,
-        // Cheapest reasoning mode; the latency budget depends on it.
-        reasoning: { effort: "minimal" },
-        stream: true,
-      },
-      onDelta,
-      startedAt,
-    );
-    usage.inputTokens += turn.usage.inputTokens;
-    usage.outputTokens += turn.usage.outputTokens;
-    firstTokenMs = firstTokenMs ?? turn.firstTokenMs;
-    previousResponseId = turn.id;
-    responseId = turn.id;
-    if (turn.calls.length === 0) {
-      text = turn.text;
-      break;
+  // At most one clean retry: a 400 before any tool ran means the chained
+  // response expired. Never replay a turn that already wrote.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0) {
+      previousResponseId = undefined;
+      input = options.transcript;
+      text = "";
+      responseId = "";
+      toolUsed = null;
+      sawDoubt = false;
+      healthSaved = false;
     }
-    const call = turn.calls[0];
-    toolUsed = toolUsed ?? call.name;
-    let parsed: Record<string, unknown> = {};
     try {
-      parsed = JSON.parse(call.args || "{}") as Record<string, unknown>;
-    } catch {
-      parsed = {};
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+        const turn = await postResponses(
+          options.key,
+          url,
+          {
+            instructions,
+            ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+            input,
+            tools: VALE_TOOLS,
+            // Cheapest reasoning mode; the latency budget depends on it.
+            reasoning: { effort: "minimal" },
+            stream: true,
+          },
+          onDelta,
+          startedAt,
+        );
+        usage.inputTokens += turn.usage.inputTokens;
+        usage.outputTokens += turn.usage.outputTokens;
+        firstTokenMs = firstTokenMs ?? turn.firstTokenMs;
+        previousResponseId = turn.id;
+        responseId = turn.id;
+        if (turn.calls.length === 0) {
+          text = turn.text;
+          break;
+        }
+        const call = turn.calls[0];
+        toolUsed = toolUsed ?? call.name;
+        let parsed: Record<string, unknown> = {};
+        try {
+          parsed = JSON.parse(call.args || "{}") as Record<string, unknown>;
+        } catch {
+          parsed = {};
+        }
+        const toolResult = runValeTool(db, call.name, parsed);
+        if (!toolResult.ok) sawDoubt = true;
+        if (call.name === "add_note" && (toolResult.data as { private?: boolean } | undefined)?.private === true) {
+          healthSaved = true;
+        }
+        input = [
+          {
+            type: "function_call_output",
+            call_id: call.callId,
+            output: JSON.stringify(toolResult),
+          },
+        ];
+        text = toolResult.message;
+      }
+      break;
+    } catch (error) {
+      const cleanRetry =
+        attempt === 0 &&
+        options.previousResponseId !== undefined &&
+        toolUsed === null &&
+        isChainError(error);
+      if (!cleanRetry) throw error;
     }
-    const toolResult = runValeTool(db, call.name, parsed);
-    if (call.name === "add_note" && (toolResult.data as { private?: boolean } | undefined)?.private === true) {
-      healthSaved = true;
-    }
-    input = [
-      {
-        type: "function_call_output",
-        call_id: call.callId,
-        output: JSON.stringify(toolResult),
-      },
-    ];
-    text = toolResult.message;
   }
 
   if (healthSaved && privacyNoticeNeeded(db)) {
@@ -298,5 +332,5 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     text = text === "" ? PRIVACY_LINE : `${text} ${PRIVACY_LINE}`;
   }
 
-  return { text, usage, toolUsed, firstTokenMs, responseId };
+  return { text, usage, toolUsed, firstTokenMs, responseId, chainNext: toolUsed === null || sawDoubt };
 }

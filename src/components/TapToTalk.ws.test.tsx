@@ -238,7 +238,7 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
 
     ws.serverMessage({
       type: "error",
-      message: "Connection lost. Tap to try again.",
+      message: "Se perdió la conexión. Toca para intentar de nuevo.",
       code: "E-ASR",
     });
     await waitFor(() => {

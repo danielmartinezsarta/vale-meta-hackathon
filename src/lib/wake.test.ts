@@ -44,7 +44,7 @@ describe("wake word gate", () => {
     chainFailed();
     checkWake("ruido de fondo", "ip-7", 6000);
     expect(nextPreviousResponseId()).toBeUndefined();
-    chainSucceeded("resp_kept");
+    chainSucceeded("resp_kept", true);
     checkWake("más ruido", "ip-8", 6000);
     expect(nextPreviousResponseId()).toBe("resp_kept");
     chainFailed();
