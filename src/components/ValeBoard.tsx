@@ -37,8 +37,8 @@ export function ValeBoard({ board }: { board: Board | null }) {
           startedAt={board.session.startedAt}
         />
       ) : (
-        <section aria-label="Sesión en curso">
-          <h2>Sesión en curso</h2>
+        <section aria-label="Sesión">
+          <h2>Sesión</h2>
           <p>Sin sesión abierta.</p>
         </section>
       )}

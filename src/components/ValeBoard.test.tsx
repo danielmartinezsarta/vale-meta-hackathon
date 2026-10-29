@@ -44,4 +44,17 @@ describe("ValeBoard", () => {
     expect(screen.getByText("Sin sesión abierta.")).toBeDefined();
     expect(screen.getByText("La lista está vacía.")).toBeDefined();
   });
+
+  it("only claims a live session when one is open", () => {
+    const { unmount } = render(
+      <ValeBoard board={{ session: null, card: null, list: [] }} />,
+    );
+    expect(screen.getByRole("heading", { name: "Sesión" })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Sesión en curso" })).toBeNull();
+    cleanup();
+    render(<ValeBoard board={board} />);
+    expect(screen.getByRole("heading", { name: "Sesión en curso" })).toBeDefined();
+    expect(screen.queryByRole("heading", { name: "Sesión" })).toBeNull();
+    unmount();
+  });
 });
