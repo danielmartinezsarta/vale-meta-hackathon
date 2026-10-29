@@ -1,8 +1,11 @@
+import type { Board } from "./board";
+
 export interface SseHandlers {
   onInterim?: (transcript: string) => void;
   onFinal?: (transcript: string, audioProcessedMs: number | null) => void;
   onReplyDelta?: (text: string) => void;
   onReply?: (text: string) => void;
+  onBoard?: (board: Board) => void;
   onNotice?: (message: string, code?: string) => void;
   onErrorEvent?: (message: string, code?: string) => void;
   onDone?: () => void;
@@ -71,6 +74,11 @@ function dispatch(raw: string, handlers: SseHandlers): void {
       break;
     case "reply":
       if (typeof payload.text === "string") handlers.onReply?.(payload.text);
+      break;
+    case "board":
+      if (payload.board && typeof payload.board === "object") {
+        handlers.onBoard?.(payload.board as Board);
+      }
       break;
     case "notice":
       if (typeof payload.message === "string") {

@@ -35,6 +35,16 @@ describe("SSE parser", () => {
     expect(done).toBe(true);
   });
 
+  it("dispatches board snapshots", async () => {
+    const seen: unknown[] = [];
+    const raw =
+      'event: board\ndata: {"board":{"session":null,"card":null,"list":["Esmalte rojo"]}}\n\n';
+    await parseSseStream(streamFromChunks([raw]), {
+      onBoard: (board) => seen.push(board),
+    });
+    expect(seen).toEqual([{ session: null, card: null, list: ["Esmalte rojo"] }]);
+  });
+
   it("ignores unknown events and malformed data", async () => {
     const seen: string[] = [];
     const raw =

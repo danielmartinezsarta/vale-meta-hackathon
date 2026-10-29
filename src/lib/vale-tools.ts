@@ -83,11 +83,12 @@ interface OpenSessionRow {
   id: number;
   client_id: number;
   service_id: number;
+  started_at: string;
 }
 
 export function getOpenSession(db: ValeDb): OpenSessionRow | null {
   const row = db
-    .prepare("SELECT id, client_id, service_id FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1")
+    .prepare("SELECT id, client_id, service_id, started_at FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1")
     .get() as OpenSessionRow | undefined;
   return row ?? null;
 }

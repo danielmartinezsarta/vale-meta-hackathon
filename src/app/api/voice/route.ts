@@ -1,6 +1,8 @@
 import { connection } from "next/server";
 import { upgradeWebSocket } from "@vercel/functions";
 import { runAgentTurn } from "@/lib/agent";
+import { getDb } from "@/lib/db";
+import { getBoard } from "@/lib/board";
 import { openAsrConnection } from "@/lib/asr";
 import { estimateCost, formatTurnLog } from "@/lib/turn-log";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
@@ -195,6 +197,7 @@ export async function POST(request: Request): Promise<Response> {
             onDelta: (text) => send("reply-delta", { text }),
           });
           send("reply", { text: result.text });
+          send("board", { board: getBoard(getDb()) });
           logTurn({
             ts,
             transcript,

@@ -1,5 +1,7 @@
 import WebSocket from "ws";
 import { runAgentTurn } from "./agent";
+import { getDb } from "./db";
+import { getBoard } from "./board";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { estimateCost, formatTurnLog } from "./turn-log";
 
@@ -181,6 +183,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         },
       );
       sendJson(browser, { type: "reply", text: result.text });
+      sendJson(browser, { type: "board", board: getBoard(getDb()) });
       logTurn({
         ts,
         transcript,

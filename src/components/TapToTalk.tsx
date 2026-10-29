@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { startCapture } from "@/lib/capture";
 import { LevelMeter } from "@/components/LevelMeter";
+import { ValeBoard } from "@/components/ValeBoard";
+import type { Board } from "@/lib/board";
 import { parseSseStream } from "@/lib/sse";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
@@ -51,6 +53,7 @@ export function TapToTalk() {
   const [alert, setAlert] = useState<string | null>(null);
   const [alertCode, setAlertCode] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
+  const [board, setBoard] = useState<Board | null>(null);
   const lastLevelRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);
@@ -306,6 +309,13 @@ export function TapToTalk() {
             repliesRef.current.set(id, message.text);
             patchTurn(id, { reply: message.text });
             break;
+          case "board": {
+            const board = (message as { board?: unknown }).board;
+            if (board && typeof board === "object") {
+              setBoard(board as Board);
+            }
+            break;
+          }
           case "notice":
             if (typeof message.message !== "string") return;
             if (typeof message.code === "string" && message.code === "E-VAD") {
@@ -588,6 +598,7 @@ export function TapToTalk() {
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
               },
+              onBoard: (next) => setBoard(next),
               onNotice: (message, code) => {
                 // E-VAD notices pass the silence gate; anything else shows directly.
                 if (code === "E-VAD") handleVadCandidate(id);
@@ -687,6 +698,7 @@ export function TapToTalk() {
       setNotice(null);
       setNoticeCode(null);
       setLevel(0);
+      setBoard(null);
       return;
     }
     setAlert(null);
@@ -720,6 +732,8 @@ export function TapToTalk() {
       </button>
 
       {status === "live" && <LevelMeter level={level} />}
+
+      <ValeBoard board={board} />
 
       {status === "live" &&
         turns.every((turn) => !hasVisibleContent(turn)) &&
