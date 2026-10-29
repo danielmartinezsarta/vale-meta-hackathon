@@ -10,6 +10,14 @@ The idea comes from first-hand knowledge of the trade: nail technicians work wit
 
 Hands-free, voice-first assistant for entrepreneurs who work with their hands, starting with nail technicians.
 
+## Demo data (all invented)
+
+Client, service and supply names come from `src/lib/seed-data.json` and are
+entirely fictitious, created for this hackathon. The SQLite file
+(`data/vale.db`, created by `npm run db:seed` and never committed) holds only
+that invented seed. Health notes are stored flagged as private and are never
+shown or sent to the cloud model.
+
 Built for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/meta-ai-developer-hackathon) (Indie Developer track, "Build for Your World"), October 26 to November 4, 2026.
 
 ## License

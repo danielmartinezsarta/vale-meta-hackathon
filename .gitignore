@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 .DS_Store
+data/
 node_modules/
 .next/
 *.tsbuildinfo
