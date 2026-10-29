@@ -153,6 +153,18 @@ describe("voice engine switch", () => {
     expect(voiceEngine()).toBe("browser");
   });
 
+  it("requests echo cancellation and noise suppression on the mic", async () => {
+    const getUserMedia = vi.fn(async () => ({ getTracks: () => [] }));
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+    render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(getUserMedia).toHaveBeenCalledWith({
+        audio: { echoCancellation: true, noiseSuppression: true },
+      });
+    });
+  });
+
   it("plays the reply through Seamless when the engine is on", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
@@ -190,5 +202,138 @@ describe("voice engine switch", () => {
     });
     expect(mockSpeak).toHaveBeenCalledWith("Sesión abierta.");
     expect(mockSpeak).toHaveBeenCalledWith("Sesión abierta.");
+  });
+
+  it("renders ignored turns dimmed with a label, never as dialogue", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+    });
+    vi.stubGlobal("WebSocket", FakeWs);
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      driver = {
+        onSpeechStart: callbacks.onSpeechStart,
+        onSpeechEnd: callbacks.onSpeechEnd,
+      };
+      return { stop: () => {} };
+    });
+
+    render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
+    driver!.onSpeechStart();
+    await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(1);
+    });
+    const ws = FakeWs.instances[0];
+    ws.open();
+    driver!.onSpeechEnd();
+    ws.serverMessage({ type: "transcript", transcript: "ruido", final: true });
+    ws.serverMessage({ type: "ignored" });
+    ws.serverMessage({ type: "done" });
+
+    await waitFor(() => {
+      expect(screen.getByText("ignorado (sin nombre)")).toBeDefined();
+    });
+    const item = screen.getByText("ignorado (sin nombre)").closest("li");
+    expect(item?.getAttribute("style")).toContain("opacity");
+    expect(screen.queryByText("You:")).toBeNull();
+  });
+
+  it("never lets the board displace the conversation", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+    });
+    vi.stubGlobal("WebSocket", FakeWs);
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      driver = {
+        onSpeechStart: callbacks.onSpeechStart,
+        onSpeechEnd: callbacks.onSpeechEnd,
+      };
+      return { stop: () => {} };
+    });
+
+    render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
+    driver!.onSpeechStart();
+    await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(1);
+    });
+    const ws = FakeWs.instances[0];
+    ws.open();
+    driver!.onSpeechEnd();
+    ws.serverMessage({ type: "transcript", transcript: "vale, hola", final: true });
+    ws.serverMessage({ type: "reply", text: "Hola, soy Vale." });
+    ws.serverMessage({
+      type: "board",
+      board: { session: null, card: null, list: [] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Hola, soy Vale.")).toBeDefined();
+    });
+    const turns = screen.getByRole("list", { name: "Conversation turns" });
+    const board = screen.getByRole("heading", { name: "Lista de compras" });
+    expect(
+      turns.compareDocumentPosition(board) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("does not cut its own reply on echo and drops the echo turn", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+    });
+    vi.stubGlobal("WebSocket", FakeWs);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Blob(["fake-wav"]))),
+    );
+    stubSeamlessPlayback();
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      driver = {
+        onSpeechStart: callbacks.onSpeechStart,
+        onSpeechEnd: callbacks.onSpeechEnd,
+      };
+      return { stop: () => {} };
+    });
+
+    render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
+    driver!.onSpeechStart();
+    await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(1);
+    });
+    const ws = FakeWs.instances[0];
+    ws.open();
+    driver!.onSpeechEnd();
+    ws.serverMessage({ type: "reply", text: "Te escucho." });
+    await waitFor(() => {
+      expect(screen.getByText("Te escucho.")).toBeDefined();
+    });
+
+    // The speaker echo trips speech start while the reply is audible.
+    mockStopSpeaking.mockClear();
+    mockSpeak.mockClear();
+    driver!.onSpeechStart();
+    expect(mockStopSpeaking).not.toHaveBeenCalled();
+    expect(screen.getByText("Te escucho.")).toBeDefined();
+
+    // The echo ends with the reply still playing: echo turn dropped silently,
+    // the original reply untouched, nothing new spoken.
+    driver!.onSpeechEnd();
+    await waitFor(() => {
+      expect(FakeWs.instances[1].readyState).toBe(3);
+    });
+    expect(screen.getByText("Te escucho.")).toBeDefined();
+    expect(mockSpeak).not.toHaveBeenCalled();
+    expect(mockStopSpeaking).not.toHaveBeenCalled();
   });
 });

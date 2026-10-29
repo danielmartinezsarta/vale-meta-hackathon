@@ -7,6 +7,7 @@ import { ValeBoard } from "@/components/ValeBoard";
 import type { Board } from "@/lib/board";
 import { parseSseStream } from "@/lib/sse";
 import {
+  isSpeaking,
   setVoiceEngine,
   speak,
   stopSpeaking,
@@ -21,6 +22,8 @@ interface Turn {
   interim: string;
   final: string | null;
   reply: string | null;
+  /** Discarded by the wake gate: shown dimmed, never as dialogue. */
+  ignored?: boolean;
 }
 
 const NO_SPEECH_TIMEOUT_MS = 8000;
@@ -97,7 +100,7 @@ export function TapToTalk() {
 
   const stopSession = useCallback(() => {
     sessionRef.current = false;
-    stopSpeaking();
+    stopSpeaking("tap");
     window.clearTimeout(quietTimerRef.current);
     controllersRef.current.forEach((controller) => {
       try {
@@ -278,6 +281,24 @@ export function TapToTalk() {
         endSessionWithAlert(message, code);
       };
 
+      // The mic heard our own reply, not the user: close its socket and erase
+      // the turn before any audio leaves the device.
+      const dropEchoTurn = (id: number) => {
+        const transport = transports.get(id);
+        const socket = transport?.socket ?? null;
+        if (transport) transport.failed = true;
+        if (socket) {
+          socketsRef.current.delete(socket);
+          try {
+            socket.close();
+          } catch {
+            /* already closed */
+          }
+        }
+        transports.delete(id);
+        removeTurn(id);
+      };
+
       const sendFrameBytes = (socket: WebSocket, frame: Int16Array) => {
         socket.send(
           frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength),
@@ -374,6 +395,9 @@ export function TapToTalk() {
             );
             break;
           }
+          case "ignored":
+            patchTurn(id, { ignored: true });
+            break;
           case "done":
             transport.settled = true;
             {
@@ -627,6 +651,7 @@ export function TapToTalk() {
                 speak(text);
               },
               onBoard: (next) => setBoard(next),
+              onIgnored: () => patchTurn(id, { ignored: true }),
               onNotice: (message, code) => {
                 // E-VAD notices pass the silence gate; anything else shows directly.
                 if (code === "E-VAD") handleVadCandidate(id);
@@ -675,19 +700,24 @@ export function TapToTalk() {
           },
           onSpeechStart: () => {
             if (!sessionRef.current) return;
-            stopSpeaking();
+            // Our own reply still audible: this is echo, not the user.
+            // Never cut it and never dismiss its text.
+            const echo = isSpeaking();
+            if (!echo) stopSpeaking("speech-start");
             window.clearTimeout(quietTimerRef.current);
-            // New speech dismisses only the still-open turn's reply.
-            const dismissed: number[] = [];
-            setTurns((prev) =>
-              prev.map((turn) =>
-                turn.reply && !settledTurnsRef.current.has(turn.id)
-                  ? (dismissed.push(turn.id), { ...turn, reply: null })
-                  : turn,
-              ),
-            );
-            for (const turnId of dismissed) {
-              repliesRef.current.delete(turnId);
+            if (!echo) {
+              // New speech dismisses only the still-open turn's reply.
+              const dismissed: number[] = [];
+              setTurns((prev) =>
+                prev.map((turn) =>
+                  turn.reply && !settledTurnsRef.current.has(turn.id)
+                    ? (dismissed.push(turn.id), { ...turn, reply: null })
+                    : turn,
+                ),
+              );
+              for (const turnId of dismissed) {
+                repliesRef.current.delete(turnId);
+              }
             }
             // A new utterance after a posted turn opens the next turn on the same capture.
             if (posted) openTurn(false);
@@ -697,6 +727,11 @@ export function TapToTalk() {
           onSpeechEnd: () => {
             if (!sessionRef.current || posted) return;
             posted = true;
+            // Reply still audible at speech end: the mic heard us, drop it.
+            if (isSpeaking()) {
+              dropEchoTurn(currentId);
+              return;
+            }
             endTurnTransport(currentId);
           },
           // Same samples as the VAD, throttled to ~10 Hz.
@@ -737,7 +772,12 @@ export function TapToTalk() {
     setLevel(0);
     setStatus("requesting");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
       streamRef.current = stream;
       setStatus("live");
       void runSession(stream);
@@ -749,7 +789,7 @@ export function TapToTalk() {
   const toggleEngine = useCallback(() => {
     const next: VoiceEngine = engine === "seamless" ? "browser" : "seamless";
     setVoiceEngine(next);
-    stopSpeaking();
+    stopSpeaking("engine-switch");
     setEngine(next);
   }, [engine]);
 
@@ -786,28 +826,40 @@ export function TapToTalk() {
 
       {status === "live" && <LevelMeter level={level} />}
 
-      <ValeBoard board={board} />
-
       {status === "live" &&
         turns.every((turn) => !hasVisibleContent(turn)) &&
         !notice && <p>Your microphone is on. Go ahead, I&apos;m listening.</p>}
 
       <ol aria-label="Conversation turns">
         {turns.filter(hasVisibleContent).map((turn) => (
-          <li key={turn.id}>
-            {(turn.final ?? turn.interim) !== "" && (
+          <li
+            key={turn.id}
+            style={turn.ignored ? { opacity: 0.6 } : undefined}
+          >
+            {turn.ignored ? (
               <p>
-                <strong>You:</strong> {turn.final ?? turn.interim}
+                {turn.final ?? turn.interim}{" "}
+                <small>ignorado (sin nombre)</small>
               </p>
-            )}
-            {turn.reply && (
-              <p>
-                <strong>Vale:</strong> {turn.reply}
-              </p>
+            ) : (
+              <>
+                {(turn.final ?? turn.interim) !== "" && (
+                  <p>
+                    <strong>You:</strong> {turn.final ?? turn.interim}
+                  </p>
+                )}
+                {turn.reply && (
+                  <p>
+                    <strong>Vale:</strong> {turn.reply}
+                  </p>
+                )}
+              </>
             )}
           </li>
         ))}
       </ol>
+
+      <ValeBoard board={board} />
 
       {notice && (
         <p role="status">

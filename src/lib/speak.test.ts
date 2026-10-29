@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { pickVoice, setVoiceEngine, speak, stopSpeaking } from "./speak";
+import { isSpeaking, pickVoice, setVoiceEngine, speak, stopSpeaking } from "./speak";
 
 function fakeVoice(lang: string): SpeechSynthesisVoice {
   return { lang } as SpeechSynthesisVoice;
@@ -75,13 +75,13 @@ describe("speak with the browser voice", () => {
   it("stays silent without the browser API", () => {
     expect(() => speak("hello")).not.toThrow();
     expect(speak("hello")).toBeUndefined();
-    expect(() => stopSpeaking()).not.toThrow();
+    expect(() => stopSpeaking("test")).not.toThrow();
   });
 
   it("stopSpeaking cuts the audio in progress", () => {
     const { synth } = stubSpeechSynthesis([fakeVoice("es-CO")]);
     speak("Hola");
-    stopSpeaking();
+    stopSpeaking("test");
     expect(synth.cancel).toHaveBeenCalledTimes(2);
   });
 
@@ -189,8 +189,27 @@ describe("seamless voice engine", () => {
       await vi.waitFor(() => {
         expect(played).toHaveLength(1);
       });
-      stopSpeaking();
+      stopSpeaking("test");
       expect(paused).toHaveLength(1);
+    } finally {
+      setVoiceEngine("browser");
+    }
+  });
+
+  it("reports true while seamless audio is in flight", async () => {
+    stubSpeechSynthesis();
+    const { played } = stubAudio();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(WAV)));
+    expect(isSpeaking()).toBe(false);
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.waitFor(() => {
+        expect(played).toHaveLength(1);
+      });
+      expect(isSpeaking()).toBe(true);
+      stopSpeaking("test");
+      expect(isSpeaking()).toBe(false);
     } finally {
       setVoiceEngine("browser");
     }
@@ -212,7 +231,7 @@ describe("seamless voice engine", () => {
       await vi.waitFor(() => {
         expect(fetchStub).toHaveBeenCalledTimes(1);
       });
-      stopSpeaking();
+      stopSpeaking("test");
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(played).toHaveLength(0);
     } finally {

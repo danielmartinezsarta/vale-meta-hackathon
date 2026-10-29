@@ -159,11 +159,28 @@ export function speak(text: string): void {
   void ensureVoices(s).then((late) => sayWithBrowser(s, text, late));
 }
 
-export function stopSpeaking(): void {
+export function stopSpeaking(reason: string): void {
+  // Every stop carries its cause so the next field test can read in the
+  // browser console which tap or voice event cut the reply.
+  try {
+    console.debug(`[voice-out] stop: ${reason}`);
+  } catch {
+    /* logging must never break the stop */
+  }
   stopSeamlessSpeech();
   try {
     synth()?.cancel();
   } catch {
     /* nothing playing or nothing to stop */
+  }
+}
+
+/** True while a reply is audible: browser queue or Seamless audio. */
+export function isSpeaking(): boolean {
+  try {
+    if (seamlessAudio !== null) return true;
+    return synth()?.speaking ?? false;
+  } catch {
+    return false;
   }
 }
