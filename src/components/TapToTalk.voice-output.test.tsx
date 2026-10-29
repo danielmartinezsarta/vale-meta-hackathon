@@ -2,16 +2,24 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
 import { startCapture } from "@/lib/capture";
-import { speak, stopSpeaking } from "@/lib/speak";
+import { setVoiceEngine, speak, stopSpeaking, voiceEngine } from "@/lib/speak";
 
 vi.mock("@/lib/capture", () => ({
   startCapture: vi.fn(),
 }));
 
-vi.mock("@/lib/speak", () => ({
-  speak: vi.fn(),
-  stopSpeaking: vi.fn(),
-}));
+vi.mock("@/lib/speak", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/speak")>();
+  return {
+    ...actual,
+    speak: vi.fn((...args: Parameters<typeof actual.speak>) =>
+      actual.speak(...args),
+    ),
+    stopSpeaking: vi.fn((...args: Parameters<typeof actual.stopSpeaking>) =>
+      actual.stopSpeaking(...args),
+    ),
+  };
+});
 
 const mockStartCapture = vi.mocked(startCapture);
 const mockSpeak = vi.mocked(speak);
@@ -51,8 +59,9 @@ let driver: CaptureDriver | null = null;
 afterEach(() => {
   cleanup();
   FakeWs.instances = [];
+  setVoiceEngine("browser");
   vi.unstubAllGlobals();
-  vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 describe("browser voice output", () => {
@@ -98,5 +107,88 @@ describe("browser voice output", () => {
     // Daniel talks again: the audio cuts at once.
     driver!.onSpeechStart();
     expect(mockStopSpeaking).toHaveBeenCalled();
+  });
+});
+
+describe("voice engine switch", () => {
+  function stubSeamlessPlayback() {
+    const played: string[] = [];
+    vi.stubGlobal("URL", {
+      createObjectURL: () => "blob:seamless",
+      revokeObjectURL: () => {},
+    });
+    vi.stubGlobal(
+      "Audio",
+      class {
+        src: string;
+        onended: (() => void) | null = null;
+        constructor(src: string) {
+          this.src = src;
+        }
+        play(): Promise<void> {
+          played.push(this.src);
+          return Promise.resolve();
+        }
+        pause(): void {}
+      },
+    );
+    return { played };
+  }
+
+  it("toggles the engine without starting a turn", () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+    });
+    render(<TapToTalk />);
+    const toggle = screen.getByRole("button", { name: "Use Seamless voice" });
+    expect(toggle.textContent).toContain("Voice: browser");
+    fireEvent.click(toggle);
+    expect(voiceEngine()).toBe("seamless");
+    expect(
+      screen.getByRole("button", { name: "Use browser voice" }).textContent,
+    ).toContain("Voice: Seamless");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use browser voice" }),
+    );
+    expect(voiceEngine()).toBe("browser");
+  });
+
+  it("plays the reply through Seamless when the engine is on", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+    });
+    vi.stubGlobal("WebSocket", FakeWs);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Blob(["fake-wav"]))),
+    );
+    const { played } = stubSeamlessPlayback();
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      driver = {
+        onSpeechStart: callbacks.onSpeechStart,
+        onSpeechEnd: callbacks.onSpeechEnd,
+      };
+      return { stop: () => {} };
+    });
+
+    render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
+    driver!.onSpeechStart();
+    await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(1);
+    });
+    const ws = FakeWs.instances[0];
+    ws.open();
+    driver!.onSpeechEnd();
+    ws.serverMessage({ type: "reply", text: "Sesión abierta." });
+    await waitFor(() => {
+      expect(played).toHaveLength(1);
+    });
+    expect(mockSpeak).toHaveBeenCalledWith("Sesión abierta.");
+    expect(mockSpeak).toHaveBeenCalledWith("Sesión abierta.");
   });
 });

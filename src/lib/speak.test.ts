@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { pickVoice, speak, stopSpeaking } from "./speak";
+import { pickVoice, setVoiceEngine, speak, stopSpeaking } from "./speak";
 
 function fakeVoice(lang: string): SpeechSynthesisVoice {
   return { lang } as SpeechSynthesisVoice;
@@ -40,7 +40,7 @@ afterEach(() => {
 
 describe("speak with the browser voice", () => {
   it("speaks the full text once", () => {
-    const { synth, utterances } = stubSpeechSynthesis();
+    const { synth, utterances } = stubSpeechSynthesis([fakeVoice("es-CO")]);
     speak("Hola, soy Vale.");
     expect(synth.cancel).toHaveBeenCalledTimes(1);
     expect(synth.speak).toHaveBeenCalledTimes(1);
@@ -79,9 +79,144 @@ describe("speak with the browser voice", () => {
   });
 
   it("stopSpeaking cuts the audio in progress", () => {
-    const { synth } = stubSpeechSynthesis();
+    const { synth } = stubSpeechSynthesis([fakeVoice("es-CO")]);
     speak("Hola");
     stopSpeaking();
     expect(synth.cancel).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for late voices instead of speaking voiceless", async () => {
+    let current: SpeechSynthesisVoice[] = [];
+    const listeners: (() => void)[] = [];
+    const { synth } = stubSpeechSynthesis();
+    synth.getVoices = vi.fn(() => current);
+    (synth as unknown as { addEventListener: unknown }).addEventListener = vi.fn(
+      (_event: string, handler: () => void) => {
+        listeners.push(handler);
+      },
+    );
+    speak("Hola");
+    expect(synth.speak).not.toHaveBeenCalled();
+    current = [fakeVoice("es-CO")];
+    listeners.forEach((handler) => handler());
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
+    const utterance = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
+    expect(utterance.voice).toEqual(
+      expect.objectContaining({ lang: "es-CO" }),
+    );
+  });
+});
+
+describe("seamless voice engine", () => {
+  const WAV = new Blob(["fake-wav"], { type: "audio/wav" });
+
+  function stubAudio() {
+    const played: string[] = [];
+    const paused: string[] = [];
+    const instances: { src: string }[] = [];
+    vi.stubGlobal(
+      "Audio",
+      class {
+        src: string;
+        onended: (() => void) | null = null;
+        constructor(src: string) {
+          this.src = src;
+          instances.push(this);
+        }
+        play(): Promise<void> {
+          played.push(this.src);
+          return Promise.resolve();
+        }
+        pause(): void {
+          paused.push(this.src);
+        }
+      },
+    );
+    vi.stubGlobal("URL", {
+      createObjectURL: () => "blob:seamless",
+      revokeObjectURL: () => {},
+    });
+    return { played, paused, instances };
+  }
+
+  it("plays proxy audio when the engine is seamless", async () => {
+    stubSpeechSynthesis();
+    const { played } = stubAudio();
+    const fetchStub = vi.fn(async (_url: unknown) => new Response(WAV));
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola, soy Vale.");
+      await vi.waitFor(() => {
+        expect(played).toHaveLength(1);
+      });
+      const url = String(fetchStub.mock.calls[0][0]);
+      expect(url).toContain("/api/seamless-voice");
+      expect(url).toContain("speaker=10");
+      expect(url).toContain(encodeURIComponent("Hola, soy Vale."));
+    } finally {
+      setVoiceEngine("browser");
+    }
+  });
+
+  it("falls back to the browser voice when the proxy fails", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("es-CO")]);
+    stubAudio();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("bad", { status: 502 })),
+    );
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.waitFor(() => {
+        expect(synth.speak).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      setVoiceEngine("browser");
+    }
+  });
+
+  it("stopSpeaking pauses seamless audio in flight", async () => {
+    stubSpeechSynthesis();
+    const { played, paused } = stubAudio();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(WAV)));
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.waitFor(() => {
+        expect(played).toHaveLength(1);
+      });
+      stopSpeaking();
+      expect(paused).toHaveLength(1);
+    } finally {
+      setVoiceEngine("browser");
+    }
+  });
+
+  it("never plays a seamless reply stopped before arrival", async () => {
+    stubSpeechSynthesis();
+    const { played } = stubAudio();
+    const fetchStub = vi.fn(
+      async (_url: unknown): Promise<Response> =>
+        new Promise<Response>((resolve) => {
+          setTimeout(() => resolve(new Response(WAV)), 10);
+        }),
+    );
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.waitFor(() => {
+        expect(fetchStub).toHaveBeenCalledTimes(1);
+      });
+      stopSpeaking();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(played).toHaveLength(0);
+    } finally {
+      setVoiceEngine("browser");
+    }
   });
 });

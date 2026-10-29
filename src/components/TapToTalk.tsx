@@ -6,7 +6,13 @@ import { LevelMeter } from "@/components/LevelMeter";
 import { ValeBoard } from "@/components/ValeBoard";
 import type { Board } from "@/lib/board";
 import { parseSseStream } from "@/lib/sse";
-import { speak, stopSpeaking } from "@/lib/speak";
+import {
+  setVoiceEngine,
+  speak,
+  stopSpeaking,
+  voiceEngine,
+  type VoiceEngine,
+} from "@/lib/speak";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
@@ -40,6 +46,23 @@ function hasVisibleContent(turn: {
 // Mirrors the VAD threshold in capture.ts.
 const VOICE_ENERGY_THRESHOLD = 200;
 
+function SpeakerIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <path d="M2 6v4h3l4 3V3L5 6H2z" fill="currentColor" stroke="none" />
+      <path d="M11 5.5a3.5 3.5 0 010 5" />
+    </svg>
+  );
+}
+
 function countVoiced(frame: Int16Array): boolean {
   let energy = 0;
   for (let i = 0; i < frame.length; i++) energy += Math.abs(frame[i]);
@@ -55,6 +78,7 @@ export function TapToTalk() {
   const [alertCode, setAlertCode] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
   const [board, setBoard] = useState<Board | null>(null);
+  const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
   const lastLevelRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);
@@ -722,6 +746,13 @@ export function TapToTalk() {
     }
   }, [status, stopSession, runSession]);
 
+  const toggleEngine = useCallback(() => {
+    const next: VoiceEngine = engine === "seamless" ? "browser" : "seamless";
+    setVoiceEngine(next);
+    stopSpeaking();
+    setEngine(next);
+  }, [engine]);
+
   return (
     <section>
       <button
@@ -734,6 +765,23 @@ export function TapToTalk() {
           : status === "requesting"
             ? "Waiting for permission…"
             : "Tap to talk"}
+      </button>{" "}
+      <button
+        type="button"
+        onClick={toggleEngine}
+        aria-pressed={engine === "seamless"}
+        aria-label={
+          engine === "seamless"
+            ? "Use browser voice"
+            : "Use Seamless voice"
+        }
+        title={
+          engine === "seamless"
+            ? "Use browser voice"
+            : "Use Seamless voice"
+        }
+      >
+        <SpeakerIcon /> Voice: {engine === "seamless" ? "Seamless" : "browser"}
       </button>
 
       {status === "live" && <LevelMeter level={level} />}
