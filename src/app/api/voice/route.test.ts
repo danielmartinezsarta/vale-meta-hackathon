@@ -2,6 +2,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocketServer, WebSocket } from "ws";
 import { POST } from "./route";
+import { chainFailed } from "@/lib/response-chain";
 
 let server: WebSocketServer;
 let url = "";
@@ -85,12 +86,12 @@ beforeAll(async () => {
   vi.stubEnv("META_ASR_URL", url);
 });
 
-function fakeAgentReply(text: string): Response {
+function fakeAgentReply(text: string, id = "resp_test"): Response {
   const raw =
     `event: response.output_text.delta\ndata: ${JSON.stringify({ delta: text.slice(0, 4) })}\n\n` +
     `event: response.completed\ndata: ${JSON.stringify({
       response: {
-        id: "resp_test",
+        id,
         output: [
           {
             type: "message",
@@ -353,6 +354,40 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
     holdFinal = false;
     delete process.env.VOICE_TURN_TIMEOUT_MS;
+  });
+
+  it("threads previous_response_id across taps and drops it after a failure", async () => {
+    chainFailed();
+    const bodies: Record<string, unknown>[] = [];
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        calls += 1;
+        if (calls === 3) return new Response("nope", { status: 500 });
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        return fakeAgentReply("ok", calls === 2 ? "resp_chain_2" : "resp_chain_1");
+      }),
+    );
+    const postTranscript = (transcript: string) =>
+      POST(
+        new Request("http://localhost/api/voice", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ transcript }),
+        }),
+      ).then((response) => response.text());
+    expect(await postTranscript("abre una sesion")).toContain("event: reply");
+    expect(await postTranscript("si")).toContain("event: reply");
+    expect(await postTranscript("boom")).toContain("E-MODEL");
+    expect(await postTranscript("hola de nuevo")).toContain("event: reply");
+    expect(bodies).toHaveLength(3);
+    expect(bodies[0].previous_response_id).toBeUndefined();
+    expect(bodies[1].previous_response_id).toBe("resp_chain_1");
+    expect(bodies[2].previous_response_id).toBeUndefined();
+    vi.unstubAllGlobals();
   });
 
   it("closes the Meta socket when the page disconnects mid-turn", async () => {

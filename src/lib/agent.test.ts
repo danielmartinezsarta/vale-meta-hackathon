@@ -205,3 +205,34 @@ describe("agent turn with tools", () => {
     ).rejects.toThrow(/model error: 500/);
   });
 });
+
+describe("agent response chaining", () => {
+  it("returns the last round id and sends a prior id on the first request", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (bodies.length === 1) {
+          return sseResponse([
+            toolCall("resp_1", "find_client", { name: "Ana" }, "call_1"),
+          ]);
+        }
+        return sseResponse([spoken("resp_2", "Esta es la ficha.")]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "sí",
+      previousResponseId: "resp_0",
+      db: freshTestDb(),
+    });
+
+    expect(bodies[0].previous_response_id).toBe("resp_0");
+    expect(result.responseId).toBe("resp_2");
+    expect(result.toolUsed).toBe("find_client");
+  });
+});

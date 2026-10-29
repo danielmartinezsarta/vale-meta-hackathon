@@ -3,6 +3,11 @@ import { upgradeWebSocket } from "@vercel/functions";
 import { runAgentTurn } from "@/lib/agent";
 import { getDb } from "@/lib/db";
 import { getBoard } from "@/lib/board";
+import {
+  chainFailed,
+  chainSucceeded,
+  nextPreviousResponseId,
+} from "@/lib/response-chain";
 import { openAsrConnection } from "@/lib/asr";
 import { estimateCost, formatTurnLog } from "@/lib/turn-log";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
@@ -128,10 +133,12 @@ export async function POST(request: Request): Promise<Response> {
         1,
         Number(process.env.VOICE_TURN_TIMEOUT_MS) || TURN_TIMEOUT_MS,
       );
+      let aborted = false;
       const timeout = setTimeout(() => {
         asr?.close();
         if (!settled) {
           settled = true;
+          chainFailed();
           logTurn({
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: finalText || lastInterim,
@@ -148,6 +155,8 @@ export async function POST(request: Request): Promise<Response> {
       }, turnTimeoutMs);
 
       const abort = () => {
+        aborted = true;
+        chainFailed();
         clearTimeout(timeout);
         try {
           asr?.close();
@@ -192,10 +201,12 @@ export async function POST(request: Request): Promise<Response> {
           const result = await runAgentTurn({
             key,
             transcript,
+            previousResponseId: nextPreviousResponseId(),
             url: process.env.META_RESPONSES_URL || undefined,
             startedAt: speechEndAt,
             onDelta: (text) => send("reply-delta", { text }),
           });
+          if (!aborted) chainSucceeded(result.responseId);
           send("reply", { text: result.text });
           send("board", { board: getBoard(getDb()) });
           logTurn({
@@ -211,6 +222,7 @@ export async function POST(request: Request): Promise<Response> {
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : "failed";
+          chainFailed();
           logTurn({
             ts,
             transcript,

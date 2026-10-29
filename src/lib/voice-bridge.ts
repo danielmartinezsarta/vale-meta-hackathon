@@ -2,6 +2,11 @@ import WebSocket from "ws";
 import { runAgentTurn } from "./agent";
 import { getDb } from "./db";
 import { getBoard } from "./board";
+import {
+  chainFailed,
+  chainSucceeded,
+  nextPreviousResponseId,
+} from "./response-chain";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { estimateCost, formatTurnLog } from "./turn-log";
 
@@ -19,6 +24,7 @@ export interface BridgeAgentResult {
   usage: BridgeAgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
+  responseId: string;
 }
 
 export interface VoiceBridgeOptions {
@@ -32,6 +38,7 @@ export interface VoiceBridgeOptions {
     transcript: string;
     startedAt: number;
     onDelta: (text: string) => void;
+    previousResponseId?: string;
   }) => Promise<BridgeAgentResult>;
   now?: () => number;
   turnTimeoutMs?: number;
@@ -135,9 +142,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     );
   };
 
+  let browserGone = false;
   const timer = setTimeout(() => {
     if (settled) return;
     settled = true;
+    chainFailed();
     logTurn({
       ts: new Date().toISOString(),
       transcript: finalText,
@@ -178,10 +187,12 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         {
           key,
           transcript,
+          previousResponseId: nextPreviousResponseId(),
           startedAt: speechEndAt,
           onDelta: (text) => sendJson(browser, { type: "reply-delta", text }),
         },
       );
+      if (!browserGone) chainSucceeded(result.responseId);
       sendJson(browser, { type: "reply", text: result.text });
       sendJson(browser, { type: "board", board: getBoard(getDb()) });
       logTurn({
@@ -200,6 +211,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed";
+      chainFailed();
       logTurn({
         ts,
         transcript,
@@ -382,6 +394,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const onBrowserGone = () => {
     if (settled) return;
     settled = true;
+    browserGone = true;
+    chainFailed();
     clearTimeout(timer);
     try {
       meta.close();

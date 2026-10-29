@@ -32,6 +32,8 @@ export interface AgentResult {
   usage: AgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
+  /** Last completed response id: chain it as previous_response_id next turn. */
+  responseId: string;
 }
 
 interface ResponsesOutputItem {
@@ -229,6 +231,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   let previousResponseId = options.previousResponseId;
   let input: unknown = options.transcript;
   let text = "";
+  let responseId = "";
   let toolUsed: string | null = null;
   let healthSaved = false;
   const usage: AgentUsage = { inputTokens: 0, outputTokens: 0 };
@@ -254,6 +257,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     usage.outputTokens += turn.usage.outputTokens;
     firstTokenMs = firstTokenMs ?? turn.firstTokenMs;
     previousResponseId = turn.id;
+    responseId = turn.id;
     if (turn.calls.length === 0) {
       text = turn.text;
       break;
@@ -285,5 +289,5 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     text = text === "" ? PRIVACY_LINE : `${text} ${PRIVACY_LINE}`;
   }
 
-  return { text, usage, toolUsed, firstTokenMs };
+  return { text, usage, toolUsed, firstTokenMs, responseId };
 }

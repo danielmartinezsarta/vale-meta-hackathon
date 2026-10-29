@@ -7,6 +7,7 @@ import {
   tryParseControl,
   type BridgeAgentResult,
 } from "./voice-bridge";
+import { chainFailed } from "./response-chain";
 
 class FakeBrowser extends EventEmitter {
   readonly OPEN = 1;
@@ -45,6 +46,7 @@ function fakeAgent(text = "All set, see you soon."): (
     usage: { inputTokens: 100, outputTokens: 20 },
     toolUsed: null,
     firstTokenMs: 120,
+    responseId: "resp_bridge",
   });
 }
 
@@ -110,6 +112,7 @@ type AgentFn = (args: {
   transcript: string;
   startedAt: number;
   onDelta: (text: string) => void;
+  previousResponseId?: string;
 }) => Promise<BridgeAgentResult>;
 
 function attachForTest(browser: FakeBrowser, agent: AgentFn = fakeAgent()) {
@@ -258,6 +261,50 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     } finally {
       finalTranscript = "live from the bridge";
       spy.mockRestore();
+    }
+  });
+
+  it("threads the previous response across taps and drops it after a failure", async () => {
+    chainFailed();
+    finalTranscript = "si";
+    const seen: (string | undefined)[] = [];
+    let calls = 0;
+    const agent: AgentFn = async (args) => {
+      seen.push(args.previousResponseId);
+      calls += 1;
+      if (calls === 2) throw new Error("boom");
+      return {
+        text: "ok",
+        usage: { inputTokens: 100, outputTokens: 20 },
+        toolUsed: null,
+        firstTokenMs: 1,
+        responseId: `resp_b${calls}`,
+      };
+    };
+    const runTap = async () => {
+      const browser = new FakeBrowser();
+      attachForTest(browser, agent);
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+          true,
+        );
+      });
+    };
+    try {
+      await runTap();
+      await runTap();
+      await runTap();
+      expect(seen).toEqual([undefined, "resp_b1", undefined]);
+    } finally {
+      finalTranscript = "live from the bridge";
+      chainFailed();
     }
   });
 });
