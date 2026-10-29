@@ -1,10 +1,11 @@
 export const runtime = "nodejs";
 
-const MMS_URL =
-  "https://danielmartinezsarta--vale-mms-tts-web-speak.us-east.modal.run";
+const SEAMLESS_URL =
+  "https://danielmartinezsarta--vale-seamless-tts-web-speak.us-east.modal.run";
+const SPEAKER = 10;
 const MAX_CHARS = 500;
 
-// Same-origin proxy for the public MMS voice demo: the demo has no CORS
+// Same-origin proxy for the Seamless voice 10 demo: the demo has no CORS
 // open for the preview domain, and the key (if ever needed) stays server-side.
 export async function GET(request: Request): Promise<Response> {
   const { searchParams } = new URL(request.url);
@@ -14,7 +15,9 @@ export async function GET(request: Request): Promise<Response> {
   }
   let upstream: Response;
   try {
-    upstream = await fetch(`${MMS_URL}?text=${encodeURIComponent(text)}`);
+    upstream = await fetch(
+      `${SEAMLESS_URL}?speaker=${SPEAKER}&text=${encodeURIComponent(text)}`,
+    );
   } catch {
     return Response.json(
       { error: "Voice service is not reachable. Try again later.", code: "E-NET" },
@@ -28,7 +31,10 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
   const audio = await upstream.arrayBuffer();
-  const headers = new Headers({ "Content-Type": "audio/wav" });
+  const headers = new Headers({
+    "Content-Type": "audio/wav",
+    "X-Speaker-Requested": String(SPEAKER),
+  });
   const synthesis = upstream.headers.get("X-Synthesis-Seconds");
   if (synthesis) headers.set("X-Synthesis-Seconds", synthesis);
   return new Response(audio, { headers });
