@@ -47,6 +47,24 @@ export function requestClientIp(request: Request): string {
   return first === undefined || first === "" ? "unknown" : first;
 }
 
+/** Browser-generated ids are lowercase alnum with dashes (at most 64 chars). */
+export function sanitizeClientId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const id = value.trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) ? id : null;
+}
+
+/**
+ * Stable key for slots, pending actions and chain lanes: the explicit
+ * browser id wins, the IP is the fallback (shared behind one NAT).
+ */
+export function requestClientId(request: Request): string {
+  return (
+    sanitizeClientId(new URL(request.url).searchParams.get("client")) ??
+    requestClientIp(request)
+  );
+}
+
 const attentionSince = new Map<string, number>();
 
 /**

@@ -116,12 +116,14 @@ type AgentFn = (args: {
   onDelta: (text: string) => void;
   previousResponseId?: string;
   language?: string;
+  slotKey?: string;
 }) => Promise<BridgeAgentResult>;
 
 function attachForTest(browser: FakeBrowser, agent: AgentFn = fakeAgent()) {
   attachVoiceBridge({
     browser: browser as unknown as WebSocket,
     key: "test-key",
+    clientId: "test-client",
     metaUrl: url,
     runAgent: agent,
   });
@@ -268,7 +270,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
   });
 
   it("threads the previous response across taps and drops it after a failure", async () => {
-    chainFailed();
+    chainFailed("test-client");
     finalTranscript = "vale, si";
     const seen: (string | undefined)[] = [];
     let calls = 0;
@@ -309,7 +311,46 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       expect(seen).toEqual([undefined, "resp_b1", undefined]);
     } finally {
       finalTranscript = "vale, live from the bridge";
-      chainFailed();
+      chainFailed("test-client");
+    }
+  });
+
+  it("keys the turn on the browser id announced in a client frame", async () => {
+    chainFailed("lane-9");
+    finalTranscript = "vale, anunciar";
+    let slotKey: string | undefined;
+    const agent: AgentFn = async (args) => {
+      slotKey = args.slotKey;
+      return {
+        text: "ok",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolUsed: null,
+        firstTokenMs: 1,
+        responseId: "resp_lane",
+        chainNext: false,
+        askedQuestion: false,
+      };
+    };
+    const browser = new FakeBrowser();
+    attachForTest(browser, agent);
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+    browser.peerMessage(JSON.stringify({ type: "client", client: "lane-9" }));
+    browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+    browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+    try {
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+          true,
+        );
+      });
+      expect(slotKey).toBe("lane-9");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+      chainFailed("lane-9");
     }
   });
 });
@@ -345,7 +386,7 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
 
 describe("bridge language frame", () => {
   it("carries the selector language to the agent, never as audio", async () => {
-    chainFailed();
+    chainFailed("test-client");
     finalTranscript = "vale, si";
     const seen: (string | undefined)[] = [];
     const agent: AgentFn = async (args) => {
@@ -381,7 +422,7 @@ describe("bridge language frame", () => {
       expect(seen).toEqual(["en"]);
     } finally {
       finalTranscript = "vale, live from the bridge";
-      chainFailed();
+      chainFailed("test-client");
     }
   });
 });

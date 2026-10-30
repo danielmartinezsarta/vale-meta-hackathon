@@ -9,6 +9,8 @@ import {
   isUndoIntent,
   markQuestionAsked,
   namesVale,
+  requestClientId,
+  sanitizeClientId,
 } from "./wake";
 
 describe("wake word gate", () => {
@@ -123,5 +125,27 @@ describe("wake word gate", () => {
     checkWake("más ruido", "ip-8", 6000);
     expect(nextPreviousResponseId()).toBe("resp_kept");
     chainFailed();
+  });
+
+  it("prefers the explicit browser id over the IP", () => {
+    const withId = new Request("https://vale.test/api/voice?client=Browser-9", {
+      headers: { "x-forwarded-for": "10.0.0.1" },
+    });
+    expect(requestClientId(withId)).toBe("browser-9");
+    const bare = new Request("https://vale.test/api/voice", {
+      headers: { "x-forwarded-for": "10.0.0.1" },
+    });
+    expect(requestClientId(bare)).toBe("10.0.0.1");
+    const bad = new Request("https://vale.test/api/voice?client=../../etc", {
+      headers: { "x-forwarded-for": "10.0.0.2" },
+    });
+    expect(requestClientId(bad)).toBe("10.0.0.2");
+  });
+
+  it("sanitizes browser ids", () => {
+    expect(sanitizeClientId("Abc-123_x")).toBe("abc-123_x");
+    expect(sanitizeClientId("")).toBeNull();
+    expect(sanitizeClientId("../../etc")).toBeNull();
+    expect(sanitizeClientId(42)).toBeNull();
   });
 });

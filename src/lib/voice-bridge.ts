@@ -13,6 +13,7 @@ import {
   collapseEcho,
   isGreetingOnly,
   markQuestionAsked,
+  sanitizeClientId,
 } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { estimateCost, formatTurnLog } from "./turn-log";
@@ -21,6 +22,7 @@ import {
   runPendingActions,
   takePendingAction,
 } from "./pending-action";
+import { getSlots } from "./slot-memory";
 import {
   DEFAULT_LANGUAGE,
   parseLanguage,
@@ -74,7 +76,11 @@ export interface VoiceBridgeOptions {
 // Browser text frames may arrive as Buffer: try JSON first; never forward a control frame as audio.
 export function tryParseControl(
   data: unknown,
-): { type: "endStream" } | { type: "language"; language: ValeLanguage } | null {
+):
+  | { type: "endStream" }
+  | { type: "language"; language: ValeLanguage }
+  | { type: "client"; client: string }
+  | null {
   let text: string | null = null;
   if (typeof data === "string") {
     text = data;
@@ -84,10 +90,18 @@ export function tryParseControl(
     return null;
   }
   try {
-    const message = JSON.parse(text) as { type?: unknown; language?: unknown };
+    const message = JSON.parse(text) as {
+      type?: unknown;
+      language?: unknown;
+      client?: unknown;
+    };
     if (message.type === "endStream") return { type: "endStream" };
     if (message.type === "language") {
       return { type: "language", language: parseLanguage(message.language) };
+    }
+    if (message.type === "client") {
+      const client = sanitizeClientId(message.client);
+      return client === null ? null : { type: "client", client };
     }
     return null;
   } catch {
@@ -155,7 +169,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     finish(1011, "turn-failed");
   };
 
-  const clientId =
+  // The browser announces its stable id in a {type:"client"} frame (the
+  // upgrade carries no query string); the socket peer is the fallback.
+  let clientId =
     options.clientId ??
     (browser as unknown as { _socket?: { remoteAddress?: string } })._socket
       ?.remoteAddress ??
@@ -171,6 +187,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     modelSkipped: boolean;
     error: string | null;
     ignored: boolean;
+    asrMs?: number | null;
+    chain?: "hit" | "miss" | "none";
+    key?: string;
+    slots?: { client?: string; service?: string } | null;
   }) => {
     console.log(
       formatTurnLog({
@@ -182,12 +202,18 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       }),
     );
   };
+  const slotSnapshot = () => {
+    const slots = getSlots(clientId);
+    return slots.client !== undefined || slots.service !== undefined
+      ? slots
+      : null;
+  };
 
   let browserGone = false;
   const timer = setTimeout(() => {
     if (settled) return;
     settled = true;
-    chainFailed();
+    chainFailed(clientId);
     logTurn({
       ts: new Date().toISOString(),
       transcript: finalText,
@@ -199,6 +225,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       modelSkipped: !agentRan,
       error: "timeout",
       ignored: false,
+      asrMs: null,
+      chain: "none",
+      key: clientId,
+      slots: slotSnapshot(),
     });
     failTurn(err("timeout"), "E-NET");
   }, turnTimeoutMs);
@@ -224,6 +254,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const answerTranscript = async (transcript: string, speechEndAt: number) => {
     agentRan = true;
     const ts = new Date(speechEndAt || now()).toISOString();
+    const chainedId = nextPreviousResponseId(clientId);
+    const chainState = chainedId === undefined ? "miss" : "hit";
     try {
       // A yes to Vale's pending proposal runs the stored writes at once:
       // no model, no questions, no chain needed.
@@ -231,7 +263,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         const actions = takePendingAction(clientId);
         if (actions) {
           const executed = runPendingActions(getDb(), clientId, actions);
-          chainFailed();
+          chainFailed(clientId);
           clearQuestion(clientId);
           sendJson(browser, { type: "reply", text: executed.text });
           sendJson(browser, { type: "board", board: getBoard(getDb()) });
@@ -249,6 +281,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             modelSkipped: true,
             error: null,
             ignored: false,
+            asrMs: null,
+            chain: "none",
+            key: clientId,
+            slots: slotSnapshot(),
           });
           sendJson(browser, { type: "done" });
           finish(1000, "turn-complete");
@@ -259,14 +295,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         {
           key,
           transcript,
-          previousResponseId: nextPreviousResponseId(),
+          previousResponseId: chainedId,
           startedAt: speechEndAt,
           onDelta: (text) => sendJson(browser, { type: "reply-delta", text }),
           language: turnLanguage,
           slotKey: clientId,
         },
       );
-      if (!browserGone) chainSucceeded(result.responseId, result.chainNext);
+      if (!browserGone) chainSucceeded(result.responseId, result.chainNext, clientId);
       if (result.askedQuestion && !isGreetingOnly(transcript)) {
         markQuestionAsked(clientId, speechEndAt);
       } else {
@@ -288,10 +324,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         modelSkipped: false,
         error: null,
         ignored: false,
+        asrMs: null,
+        chain: chainState,
+        key: clientId,
+        slots: slotSnapshot(),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed";
-      chainFailed();
+      chainFailed(clientId);
       logTurn({
         ts,
         transcript,
@@ -306,6 +346,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         modelSkipped: false,
         error: message,
         ignored: false,
+        asrMs: null,
+        chain: chainState,
+        key: clientId,
+        slots: slotSnapshot(),
       });
       sendJson(browser, {
         type: "error",
@@ -372,6 +416,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             modelSkipped: true,
             error: null,
             ignored: false,
+            asrMs: null,
+            chain: "none",
+            key: clientId,
+            slots: null,
           });
           sendJson(browser, { type: "done" });
           finish(1000, "turn-complete");
@@ -391,6 +439,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             modelSkipped: true,
             error: null,
             ignored: true,
+            asrMs: null,
+            chain: "none",
+            key: clientId,
+            slots: slotSnapshot(),
           });
           sendJson(browser, { type: "ignored" });
           sendJson(browser, { type: "done" });
@@ -468,6 +520,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         turnLanguage = control.language;
         return;
       }
+      // The stable browser id keys slots, pending actions and chain lanes.
+      if (control.type === "client") {
+        clientId = control.client;
+        return;
+      }
       if (metaOpen) {
         try {
           meta.send(JSON.stringify({ type: "endStream" }));
@@ -503,7 +560,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     if (settled) return;
     settled = true;
     browserGone = true;
-    chainFailed();
+    chainFailed(clientId);
     clearTimeout(timer);
     try {
       meta.close();

@@ -100,6 +100,25 @@ export function TapToTalk() {
   });
   // Turn handlers close over the session; the ref keeps the live language.
   const languageRef = useRef<ValeLanguage>(language);
+  // Stable per-browser id so slots, pending actions and chain lanes survive
+  // retaps even behind one shared IP; generated once, then reused.
+  const [clientId] = useState<string>(() => {
+    if (typeof window === "undefined") return "unknown";
+    try {
+      const stored = window.localStorage.getItem("vale-client");
+      if (stored !== null && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(stored)) {
+        return stored;
+      }
+      const fresh =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `c${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
+      window.localStorage.setItem("vale-client", fresh);
+      return fresh;
+    } catch {
+      return "unknown";
+    }
+  });
   const lastLevelRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);
@@ -467,7 +486,8 @@ export function TapToTalk() {
             return;
           }
           transport.opened = true;
-          // The upgrade carries no query string, so the selector rides as a frame.
+          // The upgrade carries no query string, so the selector and the
+          // stable browser id ride as frames.
           try {
             socket.send(
               JSON.stringify({
@@ -475,6 +495,7 @@ export function TapToTalk() {
                 language: languageRef.current,
               }),
             );
+            socket.send(JSON.stringify({ type: "client", client: clientId }));
           } catch {
             /* the close handler decides: reconnect or fail */
           }
@@ -627,7 +648,9 @@ export function TapToTalk() {
         controllersRef.current.add(controller);
         setNotice(null);
         setNoticeCode(null);
-        void fetch(`/api/voice?language=${languageRef.current}`, {
+        void fetch(
+          `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+          {
           method: "POST",
           headers: { "content-type": "audio/l16" },
           body,
@@ -786,7 +809,7 @@ export function TapToTalk() {
       openTurn();
       await ended;
     },
-    [patchTurn, removeTurn, pruneIfEmpty, endSessionWithAlert],
+    [patchTurn, removeTurn, pruneIfEmpty, endSessionWithAlert, clientId],
   );
 
   const handleTap = useCallback(async () => {
