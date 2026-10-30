@@ -8,6 +8,11 @@ import {
   chainSucceeded,
   nextPreviousResponseId,
 } from "@/lib/response-chain";
+import {
+  isConfirmYes,
+  runPendingActions,
+  takePendingAction,
+} from "@/lib/pending-action";
 import { checkWake, requestClientIp } from "@/lib/wake";
 import { openAsrConnection } from "@/lib/asr";
 import { estimateCost, formatTurnLog } from "@/lib/turn-log";
@@ -76,6 +81,8 @@ export async function POST(request: Request): Promise<Response> {
   const language = parseLanguage(
     new URL(request.url).searchParams.get("language") ?? DEFAULT_LANGUAGE,
   );
+  // Slots and pending proposals live per client, like the wake window.
+  const clientKey = requestClientIp(request);
   if (!key) {
     // Server-side log only; the key itself is never logged.
     console.error("[voice] META_API_KEY is not configured; rejecting turn.");
@@ -212,6 +219,30 @@ export async function POST(request: Request): Promise<Response> {
         agentRan = true;
         const ts = new Date(speechEndAt || Date.now()).toISOString();
         try {
+          // A yes to Vale's pending proposal runs the stored writes at once:
+          // no model, no questions, no chain needed.
+          if (isConfirmYes(transcript)) {
+            const actions = takePendingAction(clientKey);
+            if (actions) {
+              const executed = runPendingActions(getDb(), clientKey, actions);
+              chainFailed();
+              send("reply", { text: executed.text });
+              send("board", { board: getBoard(getDb()) });
+              logTurn({
+                ts,
+                transcript,
+                ttftMs: Date.now() - speechEndAt,
+                inputTokens: 0,
+                outputTokens: 0,
+                audioSeconds,
+                tool: executed.toolUsed,
+                modelSkipped: true,
+                error: null,
+                ignored: false,
+              });
+              return;
+            }
+          }
           const result = await runAgentTurn({
             key,
             transcript,
@@ -220,7 +251,7 @@ export async function POST(request: Request): Promise<Response> {
             startedAt: speechEndAt,
             onDelta: (text) => send("reply-delta", { text }),
             language,
-            slotKey: requestClientIp(request),
+            slotKey: clientKey,
           });
           if (!aborted) chainSucceeded(result.responseId, result.chainNext);
           send("reply", { text: result.text });

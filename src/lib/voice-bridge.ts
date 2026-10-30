@@ -11,6 +11,11 @@ import { checkWake } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { estimateCost, formatTurnLog } from "./turn-log";
 import {
+  isConfirmYes,
+  runPendingActions,
+  takePendingAction,
+} from "./pending-action";
+import {
   DEFAULT_LANGUAGE,
   parseLanguage,
   turnErrorText,
@@ -212,6 +217,35 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     agentRan = true;
     const ts = new Date(speechEndAt || now()).toISOString();
     try {
+      // A yes to Vale's pending proposal runs the stored writes at once:
+      // no model, no questions, no chain needed.
+      if (isConfirmYes(transcript)) {
+        const actions = takePendingAction(clientId);
+        if (actions) {
+          const executed = runPendingActions(getDb(), clientId, actions);
+          chainFailed();
+          sendJson(browser, { type: "reply", text: executed.text });
+          sendJson(browser, { type: "board", board: getBoard(getDb()) });
+          logTurn({
+            ts,
+            transcript,
+            ttftMs: Date.now() - speechEndAt,
+            inputTokens: 0,
+            outputTokens: 0,
+            audioSeconds:
+              audioProcessedMs !== null
+                ? audioProcessedMs / 1000
+                : bufferedBytes / 48000,
+            tool: executed.toolUsed,
+            modelSkipped: true,
+            error: null,
+            ignored: false,
+          });
+          sendJson(browser, { type: "done" });
+          finish(1000, "turn-complete");
+          return;
+        }
+      }
       const result = await runAgent(
         {
           key,

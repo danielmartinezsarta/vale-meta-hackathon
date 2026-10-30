@@ -9,6 +9,7 @@ import {
   runAgentTurn,
 } from "./agent";
 import { freshTestDb } from "./db";
+import { clearPendingAction, takePendingAction } from "./pending-action";
 import { clearSlots } from "./slot-memory";
 import { VALE_TOOLS, runValeTool } from "./vale-tools";
 
@@ -470,6 +471,48 @@ describe("agent clean retry", () => {
       "En curso: clienta Laura. No repreguntes lo dado.",
     );
     clearSlots("mem-int");
+  });
+
+  it("stores the combined proposal when a doubt turn names it all", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (bodies.length === 1) {
+          return sseResponse([
+            toolCall(
+              "resp_doubt",
+              "open_session",
+              { client_name: "Vera", service_name: "Esmaltado semipermanente" },
+              "call_d",
+            ),
+          ]);
+        }
+        return sseResponse([spoken("resp_d2", "¿La registro y abro?")]);
+      }),
+    );
+
+    await runAgentTurn({
+      key: "test-key",
+      transcript: "vale abre sesión con Vera para esmaltado",
+      slotKey: "pend-agent",
+      db: freshTestDb(),
+    });
+
+    expect(takePendingAction("pend-agent")).toEqual([
+      { tool: "create_client", args: { name: "Vera" } },
+      {
+        tool: "open_session",
+        args: {
+          client_name: "Vera",
+          service_name: "Esmaltado semipermanente",
+        },
+      },
+    ]);
+    clearPendingAction("pend-agent");
   });
 
   it("marks the chain to continue after questions and doubt, not after writes", async () => {

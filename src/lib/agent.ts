@@ -2,6 +2,11 @@ import { VALE_TOOLS, getOpenSession, runValeTool } from "./vale-tools";
 import { getDb, type ValeDb } from "./db";
 import { DEFAULT_LANGUAGE, type ValeLanguage } from "./vale-language";
 import {
+  buildPendingActions,
+  clearPendingAction,
+  setPendingAction,
+} from "./pending-action";
+import {
   slotContext,
   updateSlotsFromTool,
 } from "./slot-memory";
@@ -399,8 +404,18 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
           parsed = {};
         }
         const toolResult = runValeTool(db, call.name, parsed);
-        if (!toolResult.ok) sawDoubt = true;
-        if (toolResult.ok && WRITE_TOOLS.has(call.name)) sawWrite = true;
+        if (!toolResult.ok) {
+          sawDoubt = true;
+          // A complete proposal waits for the yes; anything else retires
+          // a stale one instead of confirming the wrong thing.
+          const proposal = buildPendingActions(db, call.name, parsed, toolResult);
+          if (proposal) setPendingAction(slotKey, proposal);
+          else clearPendingAction(slotKey);
+        }
+        if (toolResult.ok && WRITE_TOOLS.has(call.name)) {
+          sawWrite = true;
+          clearPendingAction(slotKey);
+        }
         updateSlotsFromTool(
           slotKey,
           call.name,
