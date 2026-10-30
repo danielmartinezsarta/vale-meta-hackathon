@@ -13,6 +13,14 @@ describe("wake word gate", () => {
     expect(namesVale("")).toBe(false);
   });
 
+  it("hears Vale in either confirm word order", () => {
+    expect(namesVale("vale, sí agrégalo")).toBe(true);
+    expect(namesVale("sí, vale, agrégalo")).toBe(true);
+    expect(checkWake("sí, vale, agrégalo", "ip-confirm", 1000).execute).toBe(
+      true,
+    );
+  });
+
   it("executes when named and opens the attention window", () => {
     const verdict = checkWake("vale, abre una sesión", "ip-1", 1000);
     expect(verdict).toEqual({ execute: true, namedVale: true });
