@@ -178,6 +178,11 @@ export async function POST(request: Request): Promise<Response> {
             modelSkipped: !agentRan,
             error: "timeout",
             ignored: false,
+            asrMs:
+              asrStartMs > 0 && finalAtMs > 0 ? finalAtMs - asrStartMs : null,
+            chain: "none",
+            key: clientKey,
+            slots: null,
           });
         }
         finishError(turnErrorText("timeout", language), "E-NET");
