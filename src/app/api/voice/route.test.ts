@@ -166,6 +166,29 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
   });
 
+  it("runs a stored yes-proposal directly without calling the model", async () => {
+    const modelFetch = vi.fn(async () => fakeAgentReply("should not happen"));
+    vi.stubGlobal("fetch", modelFetch);
+    const { setPendingAction } = await import("@/lib/pending-action");
+    setPendingAction("pend-yes-1", [
+      { tool: "find_client", args: { name: "Ana" } },
+    ]);
+    const text = await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "pend-yes-1",
+        },
+        body: JSON.stringify({ transcript: "vale, sí, por favor" }),
+      }),
+    ).then((response) => response.text());
+    expect(text).toContain("event: reply");
+    expect(text).toContain("ficha de Ana");
+    expect(modelFetch).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("holds the selected language even when the transcript is Italian", async () => {
     const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal(

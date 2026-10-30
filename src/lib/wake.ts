@@ -25,7 +25,7 @@ function wakeWords(): string[] {
   return words.length > 0 ? words : DEFAULT_WAKE_WORDS;
 }
 
-function windowMs(): number {
+export function windowMs(): number {
   const seconds = Number(process.env.VALE_ATTENTION_WINDOW_S);
   if (!Number.isFinite(seconds) || seconds < 0) {
     return DEFAULT_WINDOW_S * 1000;
