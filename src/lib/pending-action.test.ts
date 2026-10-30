@@ -49,7 +49,7 @@ describe("pending action", () => {
     const db = freshTestDb();
     openSession(db, {
       client_name: "Ana Beltran",
-      service_name: "Esmaltado semipermanente",
+      service_name: "Gel removal",
     });
     expect(
       buildPendingActions(
@@ -72,14 +72,14 @@ describe("pending action", () => {
       buildPendingActions(
         db,
         "open_session",
-        { client_name: "Vera", service_name: "Esmaltado semipermanente" },
+        { client_name: "Vera", service_name: "Gel removal" },
         { ok: false },
       ),
     ).toEqual([
       { tool: "create_client", args: { name: "Vera" } },
       {
         tool: "open_session",
-        args: { client_name: "Vera", service_name: "Esmaltado semipermanente" },
+        args: { client_name: "Vera", service_name: "Gel removal" },
       },
     ]);
   });
@@ -131,7 +131,7 @@ describe("pending action", () => {
       { tool: "create_client", args: { name: "Vera" } },
       {
         tool: "open_session",
-        args: { client_name: "Vera", service_name: "Esmaltado semipermanente" },
+        args: { client_name: "Vera", service_name: "Gel removal" },
       },
     ]);
     expect(executed.toolUsed).toBe("open_session");

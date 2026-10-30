@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { PRIVATE_NOTE_LABEL, freshTestDb, getCounts, getPublicNotes, seedDatabase } from "./db";
 
 describe("seeded database", () => {
-  it("seeds 5 clients, 8 services and 10 supplies", () => {
+  it("seeds 5 clients, 6 services and 23 supplies", () => {
     const db = freshTestDb();
-    expect(getCounts(db)).toEqual({ clients: 5, services: 8, supplies: 10 });
+    expect(getCounts(db)).toEqual({ clients: 5, services: 6, supplies: 23 });
     db.close();
   });
 
@@ -21,7 +21,7 @@ describe("seeded database", () => {
   it("seeding twice does not duplicate rows", () => {
     const db = freshTestDb();
     seedDatabase(db);
-    expect(getCounts(db)).toEqual({ clients: 5, services: 8, supplies: 10 });
+    expect(getCounts(db)).toEqual({ clients: 5, services: 6, supplies: 23 });
     db.close();
   });
 });

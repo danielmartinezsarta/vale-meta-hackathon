@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import seedData from "./seed-data.json";
+import { quotePrice, type PricingConfig } from "./quote";
 
 export type ValeDb = DatabaseSync;
 
@@ -26,23 +27,171 @@ export interface TableCounts {
   supplies: number;
 }
 
+interface SeedSupply {
+  name: string;
+  es?: string;
+  aliases?: string[];
+  unit?: string;
+  content_per_product?: number;
+  stock?: number;
+  min?: number;
+  price_per_product_usd?: number;
+}
+
+interface SeedRecipeLine {
+  name: string;
+  qty: number;
+  unit?: string;
+}
+
+interface SeedService {
+  name: string;
+  es?: string;
+  aliases?: string[];
+  minutes: number;
+  supplies?: SeedRecipeLine[];
+}
+
+/** "lun-vie" counts its weekday days: nothing about the schedule is hardcoded. */
+function workDaysPerWeek(schedule: string): number {
+  const order = ["lun", "mar", "mie", "jue", "vie", "sab", "dom"];
+  const plain = schedule
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+  const [first, last] = plain.split("-").map((part) => part.trim());
+  const from = order.indexOf(first);
+  const to = last === undefined ? from : order.indexOf(last);
+  if (from === -1 || to === -1 || to < from) return 5;
+  return to - from + 1;
+}
+
+function pricingFromSeed(): PricingConfig {
+  const pricing = (
+    seedData as unknown as {
+      pricing: {
+        monthly_goal_usd: number;
+        margin_pct: number;
+        schedule: string;
+        work_hours_per_day: number;
+        fixed_costs: { label: string; amount_usd: number }[];
+      };
+    }
+  ).pricing;
+  const fixedMonthlyUsd = pricing.fixed_costs.reduce((sum, item) => sum + item.amount_usd, 0);
+  return {
+    goalMonthlyUsd: pricing.monthly_goal_usd,
+    workDaysPerWeek: workDaysPerWeek(pricing.schedule ?? "lun-vie"),
+    workHoursPerDay: pricing.work_hours_per_day,
+    marginPct: pricing.margin_pct,
+    fixedMonthlyUsd,
+  };
+}
+
+export const PRICING: PricingConfig = pricingFromSeed();
+
+/** Final rounded price of a service with its seed minutes and recipe. */
+export function seedServicePrice(service: SeedService): number {
+  const suppliesByName = new Map(
+    ((seedData as unknown as { supplies: SeedSupply[] }).supplies ?? []).map((supply) => [supply.name, supply]),
+  );
+  const breakdown = quotePrice(
+    PRICING,
+    service.minutes,
+    (service.supplies ?? []).map((line) => {
+      const supply = suppliesByName.get(line.name);
+      return {
+        qty: line.qty,
+        pricePerProductUsd: supply?.price_per_product_usd ?? 0,
+        contentPerProduct: supply?.content_per_product ?? 0,
+      };
+    }),
+  );
+  return breakdown.finalPrice;
+}
+
 function schemaSql(): string {
   return readFileSync(join(process.cwd(), "src", "lib", "schema.sql"), "utf8");
+}
+
+/** Add a column when an older database file lacks it. */
+function ensureColumn(db: ValeDb, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((entry) => entry.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 /** Create tables and insert the invented seed. Idempotent. */
 export function seedDatabase(db: ValeDb): void {
   db.exec(schemaSql());
+  ensureColumn(db, "services", "es", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "services", "aliases", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "supplies", "es", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "supplies", "aliases", "TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn(db, "supplies", "unit", "TEXT NOT NULL DEFAULT 'pcs'");
+  ensureColumn(db, "supplies", "content_per_product", "REAL NOT NULL DEFAULT 1");
+  ensureColumn(db, "supplies", "stock_qty", "REAL NOT NULL DEFAULT 0");
+  ensureColumn(db, "supplies", "min_qty", "REAL NOT NULL DEFAULT 0");
+  ensureColumn(db, "supplies", "price_per_product_usd", "REAL NOT NULL DEFAULT 0");
+  ensureColumn(db, "sessions", "margin_earned", "REAL");
+
+  const seed = seedData as unknown as { clients: string[]; services: SeedService[]; supplies: SeedSupply[] };
   const addClient = db.prepare("INSERT OR IGNORE INTO clients (name) VALUES (?)");
-  for (const name of seedData.clients) addClient.run(name);
-  const addService = db.prepare(
-    "INSERT OR IGNORE INTO services (name, price_cents, duration_min) VALUES (?, ?, ?)",
+  for (const name of seed.clients) addClient.run(name);
+
+  const upsertSupply = db.prepare(
+    `INSERT INTO supplies (name, es, aliases, unit, content_per_product, stock_qty, min_qty, price_per_product_usd)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET
+       es = excluded.es,
+       aliases = excluded.aliases,
+       unit = excluded.unit,
+       content_per_product = excluded.content_per_product,
+       min_qty = excluded.min_qty,
+       price_per_product_usd = excluded.price_per_product_usd`,
   );
-  for (const service of seedData.services) {
-    addService.run(service.name, service.price_cents, service.duration_min);
+  const supplyIds = new Map<string, number>();
+  for (const supply of seed.supplies) {
+    upsertSupply.run(
+      supply.name,
+      supply.es ?? "",
+      JSON.stringify(supply.aliases ?? []),
+      supply.unit ?? "pcs",
+      supply.content_per_product ?? 1,
+      supply.stock ?? 0,
+      supply.min ?? 0,
+      supply.price_per_product_usd ?? 0,
+    );
+    const row = db.prepare("SELECT id FROM supplies WHERE name = ?").get(supply.name) as { id: number };
+    supplyIds.set(supply.name, row.id);
   }
-  const addSupply = db.prepare("INSERT OR IGNORE INTO supplies (name) VALUES (?)");
-  for (const name of seedData.supplies) addSupply.run(name);
+
+  const upsertService = db.prepare(
+    `INSERT INTO services (name, es, aliases, price_cents, duration_min)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET
+       es = excluded.es,
+       aliases = excluded.aliases,
+       price_cents = excluded.price_cents,
+       duration_min = excluded.duration_min`,
+  );
+  for (const service of seed.services) {
+    upsertService.run(
+      service.name,
+      service.es ?? "",
+      JSON.stringify(service.aliases ?? []),
+      Math.round(seedServicePrice(service) * 100),
+      service.minutes,
+    );
+    const row = db.prepare("SELECT id FROM services WHERE name = ?").get(service.name) as { id: number };
+    db.prepare("DELETE FROM service_supplies WHERE service_id = ?").run(row.id);
+    const addLine = db.prepare("INSERT INTO service_supplies (service_id, supply_id, qty, unit) VALUES (?, ?, ?, ?)");
+    for (const line of service.supplies ?? []) {
+      const supplyId = supplyIds.get(line.name);
+      if (supplyId !== undefined) addLine.run(row.id, supplyId, line.qty, line.unit ?? "pcs");
+    }
+  }
 }
 
 export function getCounts(db: ValeDb): TableCounts {

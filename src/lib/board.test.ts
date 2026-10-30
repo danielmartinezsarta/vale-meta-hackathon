@@ -16,14 +16,14 @@ describe("board snapshot", () => {
     runValeTool(db, "open_session", { client_name: "Ana", service_name: "Retiro de gel" });
     runValeTool(db, "add_note", { client_name: "Ana", text: "prefiere viernes" });
     runValeTool(db, "add_note", { client_name: "Ana", text: "onicolisis", kind: "health" });
-    runValeTool(db, "add_to_shopping_list", { item_name: "Esmalte rojo" });
+    runValeTool(db, "add_to_shopping_list", { item_name: "lima" });
 
     const board = getBoard(db);
     expect(board.session?.clientName).toBe("Ana Beltran");
-    expect(board.session?.serviceName).toBe("Retiro de gel");
+    expect(board.session?.serviceName).toBe("Gel removal");
     expect(board.session?.startedAt).toBeTruthy();
     expect(board.card?.name).toBe("Ana Beltran");
-    expect(board.list).toEqual(["Esmalte rojo"]);
+    expect(board.list).toEqual(["Nail file"]);
 
     const health = board.card?.notes.find((note) => note.kind === "health");
     expect(health?.masked).toBe(true);

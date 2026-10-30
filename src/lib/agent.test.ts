@@ -486,7 +486,7 @@ describe("agent clean retry", () => {
             toolCall(
               "resp_doubt",
               "open_session",
-              { client_name: "Vera", service_name: "Esmaltado semipermanente" },
+              { client_name: "Vera", service_name: "Gel removal" },
               "call_d",
             ),
           ]);
@@ -497,7 +497,7 @@ describe("agent clean retry", () => {
 
     await runAgentTurn({
       key: "test-key",
-      transcript: "vale abre sesión con Vera para esmaltado",
+      transcript: "vale abre sesión con Vera para retiro",
       slotKey: "pend-agent",
       db: freshTestDb(),
     });
@@ -508,7 +508,7 @@ describe("agent clean retry", () => {
         tool: "open_session",
         args: {
           client_name: "Vera",
-          service_name: "Esmaltado semipermanente",
+          service_name: "Gel removal",
         },
       },
     ]);
