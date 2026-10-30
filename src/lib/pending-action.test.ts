@@ -19,6 +19,8 @@ describe("pending action", () => {
       "Sí, por favor",
       "por favor, sí",
       "sí, hazlo",
+      "yes, do it",
+      "hazlo",
       "sí, vale",
       "vale, sí",
       "yes",
