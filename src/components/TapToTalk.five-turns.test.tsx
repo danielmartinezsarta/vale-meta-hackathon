@@ -45,6 +45,9 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia },
     });
+    // No real sockets in tests: Node's WebSocket would dial localhost:3000,
+    // so hide it and force the buffered-POST fallback path under test.
+    vi.stubGlobal("WebSocket", undefined);
 
     // Six bursts: five turns plus a sixth whose fetch hangs.
     mockStartCapture.mockImplementation((_stream, callbacks) => {
