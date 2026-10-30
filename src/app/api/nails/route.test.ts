@@ -71,14 +71,14 @@ afterEach(() => {
 describe("nails route", () => {
   it("needs a key", async () => {
     vi.stubEnv("META_API_KEY", "");
-    openSession(testDb, { client_name: "Ana Beltran", service_name: "Manicura clasica" });
+    openSession(testDb, { client_name: "Ana Beltran", service_name: "Manicura semipermanente" });
     const res = await postPhoto(FAKE_PHOTO);
     expect(res.status).toBe(503);
   });
 
   it("rejects a non-image payload", async () => {
     vi.stubEnv("META_API_KEY", "test-key");
-    openSession(testDb, { client_name: "Ana Beltran", service_name: "Manicura clasica" });
+    openSession(testDb, { client_name: "Ana Beltran", service_name: "Manicura semipermanente" });
     const res = await postPhoto("not-an-image");
     expect(res.status).toBe(400);
   });
@@ -95,7 +95,7 @@ describe("nails route", () => {
   it("refuses when the client does not match the open session", async () => {
     vi.stubEnv("META_API_KEY", "test-key");
     vi.stubGlobal("fetch", mockFetch());
-    openSession(testDb, { client_name: "Ana Beltran", service_name: "Manicura clasica" });
+    openSession(testDb, { client_name: "Ana Beltran", service_name: "Manicura semipermanente" });
     const res = await postPhoto(FAKE_PHOTO, "Maria Solis");
     expect(res.status).toBe(400);
   });
@@ -105,7 +105,7 @@ describe("nails route", () => {
     vi.stubGlobal("fetch", mockFetch());
     const opened = openSession(testDb, {
       client_name: "Ana Beltran",
-      service_name: "Manicura clasica",
+      service_name: "Manicura semipermanente",
     });
     expect(opened.ok).toBe(true);
 

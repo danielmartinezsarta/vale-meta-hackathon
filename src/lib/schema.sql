@@ -15,12 +15,36 @@ CREATE TABLE IF NOT EXISTS notes (
 CREATE TABLE IF NOT EXISTS services (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  es TEXT NOT NULL DEFAULT '',
+  aliases TEXT NOT NULL DEFAULT '[]',
   price_cents INTEGER NOT NULL,
   duration_min INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS supplies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE COLLATE NOCASE
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  es TEXT NOT NULL DEFAULT '',
+  aliases TEXT NOT NULL DEFAULT '[]',
+  unit TEXT NOT NULL DEFAULT 'pcs',
+  content_per_product REAL NOT NULL DEFAULT 1,
+  stock_qty REAL NOT NULL DEFAULT 0,
+  min_qty REAL NOT NULL DEFAULT 0,
+  price_per_product_usd REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS service_supplies (
+  service_id INTEGER NOT NULL REFERENCES services(id),
+  supply_id INTEGER NOT NULL REFERENCES supplies(id),
+  qty REAL NOT NULL,
+  unit TEXT NOT NULL DEFAULT 'pcs',
+  PRIMARY KEY (service_id, supply_id)
+);
+CREATE TABLE IF NOT EXISTS appointments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  service_id INTEGER NOT NULL REFERENCES services(id),
+  day TEXT NOT NULL,
+  time TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE TABLE IF NOT EXISTS shopping_list (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,6 +58,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   started_at TEXT NOT NULL,
   ended_at TEXT,
   duration_s INTEGER,
+  margin_earned REAL,
   privacy_notice_sent INTEGER NOT NULL DEFAULT 0,
   photo_path TEXT
 );
