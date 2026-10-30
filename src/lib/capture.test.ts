@@ -114,3 +114,47 @@ describe("audio fixtures", () => {
     expect(bytes.subarray(0, 4).toString("hex")).toBe("1a45dfa3");
   });
 });
+
+describe("end-of-turn pause (NEXT_PUBLIC_VAD_END_SILENCE_MS)", () => {
+  const speechFrame = () => toneFrame(4000);
+  const silenceFrame = () => new Int16Array(FRAME_SAMPLES);
+
+  /** Feeds a phrase; counts speech-end splits (40 ms per frame). */
+  const splits = (detector: SpeechDetector, frames: Int16Array[]): number => {
+    let ends = 0;
+    for (const frame of frames) {
+      if (detector.feed(frame) === "speech-end") ends += 1;
+    }
+    return ends;
+  };
+
+  const phrase = (speechFrames: number, pauseFrames: number): Int16Array[] => {
+    const frames: Int16Array[] = [];
+    for (let i = 0; i < speechFrames; i++) frames.push(speechFrame());
+    for (let i = 0; i < pauseFrames; i++) frames.push(silenceFrame());
+    for (let i = 0; i < speechFrames; i++) frames.push(speechFrame());
+    return frames;
+  };
+
+  it("defaults to 800 ms: slow phrases split, normal ones stay whole", () => {
+    // 1000 ms mid-pause: a slow phrase becomes two turns at the default.
+    expect(splits(new SpeechDetector(), phrase(8, 25))).toBe(1);
+    // 200 ms mid-pause: normal rhythm stays one turn.
+    expect(splits(new SpeechDetector(), phrase(8, 5))).toBe(0);
+  });
+
+  it("a longer pause keeps slow phrases in one turn without slowing normal ones", () => {
+    // Same slow phrase under 1200 ms: one turn.
+    expect(
+      splits(new SpeechDetector({ endSilenceMs: 1200 }), phrase(8, 25)),
+    ).toBe(0);
+    // Normal rhythm unchanged at both settings.
+    expect(
+      splits(new SpeechDetector({ endSilenceMs: 1200 }), phrase(8, 5)),
+    ).toBe(0);
+    // A real stop (1800 ms) still splits, so turns do end.
+    expect(
+      splits(new SpeechDetector({ endSilenceMs: 1200 }), phrase(8, 45)),
+    ).toBe(1);
+  });
+});

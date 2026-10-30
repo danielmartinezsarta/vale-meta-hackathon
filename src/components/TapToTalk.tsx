@@ -706,6 +706,12 @@ export function TapToTalk() {
           });
       };
 
+      // End-of-turn pause, tunable without redeploying the default: slow
+      // phrases keep pauses under this; longer silence splits the turn.
+      const endSilenceMs = Math.max(
+        1,
+        Number(process.env.NEXT_PUBLIC_VAD_END_SILENCE_MS) || 800,
+      );
       const capture = startCapture(
         stream,
         {
@@ -771,8 +777,9 @@ export function TapToTalk() {
             setLevel(value);
           },
         },
-        // Threshold 200 with 1 s pre-roll; 800 ms end silence posts ~1.2 s sooner.
-        { threshold: 200, endSilenceMs: 800 },
+        // Threshold 200 with 1 s pre-roll; the end silence comes from
+        // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
+        { threshold: 200, endSilenceMs },
       );
 
       captureRef.current = capture;
