@@ -114,14 +114,14 @@ describe("plain-language errors (fake-device fallback)", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/tuve un problema/i);
-    expect(alert.textContent).toMatch(/E-MODEL/);
+    expect(alert.textContent).not.toMatch(/E-MODEL/);
     expect(screen.getByText("book a refill")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Tap to talk" }),
     ).toBeTruthy();
   });
 
-  it("shows the service code when the connection drops (E-NET)", async () => {
+  it("hides the service code when the connection drops (E-NET)", async () => {
     const seen = setupDevice();
     vi.stubGlobal(
       "fetch",
@@ -139,10 +139,10 @@ describe("plain-language errors (fake-device fallback)", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/perdió la conexión/i);
-    expect(alert.textContent).toMatch(/E-NET/);
+    expect(alert.textContent).not.toMatch(/E-NET/);
   });
 
-  it("shows the meter while live and the code on the not-configured error", async () => {
+  it("shows the meter while live and no code on the not-configured error", async () => {
     const seen = setupDevice();
     vi.stubGlobal(
       "fetch",
@@ -168,6 +168,6 @@ describe("plain-language errors (fake-device fallback)", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/configurada/i);
-    expect(alert.textContent).toMatch(/E-NET/);
+    expect(alert.textContent).not.toMatch(/E-NET/);
   });
 });

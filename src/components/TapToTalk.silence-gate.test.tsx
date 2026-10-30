@@ -125,7 +125,8 @@ describe("silence-aware E-VAD banner (fix 3)", () => {
     await waitFor(() => {
       expect(vadBanner()).not.toBeNull();
     });
-    expect(vadBanner()?.textContent).toContain("(E-VAD)");
+    expect(vadBanner()?.textContent).toContain("No te escuché");
+    expect(vadBanner()?.textContent).not.toContain("E-VAD");
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => {

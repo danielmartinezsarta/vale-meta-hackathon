@@ -286,6 +286,7 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeTruthy();
     });
-    expect(screen.getByRole("alert").textContent).toContain("(E-ASR)");
+    expect(screen.getByRole("alert").textContent).toContain("Se perdió la conexión");
+    expect(screen.getByRole("alert").textContent).not.toContain("E-ASR");
   });
 });

@@ -82,9 +82,11 @@ export function TapToTalk() {
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  const [noticeCode, setNoticeCode] = useState<string | null>(null);
+  // Codes drive routing (E-VAD banner vs alert) but never render: the user
+  // only reads the friendly message, never a raw code.
+  const [, setNoticeCode] = useState<string | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
-  const [alertCode, setAlertCode] = useState<string | null>(null);
+  const [, setAlertCode] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
   const [board, setBoard] = useState<Board | null>(null);
   const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
@@ -865,6 +867,11 @@ export function TapToTalk() {
           type="button"
           onClick={() => selectLanguage("es")}
           aria-pressed={language === "es"}
+          style={
+            language === "es"
+              ? { fontWeight: "bold", textDecoration: "underline" }
+              : undefined
+          }
         >
           ES
         </button>{" "}
@@ -872,6 +879,11 @@ export function TapToTalk() {
           type="button"
           onClick={() => selectLanguage("en")}
           aria-pressed={language === "en"}
+          style={
+            language === "en"
+              ? { fontWeight: "bold", textDecoration: "underline" }
+              : undefined
+          }
         >
           EN
         </button>
@@ -922,19 +934,9 @@ export function TapToTalk() {
 
       <ValeBoard board={board} />
 
-      {notice && (
-        <p role="status">
-          {notice}
-          {noticeCode ? ` (${noticeCode})` : ""}
-        </p>
-      )}
+      {notice && <p role="status">{notice}</p>}
 
-      {alert && (
-        <div role="alert">
-          {alert}
-          {alertCode ? ` (${alertCode})` : ""}
-        </div>
-      )}
+      {alert && <div role="alert">{alert}</div>}
 
       {status === "blocked" && (
         <div role="alert">
