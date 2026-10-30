@@ -114,6 +114,7 @@ type AgentFn = (args: {
   startedAt: number;
   onDelta: (text: string) => void;
   previousResponseId?: string;
+  language?: string;
 }) => Promise<BridgeAgentResult>;
 
 function attachForTest(browser: FakeBrowser, agent: AgentFn = fakeAgent()) {
@@ -322,5 +323,62 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
     expect(tryParseControl(Buffer.from([0, 1, 2, 3]))).toBeNull();
     expect(tryParseControl('{"type":"other"}')).toBeNull();
     expect(tryParseControl(null)).toBeNull();
+  });
+
+  it("parses the screen language frame and closes the set on junk", () => {
+    expect(
+      tryParseControl(JSON.stringify({ type: "language", language: "en" })),
+    ).toEqual({ type: "language", language: "en" });
+    expect(
+      tryParseControl(
+        Buffer.from(JSON.stringify({ type: "language", language: "it" })),
+      ),
+    ).toEqual({ type: "language", language: "es" });
+    expect(tryParseControl(JSON.stringify({ type: "language" }))).toEqual({
+      type: "language",
+      language: "es",
+    });
+  });
+});
+
+describe("bridge language frame", () => {
+  it("carries the selector language to the agent, never as audio", async () => {
+    chainFailed();
+    finalTranscript = "vale, si";
+    const seen: (string | undefined)[] = [];
+    const agent: AgentFn = async (args) => {
+      seen.push(args.language);
+      return {
+        text: "ok",
+        usage: { inputTokens: 100, outputTokens: 20 },
+        toolUsed: null,
+        firstTokenMs: 1,
+        responseId: "resp_lang",
+        chainNext: true,
+      };
+    };
+    const browser = new FakeBrowser();
+    attachForTest(browser, agent);
+    try {
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(
+        Buffer.from(JSON.stringify({ type: "language", language: "en" })),
+      );
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+          true,
+        );
+      });
+      expect(seen).toEqual(["en"]);
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+      chainFailed();
+    }
   });
 });

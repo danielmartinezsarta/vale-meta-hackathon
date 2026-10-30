@@ -3,7 +3,13 @@
  * Silent no-op without the web APIs; the text always stays on screen.
  */
 
-const VOICE_PRIORITY = ["es-CO", "es-419", "es-MX"];
+import { DEFAULT_LANGUAGE, type ValeLanguage } from "./vale-language";
+
+const VOICE_PRIORITY: Record<ValeLanguage, string[]> = {
+  es: ["es-CO", "es-419", "es-MX"],
+  en: ["en-US", "en"],
+};
+const FALLBACK_LANG: Record<ValeLanguage, string> = { es: "es-CO", en: "en-US" };
 export const SEAMLESS_SPEAKER = 10;
 const SEAMLESS_MAX_CHARS = 500;
 const VOICES_WAIT_MS = 1000;
@@ -24,15 +30,17 @@ export function voiceEngine(): VoiceEngine {
 
 export function pickVoice(
   voices: readonly SpeechSynthesisVoice[],
+  language: ValeLanguage = DEFAULT_LANGUAGE,
 ): SpeechSynthesisVoice | null {
-  for (const prefix of VOICE_PRIORITY) {
+  for (const prefix of VOICE_PRIORITY[language]) {
     const found = voices.find((voice) =>
       voice.lang.toLowerCase().startsWith(prefix.toLowerCase()),
     );
     if (found) return found;
   }
+  const short = language === "en" ? "en" : "es";
   return (
-    voices.find((voice) => voice.lang.toLowerCase().startsWith("es")) ?? null
+    voices.find((voice) => voice.lang.toLowerCase().startsWith(short)) ?? null
   );
 }
 
@@ -76,13 +84,14 @@ function sayWithBrowser(
   synth: SpeechSynthesis,
   text: string,
   voices: readonly SpeechSynthesisVoice[],
+  language: ValeLanguage = DEFAULT_LANGUAGE,
 ): void {
   try {
     synth.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 0.9;
-    const voice = pickVoice(voices);
-    utterance.lang = voice?.lang ?? "es-CO";
+    const voice = pickVoice(voices, language);
+    utterance.lang = voice?.lang ?? FALLBACK_LANG[language];
     if (voice) utterance.voice = voice;
     synth.speak(utterance);
   } catch {
@@ -103,7 +112,10 @@ export function stopSeamlessSpeech(): void {
   seamlessAudio = null;
 }
 
-async function playSeamless(text: string): Promise<void> {
+async function playSeamless(
+  text: string,
+  language: ValeLanguage = DEFAULT_LANGUAGE,
+): Promise<void> {
   stopSeamlessSpeech();
   const playId = seamlessPlayId;
   let response: Response;
@@ -112,12 +124,12 @@ async function playSeamless(text: string): Promise<void> {
       `/api/seamless-voice?speaker=${SEAMLESS_SPEAKER}&text=${encodeURIComponent(text.slice(0, SEAMLESS_MAX_CHARS))}`,
     );
   } catch {
-    sayBrowserFallback(text);
+    sayBrowserFallback(text, language);
     return;
   }
   if (!response.ok || playId !== seamlessPlayId) {
     if (response.ok) return;
-    sayBrowserFallback(text);
+    sayBrowserFallback(text, language);
     return;
   }
   try {
@@ -132,31 +144,39 @@ async function playSeamless(text: string): Promise<void> {
     };
     await audio.play();
   } catch {
-    sayBrowserFallback(text);
+    sayBrowserFallback(text, language);
   }
 }
 
 /** Seamless failed: the browser voice says it instead of silence. */
-function sayBrowserFallback(text: string): void {
+function sayBrowserFallback(
+  text: string,
+  language: ValeLanguage = DEFAULT_LANGUAGE,
+): void {
   const s = synth();
   if (!s) return;
-  void ensureVoices(s).then((voices) => sayWithBrowser(s, text, voices));
+  void ensureVoices(s).then((voices) => sayWithBrowser(s, text, voices, language));
 }
 
-export function speak(text: string): void {
+export function speak(
+  text: string,
+  language: ValeLanguage = DEFAULT_LANGUAGE,
+): void {
   if (text.trim() === "") return;
   if (engine === "seamless") {
-    void playSeamless(text);
+    // The demo speaker is fixed; the reply text itself stays in the
+    // selected language, so Seamless never invents another one.
+    void playSeamless(text, language);
     return;
   }
   const s = synth();
   if (!s) return;
   const voices = s.getVoices();
   if (voices.length > 0) {
-    sayWithBrowser(s, text, voices);
+    sayWithBrowser(s, text, voices, language);
     return;
   }
-  void ensureVoices(s).then((late) => sayWithBrowser(s, text, late));
+  void ensureVoices(s).then((late) => sayWithBrowser(s, text, late, language));
 }
 
 export function stopSpeaking(reason: string): void {

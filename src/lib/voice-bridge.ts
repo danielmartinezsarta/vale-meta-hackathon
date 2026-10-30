@@ -10,6 +10,13 @@ import {
 import { checkWake } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { estimateCost, formatTurnLog } from "./turn-log";
+import {
+  DEFAULT_LANGUAGE,
+  parseLanguage,
+  turnErrorText,
+  type ValeLanguage,
+  type VoiceErrorKind,
+} from "./vale-language";
 
 export const BRIDGE_TURN_TIMEOUT_MS = 120000;
 /** Cap for audio buffered before the Meta handshake ack (~40 s). */
@@ -42,6 +49,7 @@ export interface VoiceBridgeOptions {
     startedAt: number;
     onDelta: (text: string) => void;
     previousResponseId?: string;
+    language?: ValeLanguage;
   }) => Promise<BridgeAgentResult>;
   now?: () => number;
   turnTimeoutMs?: number;
@@ -52,7 +60,7 @@ export interface VoiceBridgeOptions {
 // Browser text frames may arrive as Buffer: try JSON first; never forward a control frame as audio.
 export function tryParseControl(
   data: unknown,
-): { type: "endStream" } | null {
+): { type: "endStream" } | { type: "language"; language: ValeLanguage } | null {
   let text: string | null = null;
   if (typeof data === "string") {
     text = data;
@@ -62,8 +70,12 @@ export function tryParseControl(
     return null;
   }
   try {
-    const message = JSON.parse(text) as { type?: unknown };
-    return message.type === "endStream" ? { type: "endStream" } : null;
+    const message = JSON.parse(text) as { type?: unknown; language?: unknown };
+    if (message.type === "endStream") return { type: "endStream" };
+    if (message.type === "language") {
+      return { type: "language", language: parseLanguage(message.language) };
+    }
+    return null;
   } catch {
     return null;
   }
@@ -101,6 +113,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const pendingAudio: Buffer[] = [];
   let pendingEnd = false;
   let agentRan = false;
+  /** Screen selector language; Spanish until the browser sends its frame. */
+  let turnLanguage: ValeLanguage = DEFAULT_LANGUAGE;
+  const err = (kind: VoiceErrorKind): string =>
+    turnErrorText(kind, turnLanguage);
 
   const finish = (code: number, reason: string) => {
     if (settled) return;
@@ -170,7 +186,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       error: "timeout",
       ignored: false,
     });
-    failTurn("El turno de voz se agotó. Toca para intentar de nuevo.", "E-NET");
+    failTurn(err("timeout"), "E-NET");
   }, turnTimeoutMs);
 
   const flushPending = () => {
@@ -202,6 +218,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           previousResponseId: nextPreviousResponseId(),
           startedAt: speechEndAt,
           onDelta: (text) => sendJson(browser, { type: "reply-delta", text }),
+          language: turnLanguage,
         },
       );
       if (!browserGone) chainSucceeded(result.responseId, result.chainNext);
@@ -242,7 +259,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       });
       sendJson(browser, {
         type: "error",
-        message: "Perdón, tuve un problema. Toca para intentar de nuevo.",
+        message: err("model"),
         code: "E-MODEL",
       });
     }
@@ -288,7 +305,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         if (message.transcript.trim() === "") {
           sendJson(browser, {
             type: "notice",
-            message: "No te escuché. Habla y te escucho.",
+            message: err("vad-continue"),
             code: "E-VAD",
           });
           logTurn({
@@ -349,7 +366,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         console.error(
           `[voice-asr] transcription error: ${message.message ?? "unknown"}`,
         );
-        failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-ASR");
+        failTurn(err("lost"), "E-ASR");
       }
     }
   };
@@ -358,7 +375,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   try {
     meta = createMetaSocket ? createMetaSocket(metaUrl) : new WebSocket(metaUrl);
   } catch {
-    failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+    failTurn(err("lost"), "E-NET");
     return;
   }
 
@@ -373,7 +390,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         }),
       );
     } catch {
-      failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+      failTurn(err("lost"), "E-NET");
     }
   });
 
@@ -381,7 +398,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
 
   meta.on("error", () => {
     if (!settled && !metaOpen) {
-      failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+      failTurn(err("lost"), "E-NET");
     }
   });
 
@@ -389,17 +406,23 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     if (settled) return;
     if (gotFinal) return; // Meta closes after the final; the reply is on its way.
     console.error("[voice-asr] connection closed before final transcript");
-    failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-ASR");
+    failTurn(err("lost"), "E-ASR");
   });
 
   browser.on("message", (data: unknown) => {
     if (settled) return;
-    if (tryParseControl(data) !== null) {
+    const control = tryParseControl(data);
+    if (control !== null) {
+      // The screen selector rides along: language only, never audio.
+      if (control.type === "language") {
+        turnLanguage = control.language;
+        return;
+      }
       if (metaOpen) {
         try {
           meta.send(JSON.stringify({ type: "endStream" }));
         } catch {
-          failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+          failTurn(err("lost"), "E-NET");
         }
       } else {
         pendingEnd = true;
@@ -410,14 +433,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       const chunk = data as Buffer;
       bufferedBytes += chunk.length;
       if (bufferedBytes > MAX_BUFFERED_BYTES) {
-        failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+        failTurn(err("lost"), "E-NET");
         return;
       }
       if (metaOpen) {
         try {
           meta.send(chunk);
         } catch {
-          failTurn("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+          failTurn(err("lost"), "E-NET");
         }
       } else {
         pendingAudio.push(chunk);

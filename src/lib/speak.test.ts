@@ -59,6 +59,21 @@ describe("speak with the browser voice", () => {
     expect(pickVoice([us])).toBeNull();
   });
 
+  it("picks an English voice under the EN setting and keeps Spanish default", () => {
+    const co = fakeVoice("es-CO");
+    const us = fakeVoice("en-US");
+    expect(pickVoice([co, us], "en")).toBe(us);
+    expect(pickVoice([co], "en")).toBeNull();
+    expect(pickVoice([co, us])).toBe(co);
+  });
+
+  it("sets the utterance language to English without a matching voice", () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("es-CO")]);
+    speak("Hello", "en");
+    const utterance = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
+    expect(utterance.lang).toBe("en-US");
+  });
+
   it("sets the utterance language to Spanish even without a matching voice", () => {
     const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
     speak("Hola");

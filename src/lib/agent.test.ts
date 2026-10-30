@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_MODEL,
   PRIVACY_LINE,
+  PRIVACY_LINE_EN,
   SPOKEN_SYSTEM_PROMPT,
+  buildInstructions,
   runAgentTurn,
 } from "./agent";
 import { freshTestDb } from "./db";
@@ -396,5 +398,107 @@ describe("agent response chaining", () => {
 
     expect(result.toolUsed).toBe("add_to_shopping_list");
     expect(result.chainNext).toBe(true);
+  });
+});
+
+describe("closed reply language", () => {
+  it("keeps the historic Spanish prompt as the default", () => {
+    expect(buildInstructions()).toBe(SPOKEN_SYSTEM_PROMPT);
+    expect(buildInstructions("es")).toBe(SPOKEN_SYSTEM_PROMPT);
+  });
+
+  it("answers only in English under the EN setting, never in Spanish", () => {
+    const instructions = buildInstructions("en");
+    expect(instructions).toContain("only in English");
+    expect(instructions).toContain("Should I save it?");
+    expect(instructions).toContain("Which client is it for");
+    expect(instructions).toContain("Private note saved.");
+    expect(instructions).toContain("undo it");
+    expect(instructions).not.toContain("¿lo guardo?");
+    expect(instructions).not.toContain("deshazlo");
+    expect(instructions).not.toContain("¿Para qué clienta es");
+  });
+
+  it("sends the English instructions to the model when selected", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        return sseResponse([spoken("resp_en", "All set.")]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "vale, open a session",
+      language: "en",
+      db: freshTestDb(),
+    });
+
+    expect(result.text).toBe("All set.");
+    expect(bodies).toHaveLength(1);
+    expect(String(bodies[0].instructions)).toContain("only in English");
+    expect(String(bodies[0].instructions)).not.toContain("¿lo guardo?");
+  });
+
+  it("holds Spanish even when the transcript arrives in Italian", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        return sseResponse([spoken("resp_it", "¿Para qué clienta es?")]);
+      }),
+    );
+
+    await runAgentTurn({
+      key: "test-key",
+      transcript: "Vale, apri una sessione con Ana",
+      db: freshTestDb(),
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(String(bodies[0].instructions)).toContain(
+      "Nunca respondas en otro idioma",
+    );
+  });
+
+  it("says the privacy line in English under the EN setting", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (bodies.length === 1) {
+          return sseResponse([
+            toolCall(
+              "resp_h",
+              "add_note",
+              { client_name: "Ana", text: "onicólisis", kind: "health" },
+              "call_h",
+            ),
+          ]);
+        }
+        return sseResponse([spoken("resp_h2", "Private note saved.")]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "note onycholysis for Ana",
+      language: "en",
+      db: freshTestDb(),
+    });
+
+    expect(result.text).toContain("Private note saved.");
+    expect(result.text).toContain(PRIVACY_LINE_EN);
+    expect(result.text).not.toContain(PRIVACY_LINE);
   });
 });

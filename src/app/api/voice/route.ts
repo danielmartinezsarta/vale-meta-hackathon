@@ -12,6 +12,11 @@ import { checkWake, requestClientIp } from "@/lib/wake";
 import { openAsrConnection } from "@/lib/asr";
 import { estimateCost, formatTurnLog } from "@/lib/turn-log";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
+import {
+  DEFAULT_LANGUAGE,
+  parseLanguage,
+  turnErrorText,
+} from "@/lib/vale-language";
 
 export const runtime = "nodejs";
 
@@ -22,13 +27,15 @@ export async function GET(): Promise<Response> {
     console.error("[voice] META_API_KEY is not configured; rejecting turn.");
     return Response.json(
       {
-        error: "La voz no está configurada. Intenta de nuevo más tarde.",
+        error: turnErrorText("setup"),
         code: "E-NET",
       },
       { status: 503 },
     );
   }
   await connection();
+  // The upgrade handler receives no request, so the WS turn language
+  // arrives as a {type:"language"} control frame from the browser instead.
   return upgradeWebSocket((browser) => {
     attachVoiceBridge({
       browser,
@@ -65,12 +72,16 @@ function sse(event: string, data: unknown): string {
 // One push-to-talk turn: raw PCM_24KHZ body or JSON transcript; answers an SSE stream.
 export async function POST(request: Request): Promise<Response> {
   const key = process.env.META_API_KEY;
+  // Closed language from the screen selector; JSON and PCM turns agree.
+  const language = parseLanguage(
+    new URL(request.url).searchParams.get("language") ?? DEFAULT_LANGUAGE,
+  );
   if (!key) {
     // Server-side log only; the key itself is never logged.
     console.error("[voice] META_API_KEY is not configured; rejecting turn.");
     return Response.json(
       {
-        error: "La voz no está configurada. Intenta de nuevo más tarde.",
+        error: turnErrorText("setup", language),
         code: "E-NET",
       },
       { status: 503 },
@@ -153,7 +164,7 @@ export async function POST(request: Request): Promise<Response> {
             ignored: false,
           });
         }
-        finishError("El turno de voz se agotó. Toca para intentar de nuevo.", "E-NET");
+        finishError(turnErrorText("timeout", language), "E-NET");
       }, turnTimeoutMs);
 
       const abort = () => {
@@ -208,6 +219,7 @@ export async function POST(request: Request): Promise<Response> {
             url: process.env.META_RESPONSES_URL || undefined,
             startedAt: speechEndAt,
             onDelta: (text) => send("reply-delta", { text }),
+            language,
           });
           if (!aborted) chainSucceeded(result.responseId, result.chainNext);
           send("reply", { text: result.text });
@@ -240,7 +252,7 @@ export async function POST(request: Request): Promise<Response> {
             ignored: false,
           });
           send("error", {
-            message: "Perdón, tuve un problema. Toca para intentar de nuevo.",
+            message: turnErrorText("model", language),
             code: "E-MODEL",
           });
         }
@@ -310,14 +322,14 @@ export async function POST(request: Request): Promise<Response> {
                       clearTimeout(timeout);
                       // Plain text to the user; raw provider text stays in the server log only.
                       console.error(`[voice-asr] transcription error: ${message}`);
-                      finishError("Se perdió la conexión. Toca para intentar de nuevo.", "E-ASR");
+                      finishError(turnErrorText("lost", language), "E-ASR");
                     }
                   },
                 });
               } catch {
                 settled = true;
                 clearTimeout(timeout);
-                finishError("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+                finishError(turnErrorText("lost", language), "E-NET");
                 return;
               }
             }
@@ -329,18 +341,18 @@ export async function POST(request: Request): Promise<Response> {
 
         if (!opened) {
           clearTimeout(timeout);
-          finishError("No te escuché. Toca y habla.", "E-VAD");
+          finishError(turnErrorText("vad-tap", language), "E-VAD");
           return;
         }
         asr?.endTurn();
         await waitFor(() => gotFinal || settled, TURN_TIMEOUT_MS);
         if (!gotFinal) {
-          if (!settled) finishError("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+          if (!settled) finishError(turnErrorText("lost", language), "E-NET");
           return;
         }
         if (finalText.trim() === "") {
           // Empty final: no model call, just the notice.
-          send("notice", { message: "No te escuché. Habla y te escucho.", code: "E-VAD" });
+          send("notice", { message: turnErrorText("vad-continue", language), code: "E-VAD" });
           logTurn({
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: "",
@@ -376,7 +388,7 @@ export async function POST(request: Request): Promise<Response> {
         clearTimeout(timeout);
         closeStream();
       } catch {
-        if (!settled) finishError("Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+        if (!settled) finishError(turnErrorText("lost", language), "E-NET");
       } finally {
         clearTimeout(timeout);
         try {

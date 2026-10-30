@@ -166,6 +166,44 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
   });
 
+  it("holds the selected language even when the transcript is Italian", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        return fakeAgentReply("reply");
+      }),
+    );
+    const sendTurn = (url: string, transcript: string) =>
+      POST(
+        new Request(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ transcript }),
+        }),
+      ).then((response) => response.text());
+    const esText = await sendTurn(
+      "http://localhost/api/voice",
+      "vale, apri una sessione con Ana",
+    );
+    expect(esText).toContain("event: reply");
+    const enText = await sendTurn(
+      "http://localhost/api/voice?language=en",
+      "vale, open a session",
+    );
+    expect(enText).toContain("event: reply");
+    expect(bodies).toHaveLength(2);
+    expect(String(bodies[0].instructions)).toContain(
+      "Nunca respondas en otro idioma",
+    );
+    expect(String(bodies[1].instructions)).toContain("only in English");
+    expect(String(bodies[1].instructions)).not.toContain("¿lo guardo?");
+    vi.unstubAllGlobals();
+  });
+
   it("emits one per-turn log line with timings, tokens and cost", async () => {
     vi.stubGlobal("fetch", stubAgent("Done."));
     const logs: string[] = [];

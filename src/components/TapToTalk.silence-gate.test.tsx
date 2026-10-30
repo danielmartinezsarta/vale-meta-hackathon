@@ -59,7 +59,7 @@ function sseVadNotice() {
   };
 }
 
-const LISTENING_HINT = "Your microphone is on. Go ahead, I'm listening.";
+const LISTENING_HINT = "Tu micrófono está encendido. Adelante, te escucho.";
 const VAD_BANNER_TEXT = "No te escuché.";
 
 function vadBanner(): HTMLElement | null {

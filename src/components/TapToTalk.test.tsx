@@ -36,7 +36,7 @@ describe("microphone permission", () => {
       audio: { echoCancellation: true, noiseSuppression: true },
     });
     expect(
-      await screen.findByText(/microphone is on/i),
+      await screen.findByText(/micrófono está encendido/i),
     ).toBeDefined();
     expect(screen.queryByRole("alert")).toBeNull();
   });

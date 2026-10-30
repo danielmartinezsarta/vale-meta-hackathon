@@ -102,7 +102,7 @@ describe("browser voice output", () => {
     await waitFor(() => {
       expect(mockSpeak).toHaveBeenCalledTimes(1);
     });
-    expect(mockSpeak).toHaveBeenCalledWith("Te anoto mañana a las tres.");
+    expect(mockSpeak).toHaveBeenCalledWith("Te anoto mañana a las tres.", "es");
 
     // Daniel talks again: the audio cuts at once.
     driver!.onSpeechStart();
@@ -200,8 +200,8 @@ describe("voice engine switch", () => {
     await waitFor(() => {
       expect(played).toHaveLength(1);
     });
-    expect(mockSpeak).toHaveBeenCalledWith("Sesión abierta.");
-    expect(mockSpeak).toHaveBeenCalledWith("Sesión abierta.");
+    expect(mockSpeak).toHaveBeenCalledWith("Sesión abierta.", "es");
+    expect(mockSpeak).toHaveBeenCalledWith("Sesión abierta.", "es");
   });
 
   it("renders ignored turns dimmed with a label, never as dialogue", async () => {

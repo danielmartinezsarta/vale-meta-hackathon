@@ -14,6 +14,12 @@ import {
   voiceEngine,
   type VoiceEngine,
 } from "@/lib/speak";
+import {
+  DEFAULT_LANGUAGE,
+  parseLanguage,
+  turnErrorText,
+  type ValeLanguage,
+} from "@/lib/vale-language";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
@@ -82,6 +88,16 @@ export function TapToTalk() {
   const [level, setLevel] = useState(0);
   const [board, setBoard] = useState<Board | null>(null);
   const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
+  const [language, setLanguage] = useState<ValeLanguage>(() => {
+    if (typeof window === "undefined") return DEFAULT_LANGUAGE;
+    try {
+      return parseLanguage(window.localStorage.getItem("vale-language"));
+    } catch {
+      return DEFAULT_LANGUAGE;
+    }
+  });
+  // Turn handlers close over the session; the ref keeps the live language.
+  const languageRef = useRef<ValeLanguage>(language);
   const lastLevelRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);
@@ -234,7 +250,7 @@ export function TapToTalk() {
         silentStreakRef.current += 1;
         if (silentStreakRef.current >= 2) {
           showNotice(
-            "No te escuché. Habla y te escucho.",
+            turnErrorText("vad-continue", languageRef.current),
             "E-VAD",
           );
         }
@@ -355,7 +371,7 @@ export function TapToTalk() {
             if (typeof message.text !== "string") return;
             repliesRef.current.set(id, message.text);
             patchTurn(id, { reply: message.text });
-            speak(message.text);
+            speak(message.text, languageRef.current);
             break;
           case "board": {
             const board = (message as { board?: unknown }).board;
@@ -449,6 +465,17 @@ export function TapToTalk() {
             return;
           }
           transport.opened = true;
+          // The upgrade carries no query string, so the selector rides as a frame.
+          try {
+            socket.send(
+              JSON.stringify({
+                type: "language",
+                language: languageRef.current,
+              }),
+            );
+          } catch {
+            /* the close handler decides: reconnect or fail */
+          }
           for (const frame of transport.frames) sendFrameBytes(socket, frame);
           // The turn already ended: close it on the fresh socket.
           if (transport.ended || transport.endQueued) {
@@ -478,7 +505,7 @@ export function TapToTalk() {
           }
           if (finalReceivedRef.current.has(id)) {
             // The transcript bubble stays; only the reply is lost.
-            failTurn(id, "Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+            failTurn(id, turnErrorText("lost", languageRef.current), "E-NET");
             return;
           }
           if (!transport.opened) {
@@ -524,7 +551,7 @@ export function TapToTalk() {
             postTurn(id, retryFrames.length > 0 ? retryFrames : pending.splice(0));
             return;
           }
-          failTurn(id, "Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+          failTurn(id, turnErrorText("lost", languageRef.current), "E-NET");
         };
       };
 
@@ -598,7 +625,7 @@ export function TapToTalk() {
         controllersRef.current.add(controller);
         setNotice(null);
         setNoticeCode(null);
-        void fetch("/api/voice", {
+        void fetch(`/api/voice?language=${languageRef.current}`, {
           method: "POST",
           headers: { "content-type": "audio/l16" },
           body,
@@ -606,7 +633,7 @@ export function TapToTalk() {
         })
           .then(async (response) => {
             if (!response.ok) {
-              let message = "Se perdió la conexión. Toca para intentar de nuevo.";
+              let message = turnErrorText("lost", languageRef.current);
               let code: string | null = "E-NET";
               try {
                 const problem = (await response.json()) as {
@@ -624,7 +651,7 @@ export function TapToTalk() {
             }
             if (!response.body) {
               controllersRef.current.delete(controller);
-              failTurn(id, "Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+              failTurn(id, turnErrorText("lost", languageRef.current), "E-NET");
               return;
             }
             await parseSseStream(response.body, {
@@ -648,7 +675,7 @@ export function TapToTalk() {
               onReply: (text) => {
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
-                speak(text);
+                speak(text, languageRef.current);
               },
               onBoard: (next) => setBoard(next),
               onIgnored: () => patchTurn(id, { ignored: true }),
@@ -673,7 +700,7 @@ export function TapToTalk() {
               settledTurnsRef.current.add(id);
               return;
             }
-            failTurn(id, "Se perdió la conexión. Toca para intentar de nuevo.", "E-NET");
+            failTurn(id, turnErrorText("lost", languageRef.current), "E-NET");
           });
       };
 
@@ -793,6 +820,16 @@ export function TapToTalk() {
     setEngine(next);
   }, [engine]);
 
+  const selectLanguage = useCallback((next: ValeLanguage) => {
+    languageRef.current = next;
+    setLanguage(next);
+    try {
+      window.localStorage.setItem("vale-language", next);
+    } catch {
+      /* persistence is best-effort; the turn still uses the new language */
+    }
+  }, []);
+
   return (
     <section>
       <button
@@ -822,13 +859,35 @@ export function TapToTalk() {
         }
       >
         <SpeakerIcon /> Voice: {engine === "seamless" ? "Seamless" : "browser"}
-      </button>
+      </button>{" "}
+      <span role="group" aria-label="Language">
+        <button
+          type="button"
+          onClick={() => selectLanguage("es")}
+          aria-pressed={language === "es"}
+        >
+          ES
+        </button>{" "}
+        <button
+          type="button"
+          onClick={() => selectLanguage("en")}
+          aria-pressed={language === "en"}
+        >
+          EN
+        </button>
+      </span>
 
       {status === "live" && <LevelMeter level={level} />}
 
       {status === "live" &&
         turns.every((turn) => !hasVisibleContent(turn)) &&
-        !notice && <p>Your microphone is on. Go ahead, I&apos;m listening.</p>}
+        !notice && (
+          <p>
+            {language === "en"
+              ? "Your microphone is on. Go ahead, I'm listening."
+              : "Tu micrófono está encendido. Adelante, te escucho."}
+          </p>
+        )}
 
       <ol aria-label="Conversation turns">
         {turns.filter(hasVisibleContent).map((turn) => (
@@ -839,7 +898,9 @@ export function TapToTalk() {
             {turn.ignored ? (
               <p>
                 {turn.final ?? turn.interim}{" "}
-                <small>ignorado (sin nombre)</small>
+                <small>
+                  {language === "en" ? "ignored (no name)" : "ignorado (sin nombre)"}
+                </small>
               </p>
             ) : (
               <>

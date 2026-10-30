@@ -1,5 +1,6 @@
 import { VALE_TOOLS, getOpenSession, runValeTool } from "./vale-tools";
 import { getDb, type ValeDb } from "./db";
+import { DEFAULT_LANGUAGE, type ValeLanguage } from "./vale-language";
 
 export const AGENT_MODEL = "muse-spark-1.3";
 export const RESPONSES_URL = "https://api.meta.ai/v1/responses";
@@ -8,22 +9,51 @@ export const RESPONSES_URL = "https://api.meta.ai/v1/responses";
 export const PRIVACY_LINE =
   "Las notas de salud las procesa un modelo abierto en infraestructura dedicada y nunca van a la API general.";
 
-// Spoken-style prompt: plain text, 1-2 short sentences, confirm before writing.
-export const SPOKEN_SYSTEM_PROMPT = [
+/** English twin of PRIVACY_LINE for the closed EN setting. */
+export const PRIVACY_LINE_EN =
+  "Health notes are processed by an open model on dedicated infrastructure and never reach the general API.";
+
+// Language-neutral base: acting rules with no words the user ever hears.
+const SPOKEN_BASE = [
   "You are Vale, a hands-free voice helper for nail technicians.",
-  "The user hears your reply read aloud, so reply in the user's language (default Spanish) in exactly one or two short spoken sentences.",
   "Use plain text only. No markdown. No bold or italics. No lists. No links. No URLs. No emoji.",
-  "Habla siempre de tú, nunca de usted.",
-  "When you lack data, ask with these exact templates, filling only the braces: missing service -> ¿Qué servicio le hago a {clienta}?; missing client -> ¿Para qué clienta es?; missing both -> ¿Para qué clienta es y qué servicio le hago?. Never invent other wordings for these questions.",
   "You have tools for sessions, client cards, notes, the shopping list and supplies. Use them to act.",
   "Never invent names, prices or addresses, and never claim a write happened without calling its tool.",
   "Reads (find_client, read_shopping_list) run at once.",
   "Act right away when the request is direct and complete: if the user names a client and a service, call open_session right away; if they dictate a note or name an item, call that write right away. Say it is done only after the tool succeeds.",
-  "Only ask first when in doubt: unknown or ambiguous names, unknown supplies. Then say what you would do in one sentence and ask ¿lo guardo?, and wait for the user to say yes before calling.",
-  "When the user says deshazlo, call undo_last_write at once.",
+  "Only ask first when in doubt: unknown or ambiguous names, unknown supplies. Then say what you would do in one sentence and ask the confirmation question, and wait for the user to say yes before calling.",
   "When the tool asks whether to create a supply, ask the user and call log_supply_use again with confirm_create true only after a yes.",
-  "Health topics (allergies, onicolisis and similar) always use add_note with kind health; confirm with Nota privada guardada. and never repeat the health text.",
 ].join(" ");
+
+// Per-language suffix: the reply language, the fixed questions, the
+// undo word and the health confirmation. Closed set: es or en.
+const LANGUAGE_SUFFIX: Record<ValeLanguage, string> = {
+  es: [
+    "The user hears your reply read aloud, so reply in Spanish in exactly one or two short spoken sentences. Nunca respondas en otro idioma aunque la transcripción venga en otro.",
+    "Habla siempre de tú, nunca de usted.",
+    "When you lack data, ask with these exact templates, filling only the braces: missing service -> ¿Qué servicio le hago a {clienta}?; missing client -> ¿Para qué clienta es?; missing both -> ¿Para qué clienta es y qué servicio le hago?. Never invent other wordings for these questions.",
+    "The confirmation question is ¿lo guardo?.",
+    "When the user says deshazlo, call undo_last_write at once.",
+    "Health topics (allergies, onicolisis and similar) always use add_note with kind health; confirm with Nota privada guardada. and never repeat the health text.",
+  ].join(" "),
+  en: [
+    "The user hears your reply read aloud, so reply only in English in exactly one or two short spoken sentences. Never answer in another language even if the transcript is in another.",
+    "When you lack data, ask with these exact templates, filling only the braces: missing service -> Which service should I do for {client}?; missing client -> Which client is it for?; missing both -> Which client is it for and which service should I do?. Never invent other wordings for these questions.",
+    "The confirmation question is Should I save it?.",
+    "When the user says undo it, call undo_last_write at once.",
+    "Health topics (allergies, onycholysis and similar) always use add_note with kind health; confirm with Private note saved. and never repeat the health text.",
+  ].join(" "),
+};
+
+/** Full instructions for one language; Spanish keeps the historic export. */
+export function buildInstructions(
+  language: ValeLanguage = DEFAULT_LANGUAGE,
+): string {
+  return `${SPOKEN_BASE} ${LANGUAGE_SUFFIX[language]}`;
+}
+
+// Spoken-style prompt: plain text, 1-2 short sentences, confirm before writing.
+export const SPOKEN_SYSTEM_PROMPT = buildInstructions("es");
 
 export interface AgentUsage {
   inputTokens: number;
@@ -222,6 +252,8 @@ export interface AgentTurnOptions {
   startedAt?: number;
   /** Defaults to the shared database; tests inject an in-memory one. */
   db?: ValeDb;
+  /** Closed reply language; Spanish unless the screen selector says English. */
+  language?: ValeLanguage;
 }
 
 function privacyNoticeNeeded(db: ValeDb): boolean {
@@ -244,7 +276,9 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   const startedAt = options.startedAt ?? Date.now();
   const onDelta = options.onDelta ?? (() => {});
   const db = options.db ?? getDb();
-  const instructions = SPOKEN_SYSTEM_PROMPT;
+  const language = options.language ?? DEFAULT_LANGUAGE;
+  const instructions = buildInstructions(language);
+  const privacyLine = language === "en" ? PRIVACY_LINE_EN : PRIVACY_LINE;
 
   let previousResponseId = options.previousResponseId;
   let input: unknown = options.transcript;
@@ -329,7 +363,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
 
   if (healthSaved && privacyNoticeNeeded(db)) {
     markPrivacyNoticeSent(db);
-    text = text === "" ? PRIVACY_LINE : `${text} ${PRIVACY_LINE}`;
+    text = text === "" ? privacyLine : `${text} ${privacyLine}`;
   }
 
   return { text, usage, toolUsed, firstTokenMs, responseId, chainNext: toolUsed === null || sawDoubt };
