@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isSpeaking, pickVoice, setVoiceEngine, speak, stopSpeaking } from "./speak";
+import {
+  isSpeaking,
+  pickVoice,
+  setVoiceEngine,
+  speak,
+  splitSentences,
+  stopSpeaking,
+} from "./speak";
 
 function fakeVoice(lang: string): SpeechSynthesisVoice {
   return { lang } as SpeechSynthesisVoice;
@@ -45,6 +52,27 @@ describe("speak with the browser voice", () => {
     expect(synth.cancel).toHaveBeenCalledTimes(1);
     expect(synth.speak).toHaveBeenCalledTimes(1);
     expect(utterances).toEqual(["Hola, soy Vale."]);
+  });
+
+  it("queues one utterance per sentence, in order", () => {
+    const { synth, utterances } = stubSpeechSynthesis([fakeVoice("es-CO")]);
+    speak("Primera. ¿Segunda? Tercera");
+    expect(synth.cancel).toHaveBeenCalledTimes(1);
+    expect(utterances).toEqual(["Primera.", "¿Segunda?", "Tercera"]);
+  });
+
+  it("splits on sentence marks and breaks overlong chunks", () => {
+    expect(splitSentences("Hola. ¿Cómo estás? Bien")).toEqual([
+      "Hola.",
+      "¿Cómo estás?",
+      "Bien",
+    ]);
+    expect(splitSentences("   ")).toEqual([]);
+    const long = `Inicio, ${"palabra ".repeat(120)}fin.`;
+    const parts = splitSentences(long);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.every((part) => part.length <= 400)).toBe(true);
+    expect(parts.join(" ").replace(/\s+/g, " ")).toContain("fin.");
   });
 
   it("prefers the Colombian voice, then neutral, then any Spanish", () => {
@@ -225,6 +253,38 @@ describe("seamless voice engine", () => {
       expect(isSpeaking()).toBe(true);
       stopSpeaking("test");
       expect(isSpeaking()).toBe(false);
+    } finally {
+      setVoiceEngine("browser");
+    }
+  });
+
+  it("fetches the first sentence first and chains the rest on ending", async () => {
+    stubSpeechSynthesis();
+    const { played, instances } = stubAudio();
+    const fetchStub = vi.fn(async (_url: unknown) => new Response(WAV));
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      setVoiceEngine("seamless");
+      speak("Una. Dos.");
+      await vi.waitFor(() => {
+        expect(played).toHaveLength(1);
+      });
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(String(fetchStub.mock.calls[0][0])).toContain(
+        encodeURIComponent("Una."),
+      );
+      // Ending the first audio cues the second fetch, not a replay.
+      const first = instances as unknown as {
+        onended: (() => void) | null;
+      }[];
+      first[0]?.onended?.();
+      await vi.waitFor(() => {
+        expect(played).toHaveLength(2);
+      });
+      expect(fetchStub).toHaveBeenCalledTimes(2);
+      expect(String(fetchStub.mock.calls[1][0])).toContain(
+        encodeURIComponent("Dos."),
+      );
     } finally {
       setVoiceEngine("browser");
     }

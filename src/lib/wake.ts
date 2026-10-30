@@ -47,7 +47,94 @@ export function requestClientIp(request: Request): string {
   return first === undefined || first === "" ? "unknown" : first;
 }
 
+/** Browser-generated ids are lowercase alnum with dashes (at most 64 chars). */
+export function sanitizeClientId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const id = value.trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) ? id : null;
+}
+
+/**
+ * Stable key for slots, pending actions and chain lanes: the explicit
+ * browser id wins, the IP is the fallback (shared behind one NAT).
+ */
+export function requestClientId(request: Request): string {
+  return (
+    sanitizeClientId(new URL(request.url).searchParams.get("client")) ??
+    requestClientIp(request)
+  );
+}
+
 const attentionSince = new Map<string, number>();
+
+/**
+ * Pending question per connection: Vale asked, so the answer may come
+ * nameless. Set from the agent result, never from a transcript alone.
+ */
+const pendingSince = new Map<string, number>();
+
+export function markQuestionAsked(clientId: string, now: number = Date.now()): void {
+  pendingSince.set(clientId, now);
+}
+
+export function clearQuestion(clientId: string): void {
+  pendingSince.delete(clientId);
+}
+
+function hasPendingQuestion(clientId: string, now: number): boolean {
+  const since = pendingSince.get(clientId);
+  return since !== undefined && now - since < windowMs();
+}
+
+/** Undo intent: deshazlo / undo it, with or without the name. */
+export function isUndoIntent(transcript: string): boolean {
+  return /\b(deshaz\w*|undo(\s+it)?)\b/.test(` ${normalizeWakeText(transcript)} `);
+}
+
+const GREETING_ONLY =
+  /^(hola|hey|buenas|buenos dias|buenas tardes|buenas noches|alo|oiga|oigame)$/;
+
+/**
+ * Collapse ASR stutters before the gate: adjacent repeats ("mí? mí?",
+ * "la la") and glued halves ("Hola,Hola", "abre sesión abre sesión").
+ * Compares lowercase without trailing punctuation, keeps the first form.
+ */
+export function collapseEcho(transcript: string): string {
+  const tokens = transcript.split(/[\s,]+/).filter((token) => token !== "");
+  if (tokens.length === 0) return "";
+  const keyOf = (token: string): string =>
+    token.toLowerCase().replace(/[?!.¡¿;:'"]+$/g, "");
+  const single: string[] = [];
+  let collapsed = false;
+  for (const token of tokens) {
+    const prev = single[single.length - 1];
+    const key = keyOf(token);
+    if (prev !== undefined && key !== "" && key === keyOf(prev)) {
+      collapsed = true;
+      continue;
+    }
+    single.push(token);
+  }
+  if (single.length >= 2 && single.length % 2 === 0) {
+    const half = single.length / 2;
+    const first = single.slice(0, half).map(keyOf);
+    const second = single.slice(half).map(keyOf);
+    if (first.every((key, i) => key !== "" && key === second[i])) {
+      return single.slice(0, half).join(" ");
+    }
+  }
+  // No repeat removed: keep the original untouched, punctuation included.
+  return collapsed ? single.join(" ") : transcript;
+}
+
+/** Bare greeting, optionally naming Vale: never a data request. */
+export function isGreetingOnly(transcript: string): boolean {
+  const words = normalizeWakeText(transcript)
+    .split(" ")
+    .filter((word) => word !== "" && word !== "vale");
+  if (words.length === 0) return false;
+  return GREETING_ONLY.test(words.join(" "));
+}
 
 export interface WakeVerdict {
   execute: boolean;
@@ -70,7 +157,13 @@ export function checkWake(
   }
   const since = attentionSince.get(clientId);
   if (since !== undefined && now - since < windowMs()) {
-    return { execute: true, namedVale: false };
+    // An open window covers continuations only: the answer to Vale's
+    // pending question, or an undo of the last write. A fresh request
+    // without the name stays ignored.
+    if (hasPendingQuestion(clientId, now) || isUndoIntent(transcript)) {
+      return { execute: true, namedVale: false };
+    }
+    return { execute: false, namedVale: false };
   }
   return { execute: false, namedVale: false };
 }

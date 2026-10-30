@@ -166,6 +166,25 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
   });
 
+  it("collapses echoed repeats before the gate", async () => {
+    vi.stubGlobal("fetch", stubAgent("vale mismo"));
+    const text = await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ transcript: "vale abre sesion, vale abre sesion" }),
+      }),
+    ).then((response) => response.text());
+    const finals = text
+      .split("\n\n")
+      .filter((chunk) => chunk.startsWith("event: final"));
+    expect(finals).toHaveLength(1);
+    expect(JSON.parse(finals[0].split("data: ")[1])).toEqual({
+      transcript: "vale abre sesion",
+    });
+    vi.unstubAllGlobals();
+  });
+
   it("runs a stored yes-proposal directly without calling the model", async () => {
     const modelFetch = vi.fn(async () => fakeAgentReply("should not happen"));
     vi.stubGlobal("fetch", modelFetch);
@@ -429,7 +448,10 @@ describe("POST /api/voice", () => {
         bodies.push(
           JSON.parse((init as { body: string }).body) as Record<string, unknown>,
         );
-        return fakeAgentReply("ok", calls === 2 ? "resp_chain_2" : "resp_chain_1");
+        return fakeAgentReply(
+          calls === 1 ? "¿lo guardo?" : "ok",
+          calls === 2 ? "resp_chain_2" : "resp_chain_1",
+        );
       }),
     );
     const postTranscript = (transcript: string) =>
@@ -441,9 +463,10 @@ describe("POST /api/voice", () => {
         }),
       ).then((response) => response.text());
     expect(await postTranscript("vale, abre una sesion")).toContain("event: reply");
+    // Nameless yes answers Vale's question through the pending window.
     expect(await postTranscript("si")).toContain("event: reply");
-    expect(await postTranscript("boom")).toContain("E-MODEL");
-    expect(await postTranscript("hola de nuevo")).toContain("event: reply");
+    expect(await postTranscript("vale, boom")).toContain("E-MODEL");
+    expect(await postTranscript("vale, hola de nuevo")).toContain("event: reply");
     expect(bodies).toHaveLength(3);
     expect(bodies[0].previous_response_id).toBeUndefined();
     expect(bodies[1].previous_response_id).toBe("resp_chain_1");
@@ -483,8 +506,18 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
   });
 
-  it("executes the follow-up inside the same client window", async () => {
-    vi.stubGlobal("fetch", stubAgent("vale mismo"));
+  it("covers only continuations inside the same client window", async () => {
+    chainFailed();
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        return fakeAgentReply(
+          calls === 1 ? "¿Qué servicio le hago a Ana?" : "Listo.",
+        );
+      }),
+    );
     const postTranscript = (transcript: string) =>
       POST(
         new Request("http://localhost/api/voice", {
@@ -496,9 +529,37 @@ describe("POST /api/voice", () => {
           body: JSON.stringify({ transcript }),
         }),
       ).then((response) => response.text());
+    expect(await postTranscript("vale, algo para Ana")).toContain("event: reply");
+    // Nameless completion of Vale's question executes.
+    expect(await postTranscript("esmaltado")).toContain("event: reply");
+    // Nameless fresh request stays ignored.
+    const ignored = await postTranscript("cuéntame un chiste");
+    expect(ignored).toContain("event: done");
+    expect(ignored).not.toContain("event: reply");
+    expect(calls).toBe(2);
+    chainFailed();
+    vi.unstubAllGlobals();
+  });
+
+  it("undoes without the name inside the window", async () => {
+    chainFailed();
+    const modelFetch = vi.fn(async () => fakeAgentReply("vale mismo"));
+    vi.stubGlobal("fetch", modelFetch);
+    const postTranscript = (transcript: string) =>
+      POST(
+        new Request("http://localhost/api/voice", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": "wake-undo-1",
+          },
+          body: JSON.stringify({ transcript }),
+        }),
+      ).then((response) => response.text());
     expect(await postTranscript("vale, abre una sesion")).toContain("event: reply");
-    // No name, but same client inside the 45 s window: still executes.
-    expect(await postTranscript("si")).toContain("event: reply");
+    expect(await postTranscript("deshazlo")).toContain("event: reply");
+    expect(modelFetch).toHaveBeenCalledTimes(2);
+    chainFailed();
     vi.unstubAllGlobals();
   });
 

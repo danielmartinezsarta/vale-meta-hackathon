@@ -85,6 +85,8 @@ export interface AgentResult {
   responseId: string;
   /** Keep chaining: no tool ran, or a tool reported doubt. Drop after writes. */
   chainNext: boolean;
+  /** Vale asked something: the answer may arrive without the name. */
+  askedQuestion: boolean;
 }
 
 /** A 400 before any tool ran means the chained response went stale: retry clean. */
@@ -458,5 +460,9 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     text = text === "" ? privacyLine : `${text} ${privacyLine}`;
   }
 
-  return { text, usage, toolUsed, firstTokenMs, responseId, chainNext: toolUsed === null || sawDoubt };
+  const chainNext = toolUsed === null || sawDoubt;
+  // A question keeps the window open for the nameless answer: a tool that
+  // reported doubt, or a tool-free reply ending in one.
+  const askedQuestion = toolUsed === null ? /\?\s*$/.test(text) : sawDoubt;
+  return { text, usage, toolUsed, firstTokenMs, responseId, chainNext, askedQuestion };
 }

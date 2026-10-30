@@ -129,7 +129,8 @@ export function isConfirmYes(transcript: string): boolean {
     /^(si|sí|yes)$/.test(rest) ||
     /^(si|sí|yes),? por favor$/.test(rest) ||
     /^por favor,? (si|sí|yes)$/.test(rest) ||
-    /^(si|sí|yes),? (hazlo|hagalo|dale|registrala|anotalo|save it)$/.test(rest) ||
+    /^(si|sí|yes),? (hazlo|hagalo|dale|registrala|anotalo|save it|do it)$/.test(rest) ||
+    /^(hazlo|do it)(,? por favor)?$/.test(rest) ||
     /^(claro|dale|yes please)$/.test(rest) ||
     /^claro que si$/.test(rest)
   );
