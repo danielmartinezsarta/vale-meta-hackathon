@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   started_at TEXT NOT NULL,
   ended_at TEXT,
   duration_s INTEGER,
+  margin_earned REAL,
   privacy_notice_sent INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS session_supplies (

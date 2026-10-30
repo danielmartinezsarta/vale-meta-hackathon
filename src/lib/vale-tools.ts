@@ -18,6 +18,8 @@ export interface ToolResult {
   data?: unknown;
   /** Set when the tool needs a yes/no from the user before writing. */
   pendingCreate?: string;
+  /** Set when an off-hours booking waits for the user's yes. */
+  pendingOffHours?: boolean;
 }
 
 interface Named {
@@ -269,6 +271,12 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   },
   {
     type: "function",
+    name: "goal_progress",
+    description: "Report the month margin earned toward the goal.",
+    parameters: noParams,
+  },
+  {
+    type: "function",
     name: "create_appointment",
     description: "Book an appointment for an existing client and service.",
     parameters: {
@@ -278,6 +286,10 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
         service_name: { type: "string" },
         day: { type: "string", description: "Date as YYYY-MM-DD." },
         time: { type: "string", description: "Time as HH:MM, 24 hours." },
+        confirm_off_hours: {
+          type: "boolean",
+          description: "Set true only after the user said yes to an off-hours booking.",
+        },
       },
       required: ["client_name", "service_name", "day", "time"],
     },
@@ -382,9 +394,19 @@ export function closeSession(db: ValeDb, args: { products_used?: unknown }): Too
   const endedAt = new Date().toISOString();
   const started = db.prepare("SELECT started_at FROM sessions WHERE id = ?").get(open.id) as { started_at: string };
   const durationS = Math.max(0, Math.round((Date.parse(endedAt) - Date.parse(started.started_at)) / 1000));
-  db.prepare("UPDATE sessions SET ended_at = ?, duration_s = ? WHERE id = ?").run(endedAt, durationS, open.id);
-  logWrite(db, "close_session", "sessions", open.id, { supplies: recordedIds });
   const minutes = Math.max(1, Math.round(durationS / 60));
+  const service = db.prepare("SELECT id FROM services WHERE id = ?").get(open.service_id) as { id: number };
+  const earned = quotePrice(
+    PRICING,
+    minutes,
+    recipeForService(db, service.id).map((line) => ({
+      qty: line.qty,
+      pricePerProductUsd: line.price_per_product_usd,
+      contentPerProduct: line.content_per_product,
+    })),
+  ).marginEarned;
+  db.prepare("UPDATE sessions SET ended_at = ?, duration_s = ?, margin_earned = ? WHERE id = ?").run(endedAt, durationS, earned, open.id);
+  logWrite(db, "close_session", "sessions", open.id, { supplies: recordedIds });
   let message = `Sesión cerrada. Duró ${minutes} minutos.`;
   if (recorded.length > 0) message += ` Anoté: ${recorded.join(", ")}.`;
   if (unknown.length > 0) message += ` No encontré: ${unknown.join(", ")}.`;
@@ -518,7 +540,7 @@ export function undoLastWrite(db: ValeDb): ToolResult {
       for (const supplyId of ids) {
         db.prepare("DELETE FROM session_supplies WHERE session_id = ? AND supply_id = ?").run(entry.row_id, supplyId);
       }
-      db.prepare("UPDATE sessions SET ended_at = NULL, duration_s = NULL WHERE id = ?").run(entry.row_id);
+      db.prepare("UPDATE sessions SET ended_at = NULL, duration_s = NULL, margin_earned = NULL WHERE id = ?").run(entry.row_id);
       break;
     }
     case "add_note":
@@ -702,9 +724,28 @@ function listAppointments(db: ValeDb, where: string, ...params: (string | number
     .all(...params) as unknown as AppointmentRow[];
 }
 
+/**
+ * Weekend or outside 9-17 appointments warn first and still run:
+ * the warning leads the message, then the booking is announced.
+ */
+export function offHoursReasons(day: string, time: string): string[] {
+  const reasons: string[] = [];
+  const [year, month, date] = day.split("-").map(Number);
+  const weekday = new Date(year, month - 1, date).getDay();
+  if (weekday === 0 || weekday === 6) reasons.push("cae en fin de semana");
+  if (time < "09:00" || time >= "17:00") reasons.push("queda fuera de 9 a 17");
+  return reasons;
+}
+
 export function createAppointment(
   db: ValeDb,
-  args: { client_name?: unknown; service_name?: unknown; day?: unknown; time?: unknown },
+  args: {
+    client_name?: unknown;
+    service_name?: unknown;
+    day?: unknown;
+    time?: unknown;
+    confirm_off_hours?: unknown;
+  },
 ): ToolResult {
   const clientName = typeof args.client_name === "string" ? args.client_name : "";
   const serviceName = typeof args.service_name === "string" ? args.service_name : "";
@@ -719,12 +760,44 @@ export function createAppointment(
   const service = matchService(db, serviceName);
   if (service.kind === "none") return { ok: false, message: `No encuentro el servicio "${serviceName}".` };
   if (service.kind === "ambiguous") return { ok: false, message: ambiguousMessage(service.options) };
+  const reasons = offHoursReasons(args.day as string, args.time as string);
+  if (reasons.length > 0 && args.confirm_off_hours !== true) {
+    return {
+      ok: false,
+      message: `Ojo, ${reasons.join(" y ")}. ¿La guardo igual?`,
+      pendingOffHours: true,
+      data: { off_hours: true },
+    };
+  }
   const result = db
     .prepare("INSERT INTO appointments (client_id, service_id, day, time) VALUES (?, ?, ?, ?)")
     .run(client.row.id, service.row.id, args.day as string, args.time as string);
   const id = Number(result.lastInsertRowid);
   logWrite(db, "create_appointment", "appointments", id);
-  return { ok: true, message: `Cita guardada: ${client.row.name} ${args.day} ${args.time}.`, data: { appointment_id: id } };
+  return {
+    ok: true,
+    message: `Cita guardada: ${client.row.name} ${args.day} ${args.time}.`,
+    data: { appointment_id: id, off_hours: reasons.length > 0 },
+  };
+}
+
+/** "¿cómo voy con la meta?": margin earned on sessions closed this month vs the goal. */
+export function goalProgress(db: ValeDb): ToolResult {
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(margin_earned), 0) AS earned FROM sessions
+       WHERE ended_at IS NOT NULL AND strftime('%Y-%m', ended_at) = strftime('%Y-%m', 'now')`,
+    )
+    .get() as { earned: number };
+  const earned = Math.round(row.earned * 100) / 100;
+  const goal = PRICING.goalMonthlyUsd;
+  const pct = Math.round((earned / goal) * 100);
+  const month = new Date().toISOString().slice(0, 7);
+  return {
+    ok: true,
+    message: `Vas ${money(earned)} de ${goal} USD este mes (${pct}%).`,
+    data: { earned_usd: earned, goal_usd: goal, month },
+  };
 }
 
 export function listToday(db: ValeDb): ToolResult {
@@ -843,6 +916,8 @@ export function runValeTool(db: ValeDb, name: string, args: Record<string, unkno
       return undoLastWrite(db);
     case "quote_price":
       return quotePriceTool(db, args);
+    case "goal_progress":
+      return goalProgress(db);
     case "create_appointment":
       return createAppointment(db, args);
     case "list_today":

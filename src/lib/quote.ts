@@ -8,11 +8,23 @@ export interface PricingConfig {
   fixedMonthlyUsd: number;
 }
 
-/** Workable minutes in a month, derived from the schedule: nothing is hardcoded. */
-export function workableMinutesPerMonth(pricing: PricingConfig): number {
-  const weeksPerYear = 52;
-  const monthsPerYear = 12;
-  return (pricing.workDaysPerWeek * pricing.workHoursPerDay * 60 * weeksPerYear) / monthsPerYear;
+/** Count the Monday-to-Friday days of the month holding `when`. */
+export function weekdayCountOfMonth(when: Date): number {
+  const daysInMonth = new Date(when.getFullYear(), when.getMonth() + 1, 0).getDate();
+  let count = 0;
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const weekday = new Date(when.getFullYear(), when.getMonth(), day).getDay();
+    if (weekday >= 1 && weekday <= 5) count += 1;
+  }
+  return count;
+}
+
+/**
+ * Workable minutes of the month, derived from its weekday days:
+ * nothing is hardcoded.
+ */
+export function workableMinutesPerMonth(pricing: PricingConfig, when = new Date()): number {
+  return weekdayCountOfMonth(when) * pricing.workHoursPerDay * 60;
 }
 
 export interface QuoteSupply {
@@ -42,8 +54,9 @@ export function quotePrice(
   pricing: PricingConfig,
   minutes: number,
   supplies: QuoteSupply[],
+  when = new Date(),
 ): QuoteBreakdown {
-  const workable = workableMinutesPerMonth(pricing);
+  const workable = workableMinutesPerMonth(pricing, when);
   const ratePerMinute = pricing.goalMonthlyUsd / workable;
   const timeCost = minutes * ratePerMinute;
   const fixedShare = (pricing.fixedMonthlyUsd * minutes) / workable;

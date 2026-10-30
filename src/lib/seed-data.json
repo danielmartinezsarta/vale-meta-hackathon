@@ -2,16 +2,16 @@
   "_note": "All names, prices and data below are invented for the hackathon demo. No real client data. Canonical names are English (demo); Spanish goes in 'es'.",
   "currency": "USD",
   "pricing": {
-    "goal_monthly_usd": 2500,
-    "work_days_per_week": 5,
-    "work_hours_per_day": 8,
+    "monthly_goal_usd": 2500,
     "margin_pct": 30,
-    "fixed_monthly_usd": {
-      "workspace": 800,
-      "utilities": 150,
-      "transport": 70,
-      "other": 80
-    }
+    "schedule": "lun-vie",
+    "work_hours_per_day": 8,
+    "fixed_costs": [
+      { "label": "renta del local", "amount_usd": 800 },
+      { "label": "luz y agua", "amount_usd": 150 },
+      { "label": "internet y teléfono", "amount_usd": 80 },
+      { "label": "seguro", "amount_usd": 70 }
+    ]
   },
   "clients": [
     "Ana Beltran",

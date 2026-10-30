@@ -52,22 +52,36 @@ interface SeedService {
   supplies?: SeedRecipeLine[];
 }
 
+/** "lun-vie" counts its weekday days: nothing about the schedule is hardcoded. */
+function workDaysPerWeek(schedule: string): number {
+  const order = ["lun", "mar", "mie", "jue", "vie", "sab", "dom"];
+  const plain = schedule
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+  const [first, last] = plain.split("-").map((part) => part.trim());
+  const from = order.indexOf(first);
+  const to = last === undefined ? from : order.indexOf(last);
+  if (from === -1 || to === -1 || to < from) return 5;
+  return to - from + 1;
+}
+
 function pricingFromSeed(): PricingConfig {
   const pricing = (
     seedData as unknown as {
       pricing: {
-        goal_monthly_usd: number;
-        work_days_per_week: number;
-        work_hours_per_day: number;
+        monthly_goal_usd: number;
         margin_pct: number;
-        fixed_monthly_usd: Record<string, number>;
+        schedule: string;
+        work_hours_per_day: number;
+        fixed_costs: { label: string; amount_usd: number }[];
       };
     }
   ).pricing;
-  const fixedMonthlyUsd = Object.values(pricing.fixed_monthly_usd).reduce((sum, value) => sum + value, 0);
+  const fixedMonthlyUsd = pricing.fixed_costs.reduce((sum, item) => sum + item.amount_usd, 0);
   return {
-    goalMonthlyUsd: pricing.goal_monthly_usd,
-    workDaysPerWeek: pricing.work_days_per_week,
+    goalMonthlyUsd: pricing.monthly_goal_usd,
+    workDaysPerWeek: workDaysPerWeek(pricing.schedule ?? "lun-vie"),
     workHoursPerDay: pricing.work_hours_per_day,
     marginPct: pricing.margin_pct,
     fixedMonthlyUsd,
@@ -120,6 +134,7 @@ export function seedDatabase(db: ValeDb): void {
   ensureColumn(db, "supplies", "stock_qty", "REAL NOT NULL DEFAULT 0");
   ensureColumn(db, "supplies", "min_qty", "REAL NOT NULL DEFAULT 0");
   ensureColumn(db, "supplies", "price_per_product_usd", "REAL NOT NULL DEFAULT 0");
+  ensureColumn(db, "sessions", "margin_earned", "REAL");
 
   const seed = seedData as unknown as { clients: string[]; services: SeedService[]; supplies: SeedSupply[] };
   const addClient = db.prepare("INSERT OR IGNORE INTO clients (name) VALUES (?)");
