@@ -7,7 +7,13 @@ import {
   chainSucceeded,
   nextPreviousResponseId,
 } from "./response-chain";
-import { checkWake, clearQuestion, isGreetingOnly, markQuestionAsked } from "./wake";
+import {
+  checkWake,
+  clearQuestion,
+  collapseEcho,
+  isGreetingOnly,
+  markQuestionAsked,
+} from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { estimateCost, formatTurnLog } from "./turn-log";
 import {
@@ -334,7 +340,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       if (message.final) {
         if (gotFinal) return;
         gotFinal = true;
-        finalText = message.transcript;
+        finalText = collapseEcho(message.transcript);
         audioProcessedMs =
           typeof message.audioProcessedMs === "number"
             ? message.audioProcessedMs
@@ -342,11 +348,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         const speechEndAt = now();
         sendJson(browser, {
           type: "transcript",
-          transcript: message.transcript,
+          transcript: finalText,
           final: true,
           audioProcessedMs,
         });
-        if (message.transcript.trim() === "") {
+        if (finalText.trim() === "") {
           sendJson(browser, {
             type: "notice",
             message: err("vad-continue"),
@@ -369,11 +375,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           });
           sendJson(browser, { type: "done" });
           finish(1000, "turn-complete");
-        } else if (!checkWake(message.transcript, clientId).execute) {
+        } else if (!checkWake(finalText, clientId).execute) {
           // Background chatter without the name: silent discard.
           logTurn({
             ts: new Date(speechEndAt).toISOString(),
-            transcript: message.transcript,
+            transcript: finalText,
             ttftMs: null,
             inputTokens: 0,
             outputTokens: 0,
@@ -390,7 +396,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           sendJson(browser, { type: "done" });
           finish(1000, "turn-complete");
         } else {
-          void answerTranscript(message.transcript, speechEndAt);
+          void answerTranscript(finalText, speechEndAt);
         }
       } else {
         sendJson(browser, {

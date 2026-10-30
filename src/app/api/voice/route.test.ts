@@ -166,6 +166,25 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
   });
 
+  it("collapses echoed repeats before the gate", async () => {
+    vi.stubGlobal("fetch", stubAgent("vale mismo"));
+    const text = await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ transcript: "vale abre sesion, vale abre sesion" }),
+      }),
+    ).then((response) => response.text());
+    const finals = text
+      .split("\n\n")
+      .filter((chunk) => chunk.startsWith("event: final"));
+    expect(finals).toHaveLength(1);
+    expect(JSON.parse(finals[0].split("data: ")[1])).toEqual({
+      transcript: "vale abre sesion",
+    });
+    vi.unstubAllGlobals();
+  });
+
   it("runs a stored yes-proposal directly without calling the model", async () => {
     const modelFetch = vi.fn(async () => fakeAgentReply("should not happen"));
     vi.stubGlobal("fetch", modelFetch);

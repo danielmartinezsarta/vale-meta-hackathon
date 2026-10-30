@@ -16,6 +16,7 @@ import {
 import {
   checkWake,
   clearQuestion,
+  collapseEcho,
   isGreetingOnly,
   markQuestionAsked,
   requestClientIp,
@@ -110,7 +111,7 @@ export async function POST(request: Request): Promise<Response> {
       if (typeof body.transcript !== "string" || body.transcript.trim() === "") {
         return Response.json({ error: "Empty transcript." }, { status: 400 });
       }
-      cannedTranscript = body.transcript;
+      cannedTranscript = collapseEcho(body.transcript);
     } catch {
       return Response.json({ error: "Bad request." }, { status: 400 });
     }
@@ -354,10 +355,10 @@ export async function POST(request: Request): Promise<Response> {
                     } else if (event.kind === "final") {
                       gotFinal = true;
                       finalAtMs = Date.now();
-                      finalText = event.transcript;
+                      finalText = collapseEcho(event.transcript);
                       audioSeconds = (event.audioProcessedMs ?? 0) / 1000;
                       send("final", {
-                        transcript: event.transcript,
+                        transcript: finalText,
                         audioProcessedMs: event.audioProcessedMs ?? null,
                       });
                     }

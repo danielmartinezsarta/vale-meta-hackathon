@@ -76,6 +76,39 @@ export function isUndoIntent(transcript: string): boolean {
 const GREETING_ONLY =
   /^(hola|hey|buenas|buenos dias|buenas tardes|buenas noches|alo|oiga|oigame)$/;
 
+/**
+ * Collapse ASR stutters before the gate: adjacent repeats ("mí? mí?",
+ * "la la") and glued halves ("Hola,Hola", "abre sesión abre sesión").
+ * Compares lowercase without trailing punctuation, keeps the first form.
+ */
+export function collapseEcho(transcript: string): string {
+  const tokens = transcript.split(/[\s,]+/).filter((token) => token !== "");
+  if (tokens.length === 0) return "";
+  const keyOf = (token: string): string =>
+    token.toLowerCase().replace(/[?!.¡¿;:'"]+$/g, "");
+  const single: string[] = [];
+  let collapsed = false;
+  for (const token of tokens) {
+    const prev = single[single.length - 1];
+    const key = keyOf(token);
+    if (prev !== undefined && key !== "" && key === keyOf(prev)) {
+      collapsed = true;
+      continue;
+    }
+    single.push(token);
+  }
+  if (single.length >= 2 && single.length % 2 === 0) {
+    const half = single.length / 2;
+    const first = single.slice(0, half).map(keyOf);
+    const second = single.slice(half).map(keyOf);
+    if (first.every((key, i) => key !== "" && key === second[i])) {
+      return single.slice(0, half).join(" ");
+    }
+  }
+  // No repeat removed: keep the original untouched, punctuation included.
+  return collapsed ? single.join(" ") : transcript;
+}
+
 /** Bare greeting, optionally naming Vale: never a data request. */
 export function isGreetingOnly(transcript: string): boolean {
   const words = normalizeWakeText(transcript)
