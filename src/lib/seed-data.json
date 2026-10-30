@@ -1,5 +1,18 @@
 {
-  "_note": "All names, prices and data below are invented for the hackathon demo. No real client data.",
+  "_note": "All names, prices and data below are invented for the hackathon demo. No real client data. Canonical names are English (demo); Spanish goes in 'es'.",
+  "currency": "USD",
+  "pricing": {
+    "goal_monthly_usd": 2500,
+    "work_days_per_week": 5,
+    "work_hours_per_day": 8,
+    "margin_pct": 30,
+    "fixed_monthly_usd": {
+      "workspace": 800,
+      "utilities": 150,
+      "transport": 70,
+      "other": 80
+    }
+  },
   "clients": [
     "Ana Beltran",
     "Maria Solis",
@@ -8,25 +21,128 @@
     "Rosa Delgado"
   ],
   "services": [
-    { "name": "Retiro de gel", "price_cents": 1200, "duration_min": 30 },
-    { "name": "Manicura clasica", "price_cents": 1500, "duration_min": 45 },
-    { "name": "Pedicura spa", "price_cents": 2500, "duration_min": 60 },
-    { "name": "Set completo acrilico", "price_cents": 3500, "duration_min": 120 },
-    { "name": "Relleno acrilico", "price_cents": 2800, "duration_min": 90 },
-    { "name": "Esmaltado semipermanente", "price_cents": 2000, "duration_min": 60 },
-    { "name": "Nail art sencillo", "price_cents": 800, "duration_min": 20 },
-    { "name": "Reparacion de una", "price_cents": 500, "duration_min": 15 }
+    {
+      "name": "Semi-permanent manicure",
+      "es": "Manicura semipermanente",
+      "aliases": ["semipermanente"],
+      "minutes": 60,
+      "supplies": [
+        { "name": "Nail file", "qty": 1, "unit": "pcs" },
+        { "name": "Buffer block", "qty": 1, "unit": "pcs" },
+        { "name": "Lint-free wipes", "qty": 6, "unit": "pcs" },
+        { "name": "Nail prep dehydrator", "qty": 1, "unit": "ml" },
+        { "name": "Primer", "qty": 0.3, "unit": "ml" },
+        { "name": "Base coat", "qty": 0.5, "unit": "ml" },
+        { "name": "Color gel", "qty": 1, "unit": "ml" },
+        { "name": "Top coat", "qty": 0.5, "unit": "ml" },
+        { "name": "Cuticle oil", "qty": 0.3, "unit": "ml" },
+        { "name": "Disposable gloves", "qty": 1, "unit": "pair" }
+      ]
+    },
+    {
+      "name": "Gel refill",
+      "es": "Relleno de gel",
+      "aliases": ["relleno", "mantenimiento"],
+      "minutes": 75,
+      "supplies": [
+        { "name": "Nail file", "qty": 1, "unit": "pcs" },
+        { "name": "Buffer block", "qty": 1, "unit": "pcs" },
+        { "name": "Lint-free wipes", "qty": 6, "unit": "pcs" },
+        { "name": "Nail prep dehydrator", "qty": 1, "unit": "ml" },
+        { "name": "Primer", "qty": 0.3, "unit": "ml" },
+        { "name": "Base coat", "qty": 0.7, "unit": "ml" },
+        { "name": "Color gel", "qty": 1, "unit": "ml" },
+        { "name": "Top coat", "qty": 0.5, "unit": "ml" },
+        { "name": "Cuticle oil", "qty": 0.3, "unit": "ml" },
+        { "name": "Disposable gloves", "qty": 1, "unit": "pair" }
+      ]
+    },
+    {
+      "name": "Acrylic full set",
+      "es": "Set completo de acrílico",
+      "aliases": ["acrílico", "uñas acrílicas"],
+      "minutes": 120,
+      "supplies": [
+        { "name": "Nail file", "qty": 2, "unit": "pcs" },
+        { "name": "Buffer block", "qty": 1, "unit": "pcs" },
+        { "name": "Nail forms", "qty": 10, "unit": "pcs" },
+        { "name": "Lint-free wipes", "qty": 8, "unit": "pcs" },
+        { "name": "Nail prep dehydrator", "qty": 1.5, "unit": "ml" },
+        { "name": "Primer", "qty": 0.5, "unit": "ml" },
+        { "name": "Acrylic powder", "qty": 6, "unit": "g" },
+        { "name": "Acrylic liquid", "qty": 5, "unit": "ml" },
+        { "name": "Top coat", "qty": 0.7, "unit": "ml" },
+        { "name": "Cuticle oil", "qty": 0.5, "unit": "ml" },
+        { "name": "Disposable gloves", "qty": 1, "unit": "pair" }
+      ]
+    },
+    {
+      "name": "Nail art (per design)",
+      "es": "Diseño de nail art",
+      "aliases": ["diseño", "nail art"],
+      "minutes": 30,
+      "supplies": [
+        { "name": "Nail art gel paint", "qty": 0.4, "unit": "ml" },
+        { "name": "Rhinestones", "qty": 10, "unit": "pcs" },
+        { "name": "Top coat", "qty": 0.5, "unit": "ml" },
+        { "name": "Lint-free wipes", "qty": 2, "unit": "pcs" }
+      ]
+    },
+    {
+      "name": "Spa pedicure",
+      "es": "Pedicura spa",
+      "aliases": ["pedicura"],
+      "minutes": 60,
+      "supplies": [
+        { "name": "Foot soak salts", "qty": 20, "unit": "g" },
+        { "name": "Cuticle remover", "qty": 3, "unit": "ml" },
+        { "name": "Sugar scrub", "qty": 15, "unit": "g" },
+        { "name": "Body lotion", "qty": 8, "unit": "ml" },
+        { "name": "Nail file", "qty": 1, "unit": "pcs" },
+        { "name": "Buffer block", "qty": 1, "unit": "pcs" },
+        { "name": "Regular nail polish", "qty": 1, "unit": "ml" },
+        { "name": "Cotton pads", "qty": 6, "unit": "pcs" },
+        { "name": "Disposable gloves", "qty": 1, "unit": "pair" }
+      ]
+    },
+    {
+      "name": "Gel removal",
+      "es": "Retiro de gel",
+      "aliases": ["retiro"],
+      "minutes": 30,
+      "supplies": [
+        { "name": "Acetone", "qty": 15, "unit": "ml" },
+        { "name": "Foil wraps", "qty": 10, "unit": "pcs" },
+        { "name": "Cotton pads", "qty": 10, "unit": "pcs" },
+        { "name": "Nail file", "qty": 1, "unit": "pcs" },
+        { "name": "Cuticle oil", "qty": 0.3, "unit": "ml" },
+        { "name": "Disposable gloves", "qty": 1, "unit": "pair" }
+      ]
+    }
   ],
   "supplies": [
-    "Esmalte rojo",
-    "Esmalte nude",
-    "Base coat",
-    "Top coat",
-    "Lima 180",
-    "Palito de naranjo",
-    "Algodon",
-    "Acetona pura",
-    "Aceite de cuticula",
-    "Toallitas sin pelusa"
+    { "name": "Nail file", "es": "Lima de uñas", "aliases": ["lima"], "content_per_product": 1, "unit": "pcs", "stock": 12, "min": 3, "price_per_product_usd": 1 },
+    { "name": "Buffer block", "es": "Bloque pulidor", "aliases": ["buffer"], "content_per_product": 1, "unit": "pcs", "stock": 8, "min": 2, "price_per_product_usd": 1 },
+    { "name": "Lint-free wipes", "es": "Toallitas sin pelusa", "aliases": ["toallitas", "selletas"], "content_per_product": 100, "unit": "pcs", "stock": 200, "min": 50, "price_per_product_usd": 30 },
+    { "name": "Nail prep dehydrator", "es": "Deshidratador de uñas", "aliases": ["deshidratador"], "content_per_product": 9, "unit": "ml", "stock": 15, "min": 5, "price_per_product_usd": 15 },
+    { "name": "Primer", "es": "Primer", "aliases": ["praimer", "adherente"], "content_per_product": 9, "unit": "ml", "stock": 10, "min": 3, "price_per_product_usd": 15 },
+    { "name": "Base coat", "es": "Base", "aliases": ["base coat"], "content_per_product": 15, "unit": "ml", "stock": 15, "min": 5, "price_per_product_usd": 20 },
+    { "name": "Color gel", "es": "Gel de color", "aliases": ["esmalte en gel"], "content_per_product": 15, "unit": "ml", "stock": 60, "min": 15, "price_per_product_usd": 15 },
+    { "name": "Top coat", "es": "Sellador", "aliases": ["top coat", "top", "sellador"], "content_per_product": 15, "unit": "ml", "stock": 15, "min": 5, "price_per_product_usd": 20 },
+    { "name": "Cuticle oil", "es": "Aceite de cutícula", "aliases": ["aceite"], "content_per_product": 10, "unit": "ml", "stock": 15, "min": 5, "price_per_product_usd": 9 },
+    { "name": "Disposable gloves", "es": "Guantes desechables", "aliases": ["guantes"], "content_per_product": 100, "unit": "pair", "stock": 50, "min": 10, "price_per_product_usd": 15 },
+    { "name": "Nail forms", "es": "Formas esculturales", "aliases": ["moldes"], "content_per_product": 100, "unit": "pcs", "stock": 100, "min": 20, "price_per_product_usd": 35 },
+    { "name": "Acrylic powder", "es": "Polvo acrílico", "aliases": ["acrilico", "polimero"], "content_per_product": 120, "unit": "g", "stock": 60, "min": 15, "price_per_product_usd": 30 },
+    { "name": "Acrylic liquid", "es": "Líquido acrílico", "aliases": ["monómero"], "content_per_product": 250, "unit": "ml", "stock": 100, "min": 25, "price_per_product_usd": 40 },
+    { "name": "Nail art gel paint", "es": "Gel para nail art", "aliases": ["gel paint"], "content_per_product": 9, "unit": "ml", "stock": 12, "min": 3, "price_per_product_usd": 25 },
+    { "name": "Rhinestones", "es": "Pedrería", "aliases": ["piedritas", "cristales"], "content_per_product": 100, "unit": "pcs", "stock": 300, "min": 50, "price_per_product_usd": 60 },
+    { "name": "Foot soak salts", "es": "Sales de remojo", "aliases": ["sales para pies"], "content_per_product": 250, "unit": "g", "stock": 500, "min": 100, "price_per_product_usd": 45 },
+    { "name": "Cuticle remover", "es": "Removedor de cutícula", "aliases": ["ablandador"], "content_per_product": 250, "unit": "ml", "stock": 30, "min": 8, "price_per_product_usd": 25 },
+    { "name": "Sugar scrub", "es": "Exfoliante de azúcar", "aliases": ["exfoliante"], "content_per_product": 250, "unit": "g", "stock": 300, "min": 60, "price_per_product_usd": 45 },
+    { "name": "Body lotion", "es": "Crema corporal", "aliases": ["loción", "crema"], "content_per_product": 250, "unit": "ml", "stock": 200, "min": 40, "price_per_product_usd": 25 },
+    { "name": "Regular nail polish", "es": "Esmalte tradicional", "aliases": ["esmalte normal", "tradicional"], "content_per_product": 15, "unit": "ml", "stock": 60, "min": 15, "price_per_product_usd": 12 },
+    { "name": "Acetone", "es": "Acetona", "aliases": ["acetona", "acetona pura"], "content_per_product": 250, "unit": "ml", "stock": 500, "min": 100, "price_per_product_usd": 15 },
+    { "name": "Foil wraps", "es": "Envolturas de aluminio", "aliases": ["foils", "aluminio"], "content_per_product": 100, "unit": "pcs", "stock": 100, "min": 20, "price_per_product_usd": 45 },
+    { "name": "Cotton pads", "es": "Pads de algodón", "aliases": ["algodon"], "content_per_product": 100, "unit": "pcs", "stock": 300, "min": 60, "price_per_product_usd": 20 }
   ]
 }
