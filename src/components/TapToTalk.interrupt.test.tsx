@@ -78,6 +78,9 @@ describe("interruption (fake-device fallback)", () => {
           ({ getTracks: () => [] }) as unknown as MediaStream,
       },
     });
+    // No real sockets in tests: Node's WebSocket would dial localhost:3000,
+    // so hide it and force the buffered-POST fallback path under test.
+    vi.stubGlobal("WebSocket", undefined);
     const seen: CaptureCallbacks[] = [];
     mockStartCapture.mockImplementation((_stream, callbacks) => {
       seen.push(callbacks);

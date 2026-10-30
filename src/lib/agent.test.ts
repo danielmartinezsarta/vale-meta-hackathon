@@ -9,6 +9,8 @@ import {
   runAgentTurn,
 } from "./agent";
 import { freshTestDb } from "./db";
+import { clearPendingAction, takePendingAction } from "./pending-action";
+import { clearSlots } from "./slot-memory";
 import { VALE_TOOLS, runValeTool } from "./vale-tools";
 
 function sseResponse(events: { type: string; data: unknown }[]): Response {
@@ -76,13 +78,14 @@ describe("agent prompt", () => {
     expect(SPOKEN_SYSTEM_PROMPT).not.toMatch(/need a short confirmation first/);
   });
 
-  it("speaks always de tú with fixed templates for missing data", () => {
+  it("speaks always de tú with persona, capabilities and tone examples", () => {
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/siempre de tú/i);
-    expect(SPOKEN_SYSTEM_PROMPT).toContain("¿Qué servicio le hago a {clienta}?");
-    expect(SPOKEN_SYSTEM_PROMPT).toContain("¿Para qué clienta es?");
-    expect(SPOKEN_SYSTEM_PROMPT).toContain(
-      "¿Para qué clienta es y qué servicio le hago?",
-    );
+    expect(SPOKEN_SYSTEM_PROMPT).not.toContain("Never invent other wordings");
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/Hoy puedes:/);
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/Precio y agenda/);
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/Ejemplos de tono \(no guion\)/);
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/¿qué puedes hacer\?/);
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/Saluda variado/);
   });
 
   it("sends the Vale tools with the cheapest reasoning mode", async () => {
@@ -288,7 +291,7 @@ describe("agent clean retry", () => {
     expect(result.responseId).toBe("resp_2");
   });
 
-  it("does not retry when a tool already ran before the 400", async () => {
+  it("does not retry when a write already completed before the 400", async () => {
     let calls = 0;
     vi.stubGlobal(
       "fetch",
@@ -296,7 +299,7 @@ describe("agent clean retry", () => {
         calls += 1;
         if (calls === 1) {
           return sseResponse([
-            toolCall("resp_1", "find_client", { name: "Ana" }, "call_1"),
+            toolCall("resp_1", "create_client", { name: "Noa" }, "call_1"),
           ]);
         }
         return new Response("bad round", { status: 400 });
@@ -307,6 +310,41 @@ describe("agent clean retry", () => {
       runAgentTurn({ key: "test-key", transcript: "hola", db: freshTestDb() }),
     ).rejects.toThrow(/model error: 400/);
     expect(calls).toBe(2);
+  });
+
+  it("retries clean when only a read or a doubt ran before the 400", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        calls += 1;
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (calls === 1) {
+          return sseResponse([
+            toolCall("resp_1", "find_client", { name: "Zzz" }, "call_1"),
+          ]);
+        }
+        if (calls === 2) {
+          return new Response("stale chain", { status: 400 });
+        }
+        return sseResponse([spoken("resp_3", "Ya quedó.")]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "hola",
+      previousResponseId: "resp_stale",
+      db: freshTestDb(),
+    });
+
+    expect(calls).toBe(3);
+    expect(bodies[0].previous_response_id).toBe("resp_stale");
+    expect(bodies[2].previous_response_id).toBeUndefined();
+    expect(result.text).toBe("Ya quedó.");
   });
 
   it("does not retry non-chain errors", async () => {
@@ -328,6 +366,153 @@ describe("agent clean retry", () => {
       }),
     ).rejects.toThrow(/model error: 500/);
     expect(calls).toBe(1);
+  });
+
+  it("retries clean when a failed event names a stale chain", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        calls += 1;
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (calls === 1) {
+          return sseResponse([
+            {
+              type: "response.failed",
+              data: {
+                error: "previous_response_id invalid: response not found",
+              },
+            },
+          ]);
+        }
+        return sseResponse([spoken("resp_2", "Hola de nuevo.")]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "hola",
+      previousResponseId: "resp_stale",
+      db: freshTestDb(),
+    });
+
+    expect(calls).toBe(2);
+    expect(bodies[1].previous_response_id).toBeUndefined();
+    expect(result.text).toBe("Hola de nuevo.");
+    expect(result.responseId).toBe("resp_2");
+  });
+
+  it("logs each failed attempt with its chain state for the next audit", async () => {
+    const errors: string[] = [];
+    const spy = vi
+      .spyOn(console, "error")
+      .mockImplementation((line: unknown) => {
+        errors.push(String(line));
+      });
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response("nope", { status: 500 })),
+      );
+      await expect(
+        runAgentTurn({
+          key: "test-key",
+          transcript: "hola",
+          previousResponseId: "resp_0",
+          db: freshTestDb(),
+        }),
+      ).rejects.toThrow(/model error: 500/);
+      expect(
+        errors.some((line) =>
+          line.includes("[agent] attempt 0 (chained) failed"),
+        ),
+      ).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("injects the known slots into the next turn instead of re-asking", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (bodies.length === 1) {
+          return sseResponse([
+            toolCall("resp_mem", "create_client", { name: "Laura" }, "call_m"),
+          ]);
+        }
+        return sseResponse([spoken("resp_mem2", "Lista, Laura registrada.")]);
+      }),
+    );
+
+    const created = await runAgentTurn({
+      key: "test-key",
+      transcript: "vale registra a Laura",
+      slotKey: "mem-int",
+      db: freshTestDb(),
+    });
+    expect(created.toolUsed).toBe("create_client");
+
+    await runAgentTurn({
+      key: "test-key",
+      transcript: "vale abre sesión para esmaltado",
+      slotKey: "mem-int",
+      db: freshTestDb(),
+    });
+    expect(bodies).toHaveLength(3);
+    expect(String(bodies[2].instructions)).toContain(
+      "En curso: clienta Laura. No repreguntes lo dado.",
+    );
+    clearSlots("mem-int");
+  });
+
+  it("stores the combined proposal when a doubt turn names it all", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (bodies.length === 1) {
+          return sseResponse([
+            toolCall(
+              "resp_doubt",
+              "open_session",
+              { client_name: "Vera", service_name: "Gel removal" },
+              "call_d",
+            ),
+          ]);
+        }
+        return sseResponse([spoken("resp_d2", "¿La registro y abro?")]);
+      }),
+    );
+
+    await runAgentTurn({
+      key: "test-key",
+      transcript: "vale abre sesión con Vera para retiro",
+      slotKey: "pend-agent",
+      db: freshTestDb(),
+    });
+
+    expect(takePendingAction("pend-agent")).toEqual([
+      { tool: "create_client", args: { name: "Vera" } },
+      {
+        tool: "open_session",
+        args: {
+          client_name: "Vera",
+          service_name: "Gel removal",
+        },
+      },
+    ]);
+    clearPendingAction("pend-agent");
   });
 
   it("marks the chain to continue after questions and doubt, not after writes", async () => {
@@ -407,11 +592,22 @@ describe("closed reply language", () => {
     expect(buildInstructions("es")).toBe(SPOKEN_SYSTEM_PROMPT);
   });
 
+  it("greets with variety and states capabilities, never rigid templates", () => {
+    expect(buildInstructions("es")).toMatch(/Saluda variado/);
+    expect(buildInstructions("es")).toContain("sin preguntar datos");
+    expect(buildInstructions("es")).not.toContain("gets exactly Hola");
+    expect(buildInstructions("en")).toMatch(/variety/);
+    expect(buildInstructions("en")).not.toContain("gets exactly Hi");
+    expect(buildInstructions("en")).toMatch(/No prices or appointments yet/);
+    expect(buildInstructions("es")).toMatch(/fuera de uñas/);
+    expect(buildInstructions("en")).toMatch(/outside nails/);
+  });
+
   it("answers only in English under the EN setting, never in Spanish", () => {
     const instructions = buildInstructions("en");
     expect(instructions).toContain("only in English");
     expect(instructions).toContain("Should I save it?");
-    expect(instructions).toContain("Which client is it for");
+    expect(instructions).toContain("Which service should I do for Ana?");
     expect(instructions).toContain("Private note saved.");
     expect(instructions).toContain("undo it");
     expect(instructions).not.toContain("¿lo guardo?");

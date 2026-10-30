@@ -40,4 +40,15 @@ describe("response chain", () => {
     chainSucceeded("", true);
     expect(nextPreviousResponseId()).toBeUndefined();
   });
+
+  it("keeps one lane per client key", () => {
+    chainSucceeded("resp_a", true, "client-a");
+    chainSucceeded("resp_b", true, "client-b");
+    expect(nextPreviousResponseId("client-a")).toBe("resp_a");
+    expect(nextPreviousResponseId("client-b")).toBe("resp_b");
+    chainFailed("client-a");
+    expect(nextPreviousResponseId("client-a")).toBeUndefined();
+    expect(nextPreviousResponseId("client-b")).toBe("resp_b");
+    chainFailed("client-b");
+  });
 });

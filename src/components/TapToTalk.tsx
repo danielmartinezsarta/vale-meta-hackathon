@@ -82,9 +82,11 @@ export function TapToTalk() {
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  const [noticeCode, setNoticeCode] = useState<string | null>(null);
+  // Codes drive routing (E-VAD banner vs alert) but never render: the user
+  // only reads the friendly message, never a raw code.
+  const [, setNoticeCode] = useState<string | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
-  const [alertCode, setAlertCode] = useState<string | null>(null);
+  const [, setAlertCode] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
   const [board, setBoard] = useState<Board | null>(null);
   const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
@@ -98,6 +100,25 @@ export function TapToTalk() {
   });
   // Turn handlers close over the session; the ref keeps the live language.
   const languageRef = useRef<ValeLanguage>(language);
+  // Stable per-browser id so slots, pending actions and chain lanes survive
+  // retaps even behind one shared IP; generated once, then reused.
+  const [clientId] = useState<string>(() => {
+    if (typeof window === "undefined") return "unknown";
+    try {
+      const stored = window.localStorage.getItem("vale-client");
+      if (stored !== null && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(stored)) {
+        return stored;
+      }
+      const fresh =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `c${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
+      window.localStorage.setItem("vale-client", fresh);
+      return fresh;
+    } catch {
+      return "unknown";
+    }
+  });
   const lastLevelRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);
@@ -465,7 +486,8 @@ export function TapToTalk() {
             return;
           }
           transport.opened = true;
-          // The upgrade carries no query string, so the selector rides as a frame.
+          // The upgrade carries no query string, so the selector and the
+          // stable browser id ride as frames.
           try {
             socket.send(
               JSON.stringify({
@@ -473,6 +495,7 @@ export function TapToTalk() {
                 language: languageRef.current,
               }),
             );
+            socket.send(JSON.stringify({ type: "client", client: clientId }));
           } catch {
             /* the close handler decides: reconnect or fail */
           }
@@ -625,7 +648,9 @@ export function TapToTalk() {
         controllersRef.current.add(controller);
         setNotice(null);
         setNoticeCode(null);
-        void fetch(`/api/voice?language=${languageRef.current}`, {
+        void fetch(
+          `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+          {
           method: "POST",
           headers: { "content-type": "audio/l16" },
           body,
@@ -704,6 +729,12 @@ export function TapToTalk() {
           });
       };
 
+      // End-of-turn pause, tunable without redeploying the default: slow
+      // phrases keep pauses under this; longer silence splits the turn.
+      const endSilenceMs = Math.max(
+        1,
+        Number(process.env.NEXT_PUBLIC_VAD_END_SILENCE_MS) || 800,
+      );
       const capture = startCapture(
         stream,
         {
@@ -769,15 +800,16 @@ export function TapToTalk() {
             setLevel(value);
           },
         },
-        // Threshold 200 with 1 s pre-roll; 800 ms end silence posts ~1.2 s sooner.
-        { threshold: 200, endSilenceMs: 800 },
+        // Threshold 200 with 1 s pre-roll; the end silence comes from
+        // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
+        { threshold: 200, endSilenceMs },
       );
 
       captureRef.current = capture;
       openTurn();
       await ended;
     },
-    [patchTurn, removeTurn, pruneIfEmpty, endSessionWithAlert],
+    [patchTurn, removeTurn, pruneIfEmpty, endSessionWithAlert, clientId],
   );
 
   const handleTap = useCallback(async () => {
@@ -865,6 +897,11 @@ export function TapToTalk() {
           type="button"
           onClick={() => selectLanguage("es")}
           aria-pressed={language === "es"}
+          style={
+            language === "es"
+              ? { fontWeight: "bold", textDecoration: "underline" }
+              : undefined
+          }
         >
           ES
         </button>{" "}
@@ -872,6 +909,11 @@ export function TapToTalk() {
           type="button"
           onClick={() => selectLanguage("en")}
           aria-pressed={language === "en"}
+          style={
+            language === "en"
+              ? { fontWeight: "bold", textDecoration: "underline" }
+              : undefined
+          }
         >
           EN
         </button>
@@ -922,19 +964,9 @@ export function TapToTalk() {
 
       <ValeBoard board={board} />
 
-      {notice && (
-        <p role="status">
-          {notice}
-          {noticeCode ? ` (${noticeCode})` : ""}
-        </p>
-      )}
+      {notice && <p role="status">{notice}</p>}
 
-      {alert && (
-        <div role="alert">
-          {alert}
-          {alertCode ? ` (${alertCode})` : ""}
-        </div>
-      )}
+      {alert && <div role="alert">{alert}</div>}
 
       {status === "blocked" && (
         <div role="alert">

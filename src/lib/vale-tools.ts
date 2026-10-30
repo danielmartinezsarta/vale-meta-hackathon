@@ -61,8 +61,16 @@ function ambiguousMessage(options: Named[]): string {
   return `¿Cuál: ${options.map((item) => item.name).join(" o ")}?`;
 }
 
-function allClients(db: ValeDb): Named[] {
+export function allClients(db: ValeDb): Named[] {
   return db.prepare("SELECT id, name FROM clients ORDER BY id").all() as unknown as Named[];
+}
+
+export function allServices(db: ValeDb): Named[] {
+  return db.prepare("SELECT id, name FROM services ORDER BY id").all() as unknown as Named[];
+}
+
+export function allSupplies(db: ValeDb): Named[] {
+  return db.prepare("SELECT id, name FROM supplies ORDER BY id").all() as unknown as Named[];
 }
 
 interface Aliased {

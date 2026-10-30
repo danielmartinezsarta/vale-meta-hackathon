@@ -8,7 +8,20 @@ import {
   chainSucceeded,
   nextPreviousResponseId,
 } from "@/lib/response-chain";
-import { checkWake, requestClientIp } from "@/lib/wake";
+import { getSlots } from "@/lib/slot-memory";
+import {
+  isConfirmYes,
+  runPendingActions,
+  takePendingAction,
+} from "@/lib/pending-action";
+import {
+  checkWake,
+  clearQuestion,
+  collapseEcho,
+  isGreetingOnly,
+  markQuestionAsked,
+  requestClientId,
+} from "@/lib/wake";
 import { openAsrConnection } from "@/lib/asr";
 import { estimateCost, formatTurnLog } from "@/lib/turn-log";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
@@ -76,6 +89,8 @@ export async function POST(request: Request): Promise<Response> {
   const language = parseLanguage(
     new URL(request.url).searchParams.get("language") ?? DEFAULT_LANGUAGE,
   );
+  // Slots and pending proposals live per client, like the wake window.
+  const clientKey = requestClientId(request);
   if (!key) {
     // Server-side log only; the key itself is never logged.
     console.error("[voice] META_API_KEY is not configured; rejecting turn.");
@@ -97,7 +112,7 @@ export async function POST(request: Request): Promise<Response> {
       if (typeof body.transcript !== "string" || body.transcript.trim() === "") {
         return Response.json({ error: "Empty transcript." }, { status: 400 });
       }
-      cannedTranscript = body.transcript;
+      cannedTranscript = collapseEcho(body.transcript);
     } catch {
       return Response.json({ error: "Bad request." }, { status: 400 });
     }
@@ -134,6 +149,7 @@ export async function POST(request: Request): Promise<Response> {
         closeStream();
       };
       let asr: Awaited<ReturnType<typeof openAsrConnection>> | null = null;
+      let asrStartMs = 0;
       let settled = false;
       let gotFinal = false;
       let finalText = "";
@@ -150,7 +166,7 @@ export async function POST(request: Request): Promise<Response> {
         asr?.close();
         if (!settled) {
           settled = true;
-          chainFailed();
+          chainFailed(clientKey);
           logTurn({
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: finalText || lastInterim,
@@ -162,6 +178,11 @@ export async function POST(request: Request): Promise<Response> {
             modelSkipped: !agentRan,
             error: "timeout",
             ignored: false,
+            asrMs:
+              asrStartMs > 0 && finalAtMs > 0 ? finalAtMs - asrStartMs : null,
+            chain: "none",
+            key: clientKey,
+            slots: null,
           });
         }
         finishError(turnErrorText("timeout", language), "E-NET");
@@ -169,7 +190,7 @@ export async function POST(request: Request): Promise<Response> {
 
       const abort = () => {
         aborted = true;
-        chainFailed();
+        chainFailed(clientKey);
         clearTimeout(timeout);
         try {
           asr?.close();
@@ -192,6 +213,10 @@ export async function POST(request: Request): Promise<Response> {
         modelSkipped: boolean;
         error: string | null;
         ignored: boolean;
+        asrMs?: number | null;
+        chain?: "hit" | "miss" | "none";
+        key?: string;
+        slots?: { client?: string; service?: string } | null;
       }) => {
         console.log(
           formatTurnLog({
@@ -211,17 +236,70 @@ export async function POST(request: Request): Promise<Response> {
       ): Promise<void> => {
         agentRan = true;
         const ts = new Date(speechEndAt || Date.now()).toISOString();
+        const chainedId = nextPreviousResponseId(clientKey);
+        const chainState: "hit" | "miss" =
+          chainedId === undefined ? "miss" : "hit";
+        const slotSnapshot = (): {
+          client?: string;
+          service?: string;
+        } | null => {
+          const slots = getSlots(clientKey);
+          return slots.client !== undefined || slots.service !== undefined
+            ? slots
+            : null;
+        };
+        const measuredAsrMs =
+          audioSeconds > 0 && speechEndAt > 0 && asrStartMs > 0
+            ? speechEndAt - asrStartMs
+            : null;
         try {
+          // A yes to Vale's pending proposal runs the stored writes at once:
+          // no model, no questions, no chain needed.
+          if (isConfirmYes(transcript)) {
+            const actions = takePendingAction(clientKey);
+            if (actions) {
+              const executed = runPendingActions(getDb(), clientKey, actions);
+              chainFailed(clientKey);
+              clearQuestion(clientKey);
+              send("reply", { text: executed.text });
+              send("board", { board: getBoard(getDb()) });
+              logTurn({
+                ts,
+                transcript,
+                ttftMs: Date.now() - speechEndAt,
+                inputTokens: 0,
+                outputTokens: 0,
+                audioSeconds,
+                tool: executed.toolUsed,
+                modelSkipped: true,
+                error: null,
+                ignored: false,
+                asrMs: measuredAsrMs,
+                chain: "none",
+                key: clientKey,
+                slots: slotSnapshot(),
+              });
+              return;
+            }
+          }
           const result = await runAgentTurn({
             key,
             transcript,
-            previousResponseId: nextPreviousResponseId(),
+            previousResponseId: chainedId,
             url: process.env.META_RESPONSES_URL || undefined,
             startedAt: speechEndAt,
             onDelta: (text) => send("reply-delta", { text }),
             language,
+            slotKey: clientKey,
           });
-          if (!aborted) chainSucceeded(result.responseId, result.chainNext);
+          if (!aborted) chainSucceeded(result.responseId, result.chainNext, clientKey);
+          // The reply decides the next nameless turn: a question keeps the
+          // window open for its answer, anything else retires it.
+          if (result.askedQuestion && !isGreetingOnly(transcript)) {
+            markQuestionAsked(clientKey, speechEndAt);
+          } else {
+            clearQuestion(clientKey);
+          }
           send("reply", { text: result.text });
           send("board", { board: getBoard(getDb()) });
           logTurn({
@@ -235,10 +313,14 @@ export async function POST(request: Request): Promise<Response> {
             modelSkipped: false,
             error: null,
             ignored: false,
+            asrMs: measuredAsrMs,
+            chain: chainState,
+            key: clientKey,
+            slots: slotSnapshot(),
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : "failed";
-          chainFailed();
+          chainFailed(clientKey);
           logTurn({
             ts,
             transcript,
@@ -250,6 +332,10 @@ export async function POST(request: Request): Promise<Response> {
             modelSkipped: false,
             error: message,
             ignored: false,
+            asrMs: measuredAsrMs,
+            chain: chainState,
+            key: clientKey,
+            slots: slotSnapshot(),
           });
           send("error", {
             message: turnErrorText("model", language),
@@ -263,7 +349,8 @@ export async function POST(request: Request): Promise<Response> {
           send("final", { transcript: cannedTranscript });
           // Name gate first: background chatter never reaches the model, the
           // board or the response chain.
-          if (!checkWake(cannedTranscript, requestClientIp(request)).execute) {
+          if (!checkWake(cannedTranscript, clientKey).execute) {
+            const cannedSlots = getSlots(clientKey);
             logTurn({
               ts: new Date().toISOString(),
               transcript: cannedTranscript,
@@ -275,6 +362,14 @@ export async function POST(request: Request): Promise<Response> {
               modelSkipped: true,
               error: null,
               ignored: true,
+              asrMs: null,
+              chain: "none",
+              key: clientKey,
+              slots:
+                cannedSlots.client !== undefined ||
+                cannedSlots.service !== undefined
+                  ? cannedSlots
+                  : null,
             });
             send("ignored", {});
             send("done", {});
@@ -297,6 +392,7 @@ export async function POST(request: Request): Promise<Response> {
             if (done) break;
             if (!opened) {
               opened = true;
+              asrStartMs = Date.now();
               try {
                 asr = await openAsrConnection({
                   key,
@@ -308,10 +404,10 @@ export async function POST(request: Request): Promise<Response> {
                     } else if (event.kind === "final") {
                       gotFinal = true;
                       finalAtMs = Date.now();
-                      finalText = event.transcript;
+                      finalText = collapseEcho(event.transcript);
                       audioSeconds = (event.audioProcessedMs ?? 0) / 1000;
                       send("final", {
-                        transcript: event.transcript,
+                        transcript: finalText,
                         audioProcessedMs: event.audioProcessedMs ?? null,
                       });
                     }
@@ -364,9 +460,14 @@ export async function POST(request: Request): Promise<Response> {
             modelSkipped: true,
             error: null,
             ignored: false,
+            asrMs: asrStartMs > 0 ? finalAtMs - asrStartMs : null,
+            chain: "none",
+            key: clientKey,
+            slots: null,
           });
-        } else if (!checkWake(finalText, requestClientIp(request)).execute) {
+        } else if (!checkWake(finalText, clientKey).execute) {
           // Background chatter without the name: silent discard.
+          const ignoredSlots = getSlots(clientKey);
           logTurn({
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: finalText,
@@ -378,6 +479,14 @@ export async function POST(request: Request): Promise<Response> {
             modelSkipped: true,
             error: null,
             ignored: true,
+            asrMs: asrStartMs > 0 ? finalAtMs - asrStartMs : null,
+            chain: "none",
+            key: clientKey,
+            slots:
+              ignoredSlots.client !== undefined ||
+              ignoredSlots.service !== undefined
+                ? ignoredSlots
+                : null,
           });
           send("ignored", {});
         } else {
