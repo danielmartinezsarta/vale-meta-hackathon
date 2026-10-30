@@ -41,7 +41,7 @@ function silentFrame(): Int16Array {
 
 function sseVadNotice() {
   const raw =
-    `event: notice\ndata: {"message":"I didn't hear anything. Just speak and I'll listen.","code":"E-VAD"}\n\n` +
+    `event: notice\ndata: {"message":"No te escuché. Habla y te escucho.","code":"E-VAD"}\n\n` +
     "event: done\ndata: {}\n\n";
   const bytes = new TextEncoder().encode(raw);
   let served = false;
@@ -59,8 +59,8 @@ function sseVadNotice() {
   };
 }
 
-const LISTENING_HINT = "Your microphone is on. Go ahead, I'm listening.";
-const VAD_BANNER_TEXT = "I didn't hear anything.";
+const LISTENING_HINT = "Tu micrófono está encendido. Adelante, te escucho.";
+const VAD_BANNER_TEXT = "No te escuché.";
 
 function vadBanner(): HTMLElement | null {
   const status = screen.queryByRole("status");
@@ -128,7 +128,8 @@ describe("silence-aware E-VAD banner (fix 3)", () => {
     await waitFor(() => {
       expect(vadBanner()).not.toBeNull();
     });
-    expect(vadBanner()?.textContent).toContain("(E-VAD)");
+    expect(vadBanner()?.textContent).toContain("No te escuché");
+    expect(vadBanner()?.textContent).not.toContain("E-VAD");
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => {

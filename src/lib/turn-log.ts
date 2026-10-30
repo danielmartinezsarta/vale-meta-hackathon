@@ -19,6 +19,17 @@ export interface TurnLogFields {
   tool: string | null;
   modelSkipped: boolean;
   error: string | null;
+  /** Discarded by the wake gate: no model call, no board. */
+  ignored: boolean;
+  /**
+   * Per-turn diagnostics (all optional, absent on paths that never
+   * reach the agent): ASR time, whether a chained id rode along,
+   * the client key, and the slot snapshot at log time.
+   */
+  asrMs?: number | null;
+  chain?: "hit" | "miss" | "none";
+  key?: string;
+  slots?: { client?: string; service?: string } | null;
 }
 
 export function estimateCost(

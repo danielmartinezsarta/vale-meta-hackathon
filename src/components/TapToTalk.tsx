@@ -3,8 +3,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { startCapture } from "@/lib/capture";
 import { LevelMeter } from "@/components/LevelMeter";
+import { ValeBoard } from "@/components/ValeBoard";
+import type { Board } from "@/lib/board";
 import { parseSseStream } from "@/lib/sse";
-import { speak, stopSpeaking } from "@/lib/speak";
+import {
+  isSpeaking,
+  setVoiceEngine,
+  speak,
+  stopSpeaking,
+  voiceEngine,
+  type VoiceEngine,
+} from "@/lib/speak";
+import {
+  DEFAULT_LANGUAGE,
+  parseLanguage,
+  turnErrorText,
+  type ValeLanguage,
+} from "@/lib/vale-language";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
@@ -13,6 +28,8 @@ interface Turn {
   interim: string;
   final: string | null;
   reply: string | null;
+  /** Discarded by the wake gate: shown dimmed, never as dialogue. */
+  ignored?: boolean;
 }
 
 const NO_SPEECH_TIMEOUT_MS = 8000;
@@ -38,6 +55,23 @@ function hasVisibleContent(turn: {
 // Mirrors the VAD threshold in capture.ts.
 const VOICE_ENERGY_THRESHOLD = 200;
 
+function SpeakerIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <path d="M2 6v4h3l4 3V3L5 6H2z" fill="currentColor" stroke="none" />
+      <path d="M11 5.5a3.5 3.5 0 010 5" />
+    </svg>
+  );
+}
+
 function countVoiced(frame: Int16Array): boolean {
   let energy = 0;
   for (let i = 0; i < frame.length; i++) energy += Math.abs(frame[i]);
@@ -48,10 +82,43 @@ export function TapToTalk() {
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  const [noticeCode, setNoticeCode] = useState<string | null>(null);
+  // Codes drive routing (E-VAD banner vs alert) but never render: the user
+  // only reads the friendly message, never a raw code.
+  const [, setNoticeCode] = useState<string | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
-  const [alertCode, setAlertCode] = useState<string | null>(null);
+  const [, setAlertCode] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
+  const [board, setBoard] = useState<Board | null>(null);
+  const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
+  const [language, setLanguage] = useState<ValeLanguage>(() => {
+    if (typeof window === "undefined") return DEFAULT_LANGUAGE;
+    try {
+      return parseLanguage(window.localStorage.getItem("vale-language"));
+    } catch {
+      return DEFAULT_LANGUAGE;
+    }
+  });
+  // Turn handlers close over the session; the ref keeps the live language.
+  const languageRef = useRef<ValeLanguage>(language);
+  // Stable per-browser id so slots, pending actions and chain lanes survive
+  // retaps even behind one shared IP; generated once, then reused.
+  const [clientId] = useState<string>(() => {
+    if (typeof window === "undefined") return "unknown";
+    try {
+      const stored = window.localStorage.getItem("vale-client");
+      if (stored !== null && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(stored)) {
+        return stored;
+      }
+      const fresh =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `c${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
+      window.localStorage.setItem("vale-client", fresh);
+      return fresh;
+    } catch {
+      return "unknown";
+    }
+  });
   const lastLevelRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);
@@ -70,7 +137,7 @@ export function TapToTalk() {
 
   const stopSession = useCallback(() => {
     sessionRef.current = false;
-    stopSpeaking();
+    stopSpeaking("tap");
     window.clearTimeout(quietTimerRef.current);
     controllersRef.current.forEach((controller) => {
       try {
@@ -204,7 +271,7 @@ export function TapToTalk() {
         silentStreakRef.current += 1;
         if (silentStreakRef.current >= 2) {
           showNotice(
-            "I didn't hear anything. Just speak and I'll listen.",
+            turnErrorText("vad-continue", languageRef.current),
             "E-VAD",
           );
         }
@@ -249,6 +316,24 @@ export function TapToTalk() {
       const failTurn = (id: number, message: string, code: string | null = null) => {
         if (!finalReceivedRef.current.has(id)) removeTurn(id);
         endSessionWithAlert(message, code);
+      };
+
+      // The mic heard our own reply, not the user: close its socket and erase
+      // the turn before any audio leaves the device.
+      const dropEchoTurn = (id: number) => {
+        const transport = transports.get(id);
+        const socket = transport?.socket ?? null;
+        if (transport) transport.failed = true;
+        if (socket) {
+          socketsRef.current.delete(socket);
+          try {
+            socket.close();
+          } catch {
+            /* already closed */
+          }
+        }
+        transports.delete(id);
+        removeTurn(id);
       };
 
       const sendFrameBytes = (socket: WebSocket, frame: Int16Array) => {
@@ -307,8 +392,15 @@ export function TapToTalk() {
             if (typeof message.text !== "string") return;
             repliesRef.current.set(id, message.text);
             patchTurn(id, { reply: message.text });
-            speak(message.text);
+            speak(message.text, languageRef.current);
             break;
+          case "board": {
+            const board = (message as { board?: unknown }).board;
+            if (board && typeof board === "object") {
+              setBoard(board as Board);
+            }
+            break;
+          }
           case "notice":
             if (typeof message.message !== "string") return;
             if (typeof message.code === "string" && message.code === "E-VAD") {
@@ -340,6 +432,9 @@ export function TapToTalk() {
             );
             break;
           }
+          case "ignored":
+            patchTurn(id, { ignored: true });
+            break;
           case "done":
             transport.settled = true;
             {
@@ -391,6 +486,19 @@ export function TapToTalk() {
             return;
           }
           transport.opened = true;
+          // The upgrade carries no query string, so the selector and the
+          // stable browser id ride as frames.
+          try {
+            socket.send(
+              JSON.stringify({
+                type: "language",
+                language: languageRef.current,
+              }),
+            );
+            socket.send(JSON.stringify({ type: "client", client: clientId }));
+          } catch {
+            /* the close handler decides: reconnect or fail */
+          }
           for (const frame of transport.frames) sendFrameBytes(socket, frame);
           // The turn already ended: close it on the fresh socket.
           if (transport.ended || transport.endQueued) {
@@ -420,7 +528,7 @@ export function TapToTalk() {
           }
           if (finalReceivedRef.current.has(id)) {
             // The transcript bubble stays; only the reply is lost.
-            failTurn(id, "Connection lost. Tap to try again.", "E-NET");
+            failTurn(id, turnErrorText("lost", languageRef.current), "E-NET");
             return;
           }
           if (!transport.opened) {
@@ -466,7 +574,7 @@ export function TapToTalk() {
             postTurn(id, retryFrames.length > 0 ? retryFrames : pending.splice(0));
             return;
           }
-          failTurn(id, "Connection lost. Tap to try again.", "E-NET");
+          failTurn(id, turnErrorText("lost", languageRef.current), "E-NET");
         };
       };
 
@@ -540,7 +648,9 @@ export function TapToTalk() {
         controllersRef.current.add(controller);
         setNotice(null);
         setNoticeCode(null);
-        void fetch("/api/voice", {
+        void fetch(
+          `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+          {
           method: "POST",
           headers: { "content-type": "audio/l16" },
           body,
@@ -548,7 +658,7 @@ export function TapToTalk() {
         })
           .then(async (response) => {
             if (!response.ok) {
-              let message = "Connection lost. Tap to try again.";
+              let message = turnErrorText("lost", languageRef.current);
               let code: string | null = "E-NET";
               try {
                 const problem = (await response.json()) as {
@@ -566,7 +676,7 @@ export function TapToTalk() {
             }
             if (!response.body) {
               controllersRef.current.delete(controller);
-              failTurn(id, "Connection lost. Tap to try again.", "E-NET");
+              failTurn(id, turnErrorText("lost", languageRef.current), "E-NET");
               return;
             }
             await parseSseStream(response.body, {
@@ -590,8 +700,10 @@ export function TapToTalk() {
               onReply: (text) => {
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
-                speak(text);
+                speak(text, languageRef.current);
               },
+              onBoard: (next) => setBoard(next),
+              onIgnored: () => patchTurn(id, { ignored: true }),
               onNotice: (message, code) => {
                 // E-VAD notices pass the silence gate; anything else shows directly.
                 if (code === "E-VAD") handleVadCandidate(id);
@@ -613,10 +725,16 @@ export function TapToTalk() {
               settledTurnsRef.current.add(id);
               return;
             }
-            failTurn(id, "Connection lost. Tap to try again.", "E-NET");
+            failTurn(id, turnErrorText("lost", languageRef.current), "E-NET");
           });
       };
 
+      // End-of-turn pause, tunable without redeploying the default: slow
+      // phrases keep pauses under this; longer silence splits the turn.
+      const endSilenceMs = Math.max(
+        1,
+        Number(process.env.NEXT_PUBLIC_VAD_END_SILENCE_MS) || 800,
+      );
       const capture = startCapture(
         stream,
         {
@@ -640,19 +758,24 @@ export function TapToTalk() {
           },
           onSpeechStart: () => {
             if (!sessionRef.current) return;
-            stopSpeaking();
+            // Our own reply still audible: this is echo, not the user.
+            // Never cut it and never dismiss its text.
+            const echo = isSpeaking();
+            if (!echo) stopSpeaking("speech-start");
             window.clearTimeout(quietTimerRef.current);
-            // New speech dismisses only the still-open turn's reply.
-            const dismissed: number[] = [];
-            setTurns((prev) =>
-              prev.map((turn) =>
-                turn.reply && !settledTurnsRef.current.has(turn.id)
-                  ? (dismissed.push(turn.id), { ...turn, reply: null })
-                  : turn,
-              ),
-            );
-            for (const turnId of dismissed) {
-              repliesRef.current.delete(turnId);
+            if (!echo) {
+              // New speech dismisses only the still-open turn's reply.
+              const dismissed: number[] = [];
+              setTurns((prev) =>
+                prev.map((turn) =>
+                  turn.reply && !settledTurnsRef.current.has(turn.id)
+                    ? (dismissed.push(turn.id), { ...turn, reply: null })
+                    : turn,
+                ),
+              );
+              for (const turnId of dismissed) {
+                repliesRef.current.delete(turnId);
+              }
             }
             // A new utterance after a posted turn opens the next turn on the same capture.
             if (posted) openTurn(false);
@@ -662,6 +785,11 @@ export function TapToTalk() {
           onSpeechEnd: () => {
             if (!sessionRef.current || posted) return;
             posted = true;
+            // Reply still audible at speech end: the mic heard us, drop it.
+            if (isSpeaking()) {
+              dropEchoTurn(currentId);
+              return;
+            }
             endTurnTransport(currentId);
           },
           // Same samples as the VAD, throttled to ~10 Hz.
@@ -672,15 +800,16 @@ export function TapToTalk() {
             setLevel(value);
           },
         },
-        // Threshold 200 with 1 s pre-roll; 800 ms end silence posts ~1.2 s sooner.
-        { threshold: 200, endSilenceMs: 800 },
+        // Threshold 200 with 1 s pre-roll; the end silence comes from
+        // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
+        { threshold: 200, endSilenceMs },
       );
 
       captureRef.current = capture;
       openTurn();
       await ended;
     },
-    [patchTurn, removeTurn, pruneIfEmpty, endSessionWithAlert],
+    [patchTurn, removeTurn, pruneIfEmpty, endSessionWithAlert, clientId],
   );
 
   const handleTap = useCallback(async () => {
@@ -692,6 +821,7 @@ export function TapToTalk() {
       setNotice(null);
       setNoticeCode(null);
       setLevel(0);
+      setBoard(null);
       return;
     }
     setAlert(null);
@@ -701,7 +831,12 @@ export function TapToTalk() {
     setLevel(0);
     setStatus("requesting");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
       streamRef.current = stream;
       setStatus("live");
       void runSession(stream);
@@ -709,6 +844,23 @@ export function TapToTalk() {
       setStatus(isPermissionDenied(error) ? "blocked" : "error");
     }
   }, [status, stopSession, runSession]);
+
+  const toggleEngine = useCallback(() => {
+    const next: VoiceEngine = engine === "seamless" ? "browser" : "seamless";
+    setVoiceEngine(next);
+    stopSpeaking("engine-switch");
+    setEngine(next);
+  }, [engine]);
+
+  const selectLanguage = useCallback((next: ValeLanguage) => {
+    languageRef.current = next;
+    setLanguage(next);
+    try {
+      window.localStorage.setItem("vale-language", next);
+    } catch {
+      /* persistence is best-effort; the turn still uses the new language */
+    }
+  }, []);
 
   return (
     <section>
@@ -722,44 +874,99 @@ export function TapToTalk() {
           : status === "requesting"
             ? "Waiting for permission…"
             : "Tap to talk"}
-      </button>
+      </button>{" "}
+      <button
+        type="button"
+        onClick={toggleEngine}
+        aria-pressed={engine === "seamless"}
+        aria-label={
+          engine === "seamless"
+            ? "Use browser voice"
+            : "Use Seamless voice"
+        }
+        title={
+          engine === "seamless"
+            ? "Use browser voice"
+            : "Use Seamless voice"
+        }
+      >
+        <SpeakerIcon /> Voice: {engine === "seamless" ? "Seamless" : "browser"}
+      </button>{" "}
+      <span role="group" aria-label="Language">
+        <button
+          type="button"
+          onClick={() => selectLanguage("es")}
+          aria-pressed={language === "es"}
+          style={
+            language === "es"
+              ? { fontWeight: "bold", textDecoration: "underline" }
+              : undefined
+          }
+        >
+          ES
+        </button>{" "}
+        <button
+          type="button"
+          onClick={() => selectLanguage("en")}
+          aria-pressed={language === "en"}
+          style={
+            language === "en"
+              ? { fontWeight: "bold", textDecoration: "underline" }
+              : undefined
+          }
+        >
+          EN
+        </button>
+      </span>
 
       {status === "live" && <LevelMeter level={level} />}
 
       {status === "live" &&
         turns.every((turn) => !hasVisibleContent(turn)) &&
-        !notice && <p>Your microphone is on. Go ahead, I&apos;m listening.</p>}
+        !notice && (
+          <p>
+            {language === "en"
+              ? "Your microphone is on. Go ahead, I'm listening."
+              : "Tu micrófono está encendido. Adelante, te escucho."}
+          </p>
+        )}
 
       <ol aria-label="Conversation turns">
         {turns.filter(hasVisibleContent).map((turn) => (
-          <li key={turn.id}>
-            {(turn.final ?? turn.interim) !== "" && (
+          <li
+            key={turn.id}
+            style={turn.ignored ? { opacity: 0.6 } : undefined}
+          >
+            {turn.ignored ? (
               <p>
-                <strong>You:</strong> {turn.final ?? turn.interim}
+                {turn.final ?? turn.interim}{" "}
+                <small>
+                  {language === "en" ? "ignored (no name)" : "ignorado (sin nombre)"}
+                </small>
               </p>
-            )}
-            {turn.reply && (
-              <p>
-                <strong>Vale:</strong> {turn.reply}
-              </p>
+            ) : (
+              <>
+                {(turn.final ?? turn.interim) !== "" && (
+                  <p>
+                    <strong>You:</strong> {turn.final ?? turn.interim}
+                  </p>
+                )}
+                {turn.reply && (
+                  <p>
+                    <strong>Vale:</strong> {turn.reply}
+                  </p>
+                )}
+              </>
             )}
           </li>
         ))}
       </ol>
 
-      {notice && (
-        <p role="status">
-          {notice}
-          {noticeCode ? ` (${noticeCode})` : ""}
-        </p>
-      )}
+      <ValeBoard board={board} />
 
-      {alert && (
-        <div role="alert">
-          {alert}
-          {alertCode ? ` (${alertCode})` : ""}
-        </div>
-      )}
+      {notice && <p role="status">{notice}</p>}
+
+      {alert && <div role="alert">{alert}</div>}
 
       {status === "blocked" && (
         <div role="alert">

@@ -32,9 +32,11 @@ describe("microphone permission", () => {
     await waitFor(() => {
       expect(getUserMedia).toHaveBeenCalledTimes(1);
     });
-    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: { echoCancellation: true, noiseSuppression: true },
+    });
     expect(
-      await screen.findByText(/microphone is on/i),
+      await screen.findByText(/micrófono está encendido/i),
     ).toBeDefined();
     expect(screen.queryByRole("alert")).toBeNull();
   });

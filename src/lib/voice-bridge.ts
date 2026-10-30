@@ -1,7 +1,35 @@
 import WebSocket from "ws";
 import { runAgentTurn } from "./agent";
+import { getDb } from "./db";
+import { getBoard } from "./board";
+import {
+  chainFailed,
+  chainSucceeded,
+  nextPreviousResponseId,
+} from "./response-chain";
+import {
+  checkWake,
+  clearQuestion,
+  collapseEcho,
+  isGreetingOnly,
+  markQuestionAsked,
+  sanitizeClientId,
+} from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { estimateCost, formatTurnLog } from "./turn-log";
+import {
+  isConfirmYes,
+  runPendingActions,
+  takePendingAction,
+} from "./pending-action";
+import { getSlots } from "./slot-memory";
+import {
+  DEFAULT_LANGUAGE,
+  parseLanguage,
+  turnErrorText,
+  type ValeLanguage,
+  type VoiceErrorKind,
+} from "./vale-language";
 
 export const BRIDGE_TURN_TIMEOUT_MS = 120000;
 /** Cap for audio buffered before the Meta handshake ack (~40 s). */
@@ -17,6 +45,11 @@ export interface BridgeAgentResult {
   usage: BridgeAgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
+  responseId: string;
+  /** False after a completed write: the next turn starts the chain fresh. */
+  chainNext: boolean;
+  /** Vale asked something: the answer may arrive without the name. */
+  askedQuestion: boolean;
 }
 
 export interface VoiceBridgeOptions {
@@ -30,15 +63,24 @@ export interface VoiceBridgeOptions {
     transcript: string;
     startedAt: number;
     onDelta: (text: string) => void;
+    previousResponseId?: string;
+    language?: ValeLanguage;
+    slotKey?: string;
   }) => Promise<BridgeAgentResult>;
   now?: () => number;
   turnTimeoutMs?: number;
+  /** Key for the wake attention window; defaults to the socket peer. */
+  clientId?: string;
 }
 
 // Browser text frames may arrive as Buffer: try JSON first; never forward a control frame as audio.
 export function tryParseControl(
   data: unknown,
-): { type: "endStream" } | null {
+):
+  | { type: "endStream" }
+  | { type: "language"; language: ValeLanguage }
+  | { type: "client"; client: string }
+  | null {
   let text: string | null = null;
   if (typeof data === "string") {
     text = data;
@@ -48,8 +90,20 @@ export function tryParseControl(
     return null;
   }
   try {
-    const message = JSON.parse(text) as { type?: unknown };
-    return message.type === "endStream" ? { type: "endStream" } : null;
+    const message = JSON.parse(text) as {
+      type?: unknown;
+      language?: unknown;
+      client?: unknown;
+    };
+    if (message.type === "endStream") return { type: "endStream" };
+    if (message.type === "language") {
+      return { type: "language", language: parseLanguage(message.language) };
+    }
+    if (message.type === "client") {
+      const client = sanitizeClientId(message.client);
+      return client === null ? null : { type: "client", client };
+    }
+    return null;
   } catch {
     return null;
   }
@@ -87,6 +141,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const pendingAudio: Buffer[] = [];
   let pendingEnd = false;
   let agentRan = false;
+  /** Screen selector language; Spanish until the browser sends its frame. */
+  let turnLanguage: ValeLanguage = DEFAULT_LANGUAGE;
+  const err = (kind: VoiceErrorKind): string =>
+    turnErrorText(kind, turnLanguage);
 
   const finish = (code: number, reason: string) => {
     if (settled) return;
@@ -111,6 +169,13 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     finish(1011, "turn-failed");
   };
 
+  // The browser announces its stable id in a {type:"client"} frame (the
+  // upgrade carries no query string); the socket peer is the fallback.
+  let clientId =
+    options.clientId ??
+    (browser as unknown as { _socket?: { remoteAddress?: string } })._socket
+      ?.remoteAddress ??
+    "unknown";
   const logTurn = (fields: {
     ts: string;
     transcript: string;
@@ -121,6 +186,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     tool: string | null;
     modelSkipped: boolean;
     error: string | null;
+    ignored: boolean;
+    asrMs?: number | null;
+    chain?: "hit" | "miss" | "none";
+    key?: string;
+    slots?: { client?: string; service?: string } | null;
   }) => {
     console.log(
       formatTurnLog({
@@ -132,10 +202,18 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       }),
     );
   };
+  const slotSnapshot = () => {
+    const slots = getSlots(clientId);
+    return slots.client !== undefined || slots.service !== undefined
+      ? slots
+      : null;
+  };
 
+  let browserGone = false;
   const timer = setTimeout(() => {
     if (settled) return;
     settled = true;
+    chainFailed(clientId);
     logTurn({
       ts: new Date().toISOString(),
       transcript: finalText,
@@ -146,8 +224,13 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       tool: null,
       modelSkipped: !agentRan,
       error: "timeout",
+      ignored: false,
+      asrMs: null,
+      chain: "none",
+      key: clientId,
+      slots: slotSnapshot(),
     });
-    failTurn("The voice turn timed out. Tap to try again.", "E-NET");
+    failTurn(err("timeout"), "E-NET");
   }, turnTimeoutMs);
 
   const flushPending = () => {
@@ -171,16 +254,62 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const answerTranscript = async (transcript: string, speechEndAt: number) => {
     agentRan = true;
     const ts = new Date(speechEndAt || now()).toISOString();
+    const chainedId = nextPreviousResponseId(clientId);
+    const chainState = chainedId === undefined ? "miss" : "hit";
     try {
+      // A yes to Vale's pending proposal runs the stored writes at once:
+      // no model, no questions, no chain needed.
+      if (isConfirmYes(transcript)) {
+        const actions = takePendingAction(clientId);
+        if (actions) {
+          const executed = runPendingActions(getDb(), clientId, actions);
+          chainFailed(clientId);
+          clearQuestion(clientId);
+          sendJson(browser, { type: "reply", text: executed.text });
+          sendJson(browser, { type: "board", board: getBoard(getDb()) });
+          logTurn({
+            ts,
+            transcript,
+            ttftMs: Date.now() - speechEndAt,
+            inputTokens: 0,
+            outputTokens: 0,
+            audioSeconds:
+              audioProcessedMs !== null
+                ? audioProcessedMs / 1000
+                : bufferedBytes / 48000,
+            tool: executed.toolUsed,
+            modelSkipped: true,
+            error: null,
+            ignored: false,
+            asrMs: null,
+            chain: "none",
+            key: clientId,
+            slots: slotSnapshot(),
+          });
+          sendJson(browser, { type: "done" });
+          finish(1000, "turn-complete");
+          return;
+        }
+      }
       const result = await runAgent(
         {
           key,
           transcript,
+          previousResponseId: chainedId,
           startedAt: speechEndAt,
           onDelta: (text) => sendJson(browser, { type: "reply-delta", text }),
+          language: turnLanguage,
+          slotKey: clientId,
         },
       );
+      if (!browserGone) chainSucceeded(result.responseId, result.chainNext, clientId);
+      if (result.askedQuestion && !isGreetingOnly(transcript)) {
+        markQuestionAsked(clientId, speechEndAt);
+      } else {
+        clearQuestion(clientId);
+      }
       sendJson(browser, { type: "reply", text: result.text });
+      sendJson(browser, { type: "board", board: getBoard(getDb()) });
       logTurn({
         ts,
         transcript,
@@ -194,9 +323,15 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         tool: result.toolUsed,
         modelSkipped: false,
         error: null,
+        ignored: false,
+        asrMs: null,
+        chain: chainState,
+        key: clientId,
+        slots: slotSnapshot(),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed";
+      chainFailed(clientId);
       logTurn({
         ts,
         transcript,
@@ -210,10 +345,15 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         tool: null,
         modelSkipped: false,
         error: message,
+        ignored: false,
+        asrMs: null,
+        chain: chainState,
+        key: clientId,
+        slots: slotSnapshot(),
       });
       sendJson(browser, {
         type: "error",
-        message: "Sorry, I had trouble answering. Tap to try again.",
+        message: err("model"),
         code: "E-MODEL",
       });
     }
@@ -244,7 +384,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       if (message.final) {
         if (gotFinal) return;
         gotFinal = true;
-        finalText = message.transcript;
+        finalText = collapseEcho(message.transcript);
         audioProcessedMs =
           typeof message.audioProcessedMs === "number"
             ? message.audioProcessedMs
@@ -252,14 +392,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         const speechEndAt = now();
         sendJson(browser, {
           type: "transcript",
-          transcript: message.transcript,
+          transcript: finalText,
           final: true,
           audioProcessedMs,
         });
-        if (message.transcript.trim() === "") {
+        if (finalText.trim() === "") {
           sendJson(browser, {
             type: "notice",
-            message: "I didn't hear anything. Just speak and I'll listen.",
+            message: err("vad-continue"),
             code: "E-VAD",
           });
           logTurn({
@@ -275,11 +415,40 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             tool: null,
             modelSkipped: true,
             error: null,
+            ignored: false,
+            asrMs: null,
+            chain: "none",
+            key: clientId,
+            slots: null,
           });
           sendJson(browser, { type: "done" });
           finish(1000, "turn-complete");
+        } else if (!checkWake(finalText, clientId).execute) {
+          // Background chatter without the name: silent discard.
+          logTurn({
+            ts: new Date(speechEndAt).toISOString(),
+            transcript: finalText,
+            ttftMs: null,
+            inputTokens: 0,
+            outputTokens: 0,
+            audioSeconds:
+              audioProcessedMs !== null
+                ? audioProcessedMs / 1000
+                : bufferedBytes / 48000,
+            tool: null,
+            modelSkipped: true,
+            error: null,
+            ignored: true,
+            asrMs: null,
+            chain: "none",
+            key: clientId,
+            slots: slotSnapshot(),
+          });
+          sendJson(browser, { type: "ignored" });
+          sendJson(browser, { type: "done" });
+          finish(1000, "turn-complete");
         } else {
-          void answerTranscript(message.transcript, speechEndAt);
+          void answerTranscript(finalText, speechEndAt);
         }
       } else {
         sendJson(browser, {
@@ -299,7 +468,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         console.error(
           `[voice-asr] transcription error: ${message.message ?? "unknown"}`,
         );
-        failTurn("Connection lost. Tap to try again.", "E-ASR");
+        failTurn(err("lost"), "E-ASR");
       }
     }
   };
@@ -308,7 +477,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   try {
     meta = createMetaSocket ? createMetaSocket(metaUrl) : new WebSocket(metaUrl);
   } catch {
-    failTurn("Connection lost. Tap to try again.", "E-NET");
+    failTurn(err("lost"), "E-NET");
     return;
   }
 
@@ -323,7 +492,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         }),
       );
     } catch {
-      failTurn("Connection lost. Tap to try again.", "E-NET");
+      failTurn(err("lost"), "E-NET");
     }
   });
 
@@ -331,7 +500,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
 
   meta.on("error", () => {
     if (!settled && !metaOpen) {
-      failTurn("Connection lost. Tap to try again.", "E-NET");
+      failTurn(err("lost"), "E-NET");
     }
   });
 
@@ -339,17 +508,28 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     if (settled) return;
     if (gotFinal) return; // Meta closes after the final; the reply is on its way.
     console.error("[voice-asr] connection closed before final transcript");
-    failTurn("Connection lost. Tap to try again.", "E-ASR");
+    failTurn(err("lost"), "E-ASR");
   });
 
   browser.on("message", (data: unknown) => {
     if (settled) return;
-    if (tryParseControl(data) !== null) {
+    const control = tryParseControl(data);
+    if (control !== null) {
+      // The screen selector rides along: language only, never audio.
+      if (control.type === "language") {
+        turnLanguage = control.language;
+        return;
+      }
+      // The stable browser id keys slots, pending actions and chain lanes.
+      if (control.type === "client") {
+        clientId = control.client;
+        return;
+      }
       if (metaOpen) {
         try {
           meta.send(JSON.stringify({ type: "endStream" }));
         } catch {
-          failTurn("Connection lost. Tap to try again.", "E-NET");
+          failTurn(err("lost"), "E-NET");
         }
       } else {
         pendingEnd = true;
@@ -360,14 +540,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       const chunk = data as Buffer;
       bufferedBytes += chunk.length;
       if (bufferedBytes > MAX_BUFFERED_BYTES) {
-        failTurn("Connection lost. Tap to try again.", "E-NET");
+        failTurn(err("lost"), "E-NET");
         return;
       }
       if (metaOpen) {
         try {
           meta.send(chunk);
         } catch {
-          failTurn("Connection lost. Tap to try again.", "E-NET");
+          failTurn(err("lost"), "E-NET");
         }
       } else {
         pendingAudio.push(chunk);
@@ -379,6 +559,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const onBrowserGone = () => {
     if (settled) return;
     settled = true;
+    browserGone = true;
+    chainFailed(clientId);
     clearTimeout(timer);
     try {
       meta.close();

@@ -35,6 +35,31 @@ describe("SSE parser", () => {
     expect(done).toBe(true);
   });
 
+  it("dispatches ignored turns", async () => {
+    let ignored = 0;
+    let done = false;
+    await parseSseStream(streamFromChunks(["event: ignored\ndata: {}\n\n"]), {
+      onIgnored: () => {
+        ignored += 1;
+      },
+      onDone: () => {
+        done = true;
+      },
+    });
+    expect(ignored).toBe(1);
+    expect(done).toBe(false);
+  });
+
+  it("dispatches board snapshots", async () => {
+    const seen: unknown[] = [];
+    const raw =
+      'event: board\ndata: {"board":{"session":null,"card":null,"list":["Esmalte rojo"]}}\n\n';
+    await parseSseStream(streamFromChunks([raw]), {
+      onBoard: (board) => seen.push(board),
+    });
+    expect(seen).toEqual([{ session: null, card: null, list: ["Esmalte rojo"] }]);
+  });
+
   it("ignores unknown events and malformed data", async () => {
     const seen: string[] = [];
     const raw =

@@ -2,6 +2,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocketServer, WebSocket } from "ws";
 import { POST } from "./route";
+import { chainFailed } from "@/lib/response-chain";
 
 let server: WebSocketServer;
 let url = "";
@@ -44,7 +45,7 @@ beforeAll(async () => {
           socket.send(
             JSON.stringify({
               type: "transcript",
-              transcript: "canning",
+              transcript: "vale, canning",
               final: false,
             }),
           );
@@ -63,7 +64,7 @@ beforeAll(async () => {
         socket.send(
           JSON.stringify({
             type: "transcript",
-            transcript: receivedAudioSilent ? "" : "canned from fake asr",
+            transcript: receivedAudioSilent ? "" : "vale, canned from fake asr",
             final: true,
             audioProcessedMs: 800,
           }),
@@ -85,12 +86,12 @@ beforeAll(async () => {
   vi.stubEnv("META_ASR_URL", url);
 });
 
-function fakeAgentReply(text: string): Response {
+function fakeAgentReply(text: string, id = "resp_test"): Response {
   const raw =
     `event: response.output_text.delta\ndata: ${JSON.stringify({ delta: text.slice(0, 4) })}\n\n` +
     `event: response.completed\ndata: ${JSON.stringify({
       response: {
-        id: "resp_test",
+        id,
         output: [
           {
             type: "message",
@@ -155,13 +156,93 @@ describe("POST /api/voice", () => {
     const request = new Request("http://localhost/api/voice", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ transcript: "hello, book a gel refill" }),
+      body: JSON.stringify({ transcript: "vale, hello, book a gel refill" }),
     });
     const response = await POST(request);
     const text = await response.text();
     expect(text).toContain("event: final");
     expect(text).toContain("hello, book a gel refill");
     expect(text).toContain("event: reply");
+    vi.unstubAllGlobals();
+  });
+
+  it("collapses echoed repeats before the gate", async () => {
+    vi.stubGlobal("fetch", stubAgent("vale mismo"));
+    const text = await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ transcript: "vale abre sesion, vale abre sesion" }),
+      }),
+    ).then((response) => response.text());
+    const finals = text
+      .split("\n\n")
+      .filter((chunk) => chunk.startsWith("event: final"));
+    expect(finals).toHaveLength(1);
+    expect(JSON.parse(finals[0].split("data: ")[1])).toEqual({
+      transcript: "vale abre sesion",
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it("runs a stored yes-proposal directly without calling the model", async () => {
+    const modelFetch = vi.fn(async () => fakeAgentReply("should not happen"));
+    vi.stubGlobal("fetch", modelFetch);
+    const { setPendingAction } = await import("@/lib/pending-action");
+    setPendingAction("pend-yes-1", [
+      { tool: "find_client", args: { name: "Ana" } },
+    ]);
+    const text = await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "pend-yes-1",
+        },
+        body: JSON.stringify({ transcript: "vale, sí, por favor" }),
+      }),
+    ).then((response) => response.text());
+    expect(text).toContain("event: reply");
+    expect(text).toContain("ficha de Ana");
+    expect(modelFetch).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it("holds the selected language even when the transcript is Italian", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        return fakeAgentReply("reply");
+      }),
+    );
+    const sendTurn = (url: string, transcript: string) =>
+      POST(
+        new Request(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ transcript }),
+        }),
+      ).then((response) => response.text());
+    const esText = await sendTurn(
+      "http://localhost/api/voice",
+      "vale, apri una sessione con Ana",
+    );
+    expect(esText).toContain("event: reply");
+    const enText = await sendTurn(
+      "http://localhost/api/voice?language=en",
+      "vale, open a session",
+    );
+    expect(enText).toContain("event: reply");
+    expect(bodies).toHaveLength(2);
+    expect(String(bodies[0].instructions)).toContain(
+      "Nunca respondas en otro idioma",
+    );
+    expect(String(bodies[1].instructions)).toContain("only in English");
+    expect(String(bodies[1].instructions)).not.toContain("¿lo guardo?");
     vi.unstubAllGlobals();
   });
 
@@ -176,7 +257,7 @@ describe("POST /api/voice", () => {
         new Request("http://localhost/api/voice", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ transcript: "first turn" }),
+          body: JSON.stringify({ transcript: "vale, first turn" }),
         }),
       ).then((response) => response.text());
     await sendTurn();
@@ -184,13 +265,13 @@ describe("POST /api/voice", () => {
       new Request("http://localhost/api/voice", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ transcript: "second turn" }),
+        body: JSON.stringify({ transcript: "vale, second turn" }),
       }),
     ).then((response) => response.text());
     const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
     expect(turns).toHaveLength(2);
     const first = JSON.parse(turns[0].replace("[voice-turn] ", ""));
-    expect(first.transcript).toBe("first turn");
+    expect(first.transcript).toBe("vale, first turn");
     expect(typeof first.ttftMs).toBe("number");
     expect(first.inputTokens).toBe(100);
     expect(first.outputTokens).toBe(20);
@@ -199,7 +280,7 @@ describe("POST /api/voice", () => {
     expect(first.tool).toBeNull();
     expect(first.error).toBeNull();
     expect(JSON.parse(turns[1].replace("[voice-turn] ", "")).transcript).toBe(
-      "second turn",
+      "vale, second turn",
     );
     spy.mockRestore();
     vi.unstubAllGlobals();
@@ -247,7 +328,7 @@ describe("POST /api/voice", () => {
       }),
     ).then((response) => response.text());
     expect(dropped).toContain("event: error");
-    expect(dropped).toMatch(/connection lost|had a problem/i);
+    expect(dropped).toMatch(/Se perdió la conexión|tuve un problema/);
 
     dropOnAudio = false;
     const retried = await POST(
@@ -276,12 +357,12 @@ describe("POST /api/voice", () => {
     const request = new Request("http://localhost/api/voice", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ transcript: "hello, book a gel refill" }),
+      body: JSON.stringify({ transcript: "vale, hello, book a gel refill" }),
     });
     const text = await POST(request).then((response) => response.text());
     expect(text).toContain("event: final");
     expect(text).toContain("hello, book a gel refill");
-    expect(text).toContain("Sorry, I had trouble answering.");
+    expect(text).toContain("Perdón, tuve un problema.");
     expect(text).toContain('"code":"E-MODEL"');
     const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
     expect(turns).toHaveLength(1);
@@ -302,7 +383,7 @@ describe("POST /api/voice", () => {
     const response = await POST(request);
     expect(response.status).toBe(503);
     const body = (await response.json()) as { error: string };
-    expect(body.error).toMatch(/not configured/i);
+    expect(body.error).toMatch(/configurada/i);
     expect(JSON.stringify(body)).not.toMatch(/\n\s*at\s/);
     vi.stubEnv("META_API_KEY", "test-key");
   });
@@ -343,7 +424,7 @@ describe("POST /api/voice", () => {
         duplex: "half",
       }),
     ).then((response) => response.text());
-    expect(text).toContain("timed out");
+    expect(text).toContain("agotó");
     const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
     expect(turns).toHaveLength(1);
     expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
@@ -353,6 +434,155 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
     holdFinal = false;
     delete process.env.VOICE_TURN_TIMEOUT_MS;
+  });
+
+  it("threads previous_response_id across taps and drops it after a failure", async () => {
+    chainFailed();
+    const bodies: Record<string, unknown>[] = [];
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        calls += 1;
+        if (calls === 3) return new Response("nope", { status: 500 });
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        return fakeAgentReply(
+          calls === 1 ? "¿lo guardo?" : "ok",
+          calls === 2 ? "resp_chain_2" : "resp_chain_1",
+        );
+      }),
+    );
+    const postTranscript = (transcript: string) =>
+      POST(
+        new Request("http://localhost/api/voice", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ transcript }),
+        }),
+      ).then((response) => response.text());
+    expect(await postTranscript("vale, abre una sesion")).toContain("event: reply");
+    // Nameless yes answers Vale's question through the pending window.
+    expect(await postTranscript("si")).toContain("event: reply");
+    expect(await postTranscript("vale, boom")).toContain("E-MODEL");
+    expect(await postTranscript("vale, hola de nuevo")).toContain("event: reply");
+    expect(bodies).toHaveLength(3);
+    expect(bodies[0].previous_response_id).toBeUndefined();
+    expect(bodies[1].previous_response_id).toBe("resp_chain_1");
+    expect(bodies[2].previous_response_id).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it("ignores background chatter without the name", async () => {
+    const modelFetch = vi.fn(async () => fakeAgentReply("should not happen"));
+    vi.stubGlobal("fetch", modelFetch);
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
+      logs.push(String(line));
+    });
+    const text = await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "wake-ignore-1",
+        },
+        body: JSON.stringify({ transcript: "background tv noise" }),
+      }),
+    ).then((response) => response.text());
+    expect(text).toContain("event: final");
+    expect(text).toContain("event: done");
+    expect(text).not.toContain("event: reply");
+    expect(text).not.toContain("event: board");
+    expect(modelFetch).not.toHaveBeenCalled();
+    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    expect(turns).toHaveLength(1);
+    expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+      modelSkipped: true,
+      ignored: true,
+    });
+    spy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("covers only continuations inside the same client window", async () => {
+    chainFailed();
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        return fakeAgentReply(
+          calls === 1 ? "¿Qué servicio le hago a Ana?" : "Listo.",
+        );
+      }),
+    );
+    const postTranscript = (transcript: string) =>
+      POST(
+        new Request("http://localhost/api/voice", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": "wake-window-1",
+          },
+          body: JSON.stringify({ transcript }),
+        }),
+      ).then((response) => response.text());
+    expect(await postTranscript("vale, algo para Ana")).toContain("event: reply");
+    // Nameless completion of Vale's question executes.
+    expect(await postTranscript("esmaltado")).toContain("event: reply");
+    // Nameless fresh request stays ignored.
+    const ignored = await postTranscript("cuéntame un chiste");
+    expect(ignored).toContain("event: done");
+    expect(ignored).not.toContain("event: reply");
+    expect(calls).toBe(2);
+    chainFailed();
+    vi.unstubAllGlobals();
+  });
+
+  it("undoes without the name inside the window", async () => {
+    chainFailed();
+    const modelFetch = vi.fn(async () => fakeAgentReply("vale mismo"));
+    vi.stubGlobal("fetch", modelFetch);
+    const postTranscript = (transcript: string) =>
+      POST(
+        new Request("http://localhost/api/voice", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": "wake-undo-1",
+          },
+          body: JSON.stringify({ transcript }),
+        }),
+      ).then((response) => response.text());
+    expect(await postTranscript("vale, abre una sesion")).toContain("event: reply");
+    expect(await postTranscript("deshazlo")).toContain("event: reply");
+    expect(modelFetch).toHaveBeenCalledTimes(2);
+    chainFailed();
+    vi.unstubAllGlobals();
+  });
+
+  it("ignores the follow-up once the window expires", async () => {
+    vi.stubEnv("VALE_ATTENTION_WINDOW_S", "0");
+    vi.stubGlobal("fetch", stubAgent("vale mismo"));
+    const postTranscript = (transcript: string) =>
+      POST(
+        new Request("http://localhost/api/voice", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": "wake-expired-1",
+          },
+          body: JSON.stringify({ transcript }),
+        }),
+      ).then((response) => response.text());
+    expect(await postTranscript("vale, abre una sesion")).toContain("event: reply");
+    const ignored = await postTranscript("si");
+    expect(ignored).toContain("event: done");
+    expect(ignored).not.toContain("event: reply");
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("closes the Meta socket when the page disconnects mid-turn", async () => {

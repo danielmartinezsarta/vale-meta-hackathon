@@ -1,0 +1,169 @@
+// Name gate: Vale only obeys when spoken to. Before the agent, on both
+// voice paths: a transcript naming Vale executes and opens an attention
+// window; inside the same client's window it executes without the name;
+// otherwise it is silently discarded (no model, no board, ignored:true log).
+// Garbage never touches the previous_response_id chain.
+
+const DEFAULT_WAKE_WORDS = ["vale"];
+const DEFAULT_WINDOW_S = 45;
+
+export function normalizeWakeText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function wakeWords(): string[] {
+  const words = (process.env.VALE_WAKE_WORDS ?? "")
+    .split(",")
+    .map((word) => normalizeWakeText(word.trim()))
+    .filter((word) => word !== "");
+  return words.length > 0 ? words : DEFAULT_WAKE_WORDS;
+}
+
+export function windowMs(): number {
+  const seconds = Number(process.env.VALE_ATTENTION_WINDOW_S);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return DEFAULT_WINDOW_S * 1000;
+  }
+  return seconds * 1000;
+}
+
+export function namesVale(transcript: string, words: string[] = wakeWords()): boolean {
+  const haystack = ` ${normalizeWakeText(transcript)} `;
+  return words.some((word) => {
+    const needle = normalizeWakeText(word);
+    return needle !== "" && haystack.includes(` ${needle} `);
+  });
+}
+
+/** Client key for the attention window: first forwarded IP or direct peer. */
+export function requestClientIp(request: Request): string {
+  const first = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return first === undefined || first === "" ? "unknown" : first;
+}
+
+/** Browser-generated ids are lowercase alnum with dashes (at most 64 chars). */
+export function sanitizeClientId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const id = value.trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) ? id : null;
+}
+
+/**
+ * Stable key for slots, pending actions and chain lanes: the explicit
+ * browser id wins, the IP is the fallback (shared behind one NAT).
+ */
+export function requestClientId(request: Request): string {
+  return (
+    sanitizeClientId(new URL(request.url).searchParams.get("client")) ??
+    requestClientIp(request)
+  );
+}
+
+const attentionSince = new Map<string, number>();
+
+/**
+ * Pending question per connection: Vale asked, so the answer may come
+ * nameless. Set from the agent result, never from a transcript alone.
+ */
+const pendingSince = new Map<string, number>();
+
+export function markQuestionAsked(clientId: string, now: number = Date.now()): void {
+  pendingSince.set(clientId, now);
+}
+
+export function clearQuestion(clientId: string): void {
+  pendingSince.delete(clientId);
+}
+
+function hasPendingQuestion(clientId: string, now: number): boolean {
+  const since = pendingSince.get(clientId);
+  return since !== undefined && now - since < windowMs();
+}
+
+/** Undo intent: deshazlo / undo it, with or without the name. */
+export function isUndoIntent(transcript: string): boolean {
+  return /\b(deshaz\w*|undo(\s+it)?)\b/.test(` ${normalizeWakeText(transcript)} `);
+}
+
+const GREETING_ONLY =
+  /^(hola|hey|buenas|buenos dias|buenas tardes|buenas noches|alo|oiga|oigame)$/;
+
+/**
+ * Collapse ASR stutters before the gate: adjacent repeats ("mí? mí?",
+ * "la la") and glued halves ("Hola,Hola", "abre sesión abre sesión").
+ * Compares lowercase without trailing punctuation, keeps the first form.
+ */
+export function collapseEcho(transcript: string): string {
+  const tokens = transcript.split(/[\s,]+/).filter((token) => token !== "");
+  if (tokens.length === 0) return "";
+  const keyOf = (token: string): string =>
+    token.toLowerCase().replace(/[?!.¡¿;:'"]+$/g, "");
+  const single: string[] = [];
+  let collapsed = false;
+  for (const token of tokens) {
+    const prev = single[single.length - 1];
+    const key = keyOf(token);
+    if (prev !== undefined && key !== "" && key === keyOf(prev)) {
+      collapsed = true;
+      continue;
+    }
+    single.push(token);
+  }
+  if (single.length >= 2 && single.length % 2 === 0) {
+    const half = single.length / 2;
+    const first = single.slice(0, half).map(keyOf);
+    const second = single.slice(half).map(keyOf);
+    if (first.every((key, i) => key !== "" && key === second[i])) {
+      return single.slice(0, half).join(" ");
+    }
+  }
+  // No repeat removed: keep the original untouched, punctuation included.
+  return collapsed ? single.join(" ") : transcript;
+}
+
+/** Bare greeting, optionally naming Vale: never a data request. */
+export function isGreetingOnly(transcript: string): boolean {
+  const words = normalizeWakeText(transcript)
+    .split(" ")
+    .filter((word) => word !== "" && word !== "vale");
+  if (words.length === 0) return false;
+  return GREETING_ONLY.test(words.join(" "));
+}
+
+export interface WakeVerdict {
+  execute: boolean;
+  namedVale: boolean;
+}
+
+/**
+ * Empty transcripts bypass the gate: the existing silence path handles them.
+ * Ignored turns neither read nor write the response chain.
+ */
+export function checkWake(
+  transcript: string,
+  clientId: string,
+  now: number = Date.now(),
+): WakeVerdict {
+  if (transcript.trim() === "") return { execute: true, namedVale: false };
+  if (namesVale(transcript)) {
+    attentionSince.set(clientId, now);
+    return { execute: true, namedVale: true };
+  }
+  const since = attentionSince.get(clientId);
+  if (since !== undefined && now - since < windowMs()) {
+    // An open window covers continuations only: the answer to Vale's
+    // pending question, or an undo of the last write. A fresh request
+    // without the name stays ignored.
+    if (hasPendingQuestion(clientId, now) || isUndoIntent(transcript)) {
+      return { execute: true, namedVale: false };
+    }
+    return { execute: false, namedVale: false };
+  }
+  return { execute: false, namedVale: false };
+}

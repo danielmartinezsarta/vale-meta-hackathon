@@ -152,6 +152,48 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("sends the selector language when the socket opens, ES by default", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+    });
+    vi.stubGlobal("WebSocket", FakeWs);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("no post", { status: 500 })));
+    stubSessionOnce();
+
+    render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
+
+    driver!.onFrame(speechFrame());
+    driver!.onSpeechStart();
+    await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(1);
+    });
+    FakeWs.instances[0].open();
+    expect(FakeWs.instances[0].sentStrings()).toContain(
+      JSON.stringify({ type: "language", language: "es" }),
+    );
+
+    // Switch to English and tap again: the new socket carries EN.
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "EN" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
+    driver!.onFrame(speechFrame());
+    driver!.onSpeechStart();
+    await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(2);
+    });
+    FakeWs.instances[1].open();
+    expect(FakeWs.instances[1].sentStrings()).toContain(
+      JSON.stringify({ type: "language", language: "en" }),
+    );
+  });
+
   it("reopens once after a mid-turn drop and replays the buffered audio", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
@@ -238,12 +280,13 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
 
     ws.serverMessage({
       type: "error",
-      message: "Connection lost. Tap to try again.",
+      message: "Se perdió la conexión. Toca para intentar de nuevo.",
       code: "E-ASR",
     });
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeTruthy();
     });
-    expect(screen.getByRole("alert").textContent).toContain("(E-ASR)");
+    expect(screen.getByRole("alert").textContent).toContain("Se perdió la conexión");
+    expect(screen.getByRole("alert").textContent).not.toContain("E-ASR");
   });
 });

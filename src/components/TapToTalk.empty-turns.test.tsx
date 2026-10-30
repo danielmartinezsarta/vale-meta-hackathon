@@ -57,7 +57,7 @@ describe("empty turns stay hidden (fix 1)", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("Your microphone is on. Go ahead, I'm listening."),
+        screen.getByText("Tu micrófono está encendido. Adelante, te escucho."),
       ).toBeTruthy();
     });
 
@@ -104,7 +104,7 @@ describe("empty turns stay hidden (fix 1)", () => {
     });
     await waitFor(() => {
       expect(
-        screen.getByText("Your microphone is on. Go ahead, I'm listening."),
+        screen.getByText("Tu micrófono está encendido. Adelante, te escucho."),
       ).toBeTruthy();
     });
     expect(

@@ -1,0 +1,32 @@
+{
+  "_note": "All names, prices and data below are invented for the hackathon demo. No real client data.",
+  "clients": [
+    "Ana Beltran",
+    "Maria Solis",
+    "Carmen Ruiz",
+    "Lucia Fernandez",
+    "Rosa Delgado"
+  ],
+  "services": [
+    { "name": "Retiro de gel", "price_cents": 1200, "duration_min": 30 },
+    { "name": "Manicura clasica", "price_cents": 1500, "duration_min": 45 },
+    { "name": "Pedicura spa", "price_cents": 2500, "duration_min": 60 },
+    { "name": "Set completo acrilico", "price_cents": 3500, "duration_min": 120 },
+    { "name": "Relleno acrilico", "price_cents": 2800, "duration_min": 90 },
+    { "name": "Esmaltado semipermanente", "price_cents": 2000, "duration_min": 60 },
+    { "name": "Nail art sencillo", "price_cents": 800, "duration_min": 20 },
+    { "name": "Reparacion de una", "price_cents": 500, "duration_min": 15 }
+  ],
+  "supplies": [
+    "Esmalte rojo",
+    "Esmalte nude",
+    "Base coat",
+    "Top coat",
+    "Lima 180",
+    "Palito de naranjo",
+    "Algodon",
+    "Acetona pura",
+    "Aceite de cuticula",
+    "Toallitas sin pelusa"
+  ]
+}
