@@ -56,6 +56,9 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
           ({ getTracks: () => [] }) as unknown as MediaStream,
       },
     });
+    // No real sockets in tests: Node's WebSocket would dial localhost:3000,
+    // so hide it and force the buffered-POST fallback path under test.
+    vi.stubGlobal("WebSocket", undefined);
     const seen: CaptureCallbacks[] = [];
     const stopMock = vi.fn();
     mockStartCapture.mockImplementation((_stream, callbacks) => {

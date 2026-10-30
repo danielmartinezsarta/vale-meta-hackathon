@@ -13,6 +13,9 @@ function stubMic() {
   vi.stubGlobal("navigator", {
     mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
   });
+  // No real sockets in tests: Node's WebSocket would dial localhost:3000,
+  // so hide it and force the buffered-POST fallback path under test.
+  vi.stubGlobal("WebSocket", undefined);
 }
 
 function sseEmptyTurn() {

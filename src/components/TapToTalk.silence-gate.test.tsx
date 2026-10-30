@@ -81,6 +81,9 @@ describe("silence-aware E-VAD banner (fix 3)", () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
+    // No real sockets in tests: Node's WebSocket would dial localhost:3000,
+    // so hide it and force the buffered-POST fallback path under test.
+    vi.stubGlobal("WebSocket", undefined);
     const fetchMock = vi.fn(() =>
       Promise.resolve({ ok: true, body: sseVadNotice() }),
     );
