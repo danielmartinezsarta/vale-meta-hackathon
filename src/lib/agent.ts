@@ -1,6 +1,10 @@
 import { VALE_TOOLS, getOpenSession, runValeTool } from "./vale-tools";
 import { getDb, type ValeDb } from "./db";
 import { DEFAULT_LANGUAGE, type ValeLanguage } from "./vale-language";
+import {
+  slotContext,
+  updateSlotsFromTool,
+} from "./slot-memory";
 
 export const AGENT_MODEL = "muse-spark-1.3";
 export const RESPONSES_URL = "https://api.meta.ai/v1/responses";
@@ -25,23 +29,28 @@ const SPOKEN_BASE = [
   "When the tool asks whether to create a supply, ask the user and call log_supply_use again with confirm_create true only after a yes.",
 ].join(" ");
 
-// Per-language suffix: the reply language, the fixed questions, the
-// undo word and the health confirmation. Closed set: es or en.
+// Per-language suffix: warm persona, capabilities, few-shots and the
+// standing rules. Closed set: es or en.
 const LANGUAGE_SUFFIX: Record<ValeLanguage, string> = {
   es: [
     "The user hears your reply read aloud, so reply in Spanish in exactly one or two short spoken sentences. Nunca respondas en otro idioma aunque la transcripción venga en otro.",
-    "Habla siempre de tú, nunca de usted.",
-    "When you lack data, ask with these exact templates, filling only the braces: missing service -> ¿Qué servicio le hago a {clienta}?; missing client -> ¿Para qué clienta es?; missing both -> ¿Para qué clienta es y qué servicio le hago?. Never invent other wordings for these questions.",
-    "Only ask for client or service when the turn carries session intent (a client, service, note, list or undo request). A greeting or chit-chat with no request gets exactly Hola, te escucho. and stops: never ask for data, never call tools.",
-    "The confirmation question is ¿lo guardo?.",
+    "Eres Vale, manicurista de voz cálida y directa: habla siempre de tú, nunca de usted.",
+    "Hoy puedes: abrir sesiones con cronómetro, guardar notas en la ficha (las de salud van en privado), llevar la lista de insumos, crear clientas e insumos. Precio y agenda aún no; dilo plainly si los piden.",
+    "Saluda variado y breve cuando no hay pedido, sin preguntar datos. Si falta clienta o servicio, pregunta natural y breve nombrando lo que sí tienes.",
+    "Ejemplos de tono (no guion): clienta «hola» -> «Hola, ¿cómo vas?»; clienta «buenas» -> «Buenas, te escucho.»; clienta «¿qué puedes hacer?» -> «Abro sesiones con cronómetro, guardo notas en tu ficha, llevo tu lista de insumos y registro clientas e insumos. Precio y agenda todavía no.»; clienta «abre sesión con Ana» -> «¿Qué servicio le hago a Ana?»; clienta «sí» con duda pendiente -> ejecuta y confirma «Listo, ya quedó.»",
+    "Si piden algo fuera de uñas (pelo, maquillaje), dilo plainly y redirige a uñas: «Eso es de pelo y yo solo atiendo uñas; ¿te abro sesión de esmaltado?»",
+    "Ante la duda pregunta con una frase y la cuestión de confirmación es ¿lo guardo?.",
     "When the user says deshazlo, call undo_last_write at once.",
     "Health topics (allergies, onicolisis and similar) always use add_note with kind health; confirm with Nota privada guardada. and never repeat the health text.",
   ].join(" "),
   en: [
     "The user hears your reply read aloud, so reply only in English in exactly one or two short spoken sentences. Never answer in another language even if the transcript is in another.",
-    "When you lack data, ask with these exact templates, filling only the braces: missing service -> Which service should I do for {client}?; missing client -> Which client is it for?; missing both -> Which client is it for and which service should I do?. Never invent other wordings for these questions.",
-    "Only ask for client or service when the turn carries session intent (a client, service, note, list or undo request). A greeting or chit-chat with no request gets exactly Hi, I'm listening. and stops: never ask for data, never call tools.",
-    "The confirmation question is Should I save it?.",
+    "You are Vale, a warm, direct voice nail tech: plain words, one or two short sentences.",
+    "Today you can: open timed sessions, save notes on client cards (health notes stay private), keep the shopping list, register new clients and supplies. No prices or appointments yet; say so plainly if asked.",
+    "Greet with variety and briefly when there is no request, never asking for data. When client or service is missing, ask naturally and briefly, naming what you already have.",
+    "Tone examples (not a script): client «hi» -> «Hi, how is it going?»; client «hey» -> «Hey, I'm here.»; client «what can you do?» -> «I open timed sessions, save notes on your card, keep the shopping list, and register new clients and supplies. No prices or appointments yet.»; client «open a session for Ana» -> «Which service should I do for Ana?»; client «yes» with pending doubt -> act and confirm «Done, all set.»",
+    "If they ask for anything outside nails (hair, makeup), say so plainly and steer back to nails: «That's hair and I only do nails; shall I open you a polish session?»",
+    "When in doubt ask in one sentence and the confirmation question is Should I save it?.",
     "When the user says undo it, call undo_last_write at once.",
     "Health topics (allergies, onycholysis and similar) always use add_note with kind health; confirm with Private note saved. and never repeat the health text.",
   ].join(" "),
@@ -82,6 +91,17 @@ export function isChainError(error: unknown): boolean {
     /response[^,;.]{0,60}(expired|invalid|not found)/i.test(error.message)
   );
 }
+
+/** Tools that complete a write when they report ok (reads never block a retry). */
+const WRITE_TOOLS = new Set([
+  "open_session",
+  "close_session",
+  "add_note",
+  "create_client",
+  "add_to_shopping_list",
+  "log_supply_use",
+  "undo_last_write",
+]);
 
 /**
  * Provider error bodies stay in the server log: they tell a stale chain
@@ -287,6 +307,8 @@ export interface AgentTurnOptions {
   db?: ValeDb;
   /** Closed reply language; Spanish unless the screen selector says English. */
   language?: ValeLanguage;
+  /** Slot-memory key (client IP on the server); tests use throwaway keys. */
+  slotKey?: string;
 }
 
 function privacyNoticeNeeded(db: ValeDb): boolean {
@@ -310,7 +332,12 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   const onDelta = options.onDelta ?? (() => {});
   const db = options.db ?? getDb();
   const language = options.language ?? DEFAULT_LANGUAGE;
-  const instructions = buildInstructions(language);
+  const slotKey = options.slotKey ?? "local";
+  const staticInstructions = buildInstructions(language);
+  const slotLine = slotContext(slotKey, language);
+  const instructions = slotLine
+    ? `${staticInstructions} ${slotLine}`
+    : staticInstructions;
   const privacyLine = language === "en" ? PRIVACY_LINE_EN : PRIVACY_LINE;
 
   let previousResponseId = options.previousResponseId;
@@ -323,8 +350,9 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   const usage: AgentUsage = { inputTokens: 0, outputTokens: 0 };
   let firstTokenMs: number | null = null;
 
-  // At most one clean retry: a 400 before any tool ran means the chained
-  // response expired. Never replay a turn that already wrote.
+  // At most one clean retry: a 400 with no completed write means the
+  // chained response expired. Never replay a turn that already wrote.
+  let sawWrite = false;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (attempt > 0) {
       previousResponseId = undefined;
@@ -334,6 +362,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       toolUsed = null;
       sawDoubt = false;
       healthSaved = false;
+      sawWrite = false;
     }
     try {
       for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
@@ -371,6 +400,14 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
         }
         const toolResult = runValeTool(db, call.name, parsed);
         if (!toolResult.ok) sawDoubt = true;
+        if (toolResult.ok && WRITE_TOOLS.has(call.name)) sawWrite = true;
+        updateSlotsFromTool(
+          slotKey,
+          call.name,
+          parsed,
+          toolResult.ok,
+          (toolResult as { data?: unknown }).data,
+        );
         if (call.name === "add_note" && (toolResult.data as { private?: boolean } | undefined)?.private === true) {
           healthSaved = true;
         }
@@ -385,12 +422,19 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       }
       break;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Attempt-level trace: the next stale-chain incident must show whether
+      // the clean retry fired, without guessing from token counts.
+      console.error(
+        `[agent] attempt ${attempt} (${previousResponseId ? "chained" : "clean"}) failed: ${message}`,
+      );
       const cleanRetry =
         attempt === 0 &&
         options.previousResponseId !== undefined &&
-        toolUsed === null &&
+        !sawWrite &&
         isChainError(error);
-      if (!cleanRetry) throw error;
+      if (cleanRetry) console.error("[agent] retrying clean (chain dropped)");
+      else throw error;
     }
   }
 

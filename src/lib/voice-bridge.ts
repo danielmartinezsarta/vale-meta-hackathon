@@ -50,6 +50,7 @@ export interface VoiceBridgeOptions {
     onDelta: (text: string) => void;
     previousResponseId?: string;
     language?: ValeLanguage;
+    slotKey?: string;
   }) => Promise<BridgeAgentResult>;
   now?: () => number;
   turnTimeoutMs?: number;
@@ -219,6 +220,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           startedAt: speechEndAt,
           onDelta: (text) => sendJson(browser, { type: "reply-delta", text }),
           language: turnLanguage,
+          slotKey: clientId,
         },
       );
       if (!browserGone) chainSucceeded(result.responseId, result.chainNext);

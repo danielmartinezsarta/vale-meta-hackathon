@@ -220,6 +220,7 @@ export async function POST(request: Request): Promise<Response> {
             startedAt: speechEndAt,
             onDelta: (text) => send("reply-delta", { text }),
             language,
+            slotKey: requestClientIp(request),
           });
           if (!aborted) chainSucceeded(result.responseId, result.chainNext);
           send("reply", { text: result.text });
