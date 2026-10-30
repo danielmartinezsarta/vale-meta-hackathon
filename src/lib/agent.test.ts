@@ -330,6 +330,43 @@ describe("agent clean retry", () => {
     expect(calls).toBe(1);
   });
 
+  it("retries clean when a failed event names a stale chain", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        calls += 1;
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (calls === 1) {
+          return sseResponse([
+            {
+              type: "response.failed",
+              data: {
+                error: "previous_response_id invalid: response not found",
+              },
+            },
+          ]);
+        }
+        return sseResponse([spoken("resp_2", "Hola de nuevo.")]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "hola",
+      previousResponseId: "resp_stale",
+      db: freshTestDb(),
+    });
+
+    expect(calls).toBe(2);
+    expect(bodies[1].previous_response_id).toBeUndefined();
+    expect(result.text).toBe("Hola de nuevo.");
+    expect(result.responseId).toBe("resp_2");
+  });
+
   it("marks the chain to continue after questions and doubt, not after writes", async () => {
     vi.stubGlobal(
       "fetch",
@@ -405,6 +442,13 @@ describe("closed reply language", () => {
   it("keeps the historic Spanish prompt as the default", () => {
     expect(buildInstructions()).toBe(SPOKEN_SYSTEM_PROMPT);
     expect(buildInstructions("es")).toBe(SPOKEN_SYSTEM_PROMPT);
+  });
+
+  it("greets back and stops when there is no session intent", () => {
+    expect(buildInstructions("es")).toContain("gets exactly Hola, te escucho.");
+    expect(buildInstructions("es")).toContain("never ask for data");
+    expect(buildInstructions("en")).toContain("gets exactly Hi, I'm listening.");
+    expect(buildInstructions("en")).toContain("never ask for data");
   });
 
   it("answers only in English under the EN setting, never in Spanish", () => {

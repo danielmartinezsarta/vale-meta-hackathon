@@ -32,6 +32,7 @@ const LANGUAGE_SUFFIX: Record<ValeLanguage, string> = {
     "The user hears your reply read aloud, so reply in Spanish in exactly one or two short spoken sentences. Nunca respondas en otro idioma aunque la transcripción venga en otro.",
     "Habla siempre de tú, nunca de usted.",
     "When you lack data, ask with these exact templates, filling only the braces: missing service -> ¿Qué servicio le hago a {clienta}?; missing client -> ¿Para qué clienta es?; missing both -> ¿Para qué clienta es y qué servicio le hago?. Never invent other wordings for these questions.",
+    "Only ask for client or service when the turn carries session intent (a client, service, note, list or undo request). A greeting or chit-chat with no request gets exactly Hola, te escucho. and stops: never ask for data, never call tools.",
     "The confirmation question is ¿lo guardo?.",
     "When the user says deshazlo, call undo_last_write at once.",
     "Health topics (allergies, onicolisis and similar) always use add_note with kind health; confirm with Nota privada guardada. and never repeat the health text.",
@@ -39,6 +40,7 @@ const LANGUAGE_SUFFIX: Record<ValeLanguage, string> = {
   en: [
     "The user hears your reply read aloud, so reply only in English in exactly one or two short spoken sentences. Never answer in another language even if the transcript is in another.",
     "When you lack data, ask with these exact templates, filling only the braces: missing service -> Which service should I do for {client}?; missing client -> Which client is it for?; missing both -> Which client is it for and which service should I do?. Never invent other wordings for these questions.",
+    "Only ask for client or service when the turn carries session intent (a client, service, note, list or undo request). A greeting or chit-chat with no request gets exactly Hi, I'm listening. and stops: never ask for data, never call tools.",
     "The confirmation question is Should I save it?.",
     "When the user says undo it, call undo_last_write at once.",
     "Health topics (allergies, onycholysis and similar) always use add_note with kind health; confirm with Private note saved. and never repeat the health text.",
@@ -71,9 +73,29 @@ export interface AgentResult {
   chainNext: boolean;
 }
 
-/** A 400 on a chained first round means the chain went stale: retry clean. */
+/** A 400 before any tool ran means the chained response went stale: retry clean. */
 export function isChainError(error: unknown): boolean {
-  return error instanceof Error && /^model error: 400/.test(error.message);
+  if (!(error instanceof Error)) return false;
+  return (
+    /^model error: 400\b/.test(error.message) ||
+    /previous_response/i.test(error.message) ||
+    /response[^,;.]{0,60}(expired|invalid|not found)/i.test(error.message)
+  );
+}
+
+/**
+ * Provider error bodies stay in the server log: they tell a stale chain
+ * apart from a malformed request. Secrets never travel in them (the key
+ * goes in a header), but Bearer-looking values are scrubbed anyway.
+ */
+function redactSecrets(text: string): string {
+  return text
+    .replace(/bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(
+      /"(api_?key|token|secret)"\s*:\s*"[^"]*"/gi,
+      '"$1":"[redacted]"',
+    )
+    .slice(0, 500);
 }
 
 interface ResponsesOutputItem {
@@ -157,7 +179,14 @@ async function postResponses(
     body: JSON.stringify({ model: AGENT_MODEL, ...body }),
   });
   if (!response.ok || !response.body) {
-    throw new Error(`model error: ${response.status}`);
+    let detail = "";
+    try {
+      detail = redactSecrets(await response.text());
+    } catch {
+      /* empty or unreadable body: the status alone is the signal */
+    }
+    console.error(`[agent] model error ${response.status}: ${detail}`);
+    throw new Error(`model error: ${response.status}${detail ? ` ${detail}` : ""}`);
   }
   let firstTokenMs: number | null = null;
   let buffer = "";
@@ -214,9 +243,13 @@ async function postResponses(
             (data.response as CompletedResponse | null) ??
             (data as unknown as CompletedResponse);
           if (type === "response.failed") {
-            throw new Error(
-              `model error: ${typeof data.error === "string" ? data.error : "failed"}`,
-            );
+            const raw =
+              typeof data.error === "string"
+                ? data.error
+                : JSON.stringify(data.error ?? null);
+            const detail = redactSecrets(raw);
+            console.error(`[agent] response failed: ${detail}`);
+            throw new Error(`model error: ${detail}`);
           }
           if (functionCalls(completed?.output).length === 0) flushDeltas();
           else pendingDeltas.splice(0);
