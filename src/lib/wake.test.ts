@@ -1,7 +1,14 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { chainFailed, chainSucceeded, nextPreviousResponseId } from "./response-chain";
-import { checkWake, namesVale } from "./wake";
+import {
+  checkWake,
+  clearQuestion,
+  isGreetingOnly,
+  isUndoIntent,
+  markQuestionAsked,
+  namesVale,
+} from "./wake";
 
 describe("wake word gate", () => {
   it("names Vale with case, accents and punctuation around it", () => {
@@ -24,8 +31,56 @@ describe("wake word gate", () => {
   it("executes when named and opens the attention window", () => {
     const verdict = checkWake("vale, abre una sesión", "ip-1", 1000);
     expect(verdict).toEqual({ execute: true, namedVale: true });
-    const followUp = checkWake("abre la sesión", "ip-1", 1000 + 44_000);
-    expect(followUp.execute).toBe(true);
+    // A fresh request without the name stays ignored inside the window.
+    expect(checkWake("abre la sesión", "ip-1", 1000 + 44_000).execute).toBe(
+      false,
+    );
+  });
+
+  it("covers only continuations inside the window", () => {
+    checkWake("vale, gasta algo", "ip-c1", 1000);
+    // Vale asked: the answer and the completion run nameless.
+    markQuestionAsked("ip-c1", 1000);
+    expect(checkWake("brillo lunar", "ip-c1", 2000).execute).toBe(true);
+    expect(checkWake("sí", "ip-c1", 2000).execute).toBe(true);
+    clearQuestion("ip-c1");
+    // No pending question: fresh requests need the name.
+    expect(checkWake("abre otra sesión", "ip-c1", 2000).execute).toBe(false);
+    expect(checkWake("¿qué hora es?", "ip-c1", 2000).execute).toBe(false);
+  });
+
+  it("lets an undo through without the name inside the window", () => {
+    checkWake("vale, abre una sesión", "ip-u1", 1000);
+    expect(checkWake("deshazlo", "ip-u1", 2000).execute).toBe(true);
+    expect(checkWake("undo it", "ip-u1", 2000).execute).toBe(true);
+    expect(checkWake("deshazlo", "ip-u1", 1000 + 45_000).execute).toBe(false);
+  });
+
+  it("retires the pending question with the window", () => {
+    checkWake("vale, gasta algo", "ip-c2", 1000);
+    markQuestionAsked("ip-c2", 1000);
+    expect(checkWake("brillo lunar", "ip-c2", 1000 + 44_999).execute).toBe(
+      true,
+    );
+    expect(checkWake("brillo lunar", "ip-c2", 1000 + 45_000).execute).toBe(
+      false,
+    );
+    clearQuestion("ip-c2");
+  });
+
+  it("spots undo intent and bare greetings", () => {
+    expect(isUndoIntent("deshazlo")).toBe(true);
+    expect(isUndoIntent("vale, deshaz eso")).toBe(true);
+    expect(isUndoIntent("undo it")).toBe(true);
+    expect(isUndoIntent("deshazlo todo")).toBe(true);
+    expect(isUndoIntent("segundo turno")).toBe(false);
+    expect(isUndoIntent("abre sesión")).toBe(false);
+    expect(isGreetingOnly("hola")).toBe(true);
+    expect(isGreetingOnly("vale, hola")).toBe(true);
+    expect(isGreetingOnly("buenas tardes")).toBe(true);
+    expect(isGreetingOnly("hola, abre sesión")).toBe(false);
+    expect(isGreetingOnly("¿qué puedes hacer?")).toBe(false);
+    expect(isGreetingOnly("")).toBe(false);
   });
 
   it("ignores strangers outside the window", () => {
@@ -35,13 +90,13 @@ describe("wake word gate", () => {
   it("ignores after the window expires", () => {
     checkWake("vale, hola", "ip-3", 3000);
     expect(checkWake("sigue hablando", "ip-3", 3000 + 45_000).execute).toBe(false);
-    expect(checkWake("sigue hablando", "ip-3", 3000 + 44_999).execute).toBe(true);
+    expect(checkWake("sigue hablando", "ip-3", 3000 + 44_999).execute).toBe(false);
   });
 
   it("keeps windows per client", () => {
     checkWake("vale, hola", "ip-4", 4000);
     expect(checkWake("oye esto", "ip-5", 4000).execute).toBe(false);
-    expect(checkWake("oye esto", "ip-4", 4000).execute).toBe(true);
+    expect(checkWake("oye esto", "ip-4", 4000).execute).toBe(false);
   });
 
   it("lets empty transcripts through to the silence path", () => {

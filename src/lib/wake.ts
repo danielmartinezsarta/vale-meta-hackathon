@@ -49,6 +49,42 @@ export function requestClientIp(request: Request): string {
 
 const attentionSince = new Map<string, number>();
 
+/**
+ * Pending question per connection: Vale asked, so the answer may come
+ * nameless. Set from the agent result, never from a transcript alone.
+ */
+const pendingSince = new Map<string, number>();
+
+export function markQuestionAsked(clientId: string, now: number = Date.now()): void {
+  pendingSince.set(clientId, now);
+}
+
+export function clearQuestion(clientId: string): void {
+  pendingSince.delete(clientId);
+}
+
+function hasPendingQuestion(clientId: string, now: number): boolean {
+  const since = pendingSince.get(clientId);
+  return since !== undefined && now - since < windowMs();
+}
+
+/** Undo intent: deshazlo / undo it, with or without the name. */
+export function isUndoIntent(transcript: string): boolean {
+  return /\b(deshaz\w*|undo(\s+it)?)\b/.test(` ${normalizeWakeText(transcript)} `);
+}
+
+const GREETING_ONLY =
+  /^(hola|hey|buenas|buenos dias|buenas tardes|buenas noches|alo|oiga|oigame)$/;
+
+/** Bare greeting, optionally naming Vale: never a data request. */
+export function isGreetingOnly(transcript: string): boolean {
+  const words = normalizeWakeText(transcript)
+    .split(" ")
+    .filter((word) => word !== "" && word !== "vale");
+  if (words.length === 0) return false;
+  return GREETING_ONLY.test(words.join(" "));
+}
+
 export interface WakeVerdict {
   execute: boolean;
   namedVale: boolean;
@@ -70,7 +106,13 @@ export function checkWake(
   }
   const since = attentionSince.get(clientId);
   if (since !== undefined && now - since < windowMs()) {
-    return { execute: true, namedVale: false };
+    // An open window covers continuations only: the answer to Vale's
+    // pending question, or an undo of the last write. A fresh request
+    // without the name stays ignored.
+    if (hasPendingQuestion(clientId, now) || isUndoIntent(transcript)) {
+      return { execute: true, namedVale: false };
+    }
+    return { execute: false, namedVale: false };
   }
   return { execute: false, namedVale: false };
 }

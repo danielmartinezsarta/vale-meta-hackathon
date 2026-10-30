@@ -13,7 +13,13 @@ import {
   runPendingActions,
   takePendingAction,
 } from "@/lib/pending-action";
-import { checkWake, requestClientIp } from "@/lib/wake";
+import {
+  checkWake,
+  clearQuestion,
+  isGreetingOnly,
+  markQuestionAsked,
+  requestClientIp,
+} from "@/lib/wake";
 import { openAsrConnection } from "@/lib/asr";
 import { estimateCost, formatTurnLog } from "@/lib/turn-log";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
@@ -226,6 +232,7 @@ export async function POST(request: Request): Promise<Response> {
             if (actions) {
               const executed = runPendingActions(getDb(), clientKey, actions);
               chainFailed();
+              clearQuestion(clientKey);
               send("reply", { text: executed.text });
               send("board", { board: getBoard(getDb()) });
               logTurn({
@@ -254,6 +261,13 @@ export async function POST(request: Request): Promise<Response> {
             slotKey: clientKey,
           });
           if (!aborted) chainSucceeded(result.responseId, result.chainNext);
+          // The reply decides the next nameless turn: a question keeps the
+          // window open for its answer, anything else retires it.
+          if (result.askedQuestion && !isGreetingOnly(transcript)) {
+            markQuestionAsked(clientKey, speechEndAt);
+          } else {
+            clearQuestion(clientKey);
+          }
           send("reply", { text: result.text });
           send("board", { board: getBoard(getDb()) });
           logTurn({

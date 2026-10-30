@@ -48,6 +48,7 @@ function fakeAgent(text = "All set, see you soon."): (
     firstTokenMs: 120,
     responseId: "resp_bridge",
     chainNext: true,
+    askedQuestion: false,
   });
 }
 
@@ -282,6 +283,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
         firstTokenMs: 1,
         responseId: `resp_b${calls}`,
         chainNext: true,
+        askedQuestion: false,
       };
     };
     const runTap = async () => {
@@ -355,6 +357,7 @@ describe("bridge language frame", () => {
         firstTokenMs: 1,
         responseId: "resp_lang",
         chainNext: true,
+        askedQuestion: false,
       };
     };
     const browser = new FakeBrowser();

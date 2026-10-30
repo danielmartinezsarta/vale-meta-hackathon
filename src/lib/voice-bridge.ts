@@ -7,7 +7,7 @@ import {
   chainSucceeded,
   nextPreviousResponseId,
 } from "./response-chain";
-import { checkWake } from "./wake";
+import { checkWake, clearQuestion, isGreetingOnly, markQuestionAsked } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { estimateCost, formatTurnLog } from "./turn-log";
 import {
@@ -40,6 +40,8 @@ export interface BridgeAgentResult {
   responseId: string;
   /** False after a completed write: the next turn starts the chain fresh. */
   chainNext: boolean;
+  /** Vale asked something: the answer may arrive without the name. */
+  askedQuestion: boolean;
 }
 
 export interface VoiceBridgeOptions {
@@ -224,6 +226,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         if (actions) {
           const executed = runPendingActions(getDb(), clientId, actions);
           chainFailed();
+          clearQuestion(clientId);
           sendJson(browser, { type: "reply", text: executed.text });
           sendJson(browser, { type: "board", board: getBoard(getDb()) });
           logTurn({
@@ -258,6 +261,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         },
       );
       if (!browserGone) chainSucceeded(result.responseId, result.chainNext);
+      if (result.askedQuestion && !isGreetingOnly(transcript)) {
+        markQuestionAsked(clientId, speechEndAt);
+      } else {
+        clearQuestion(clientId);
+      }
       sendJson(browser, { type: "reply", text: result.text });
       sendJson(browser, { type: "board", board: getBoard(getDb()) });
       logTurn({
