@@ -1,4 +1,5 @@
 import { TapToTalk } from "@/components/TapToTalk";
+import { NailPhoto } from "@/components/NailPhoto";
 
 export default function Home() {
   return (
@@ -9,6 +10,7 @@ export default function Home() {
         talk.
       </p>
       <TapToTalk />
+      <NailPhoto />
     </main>
   );
 }

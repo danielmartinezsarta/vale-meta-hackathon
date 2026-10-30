@@ -30,9 +30,18 @@ function schemaSql(): string {
   return readFileSync(join(process.cwd(), "src", "lib", "schema.sql"), "utf8");
 }
 
+/** Add columns that older databases predate. Idempotent. */
+export function migrateDatabase(db: ValeDb): void {
+  const columns = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[];
+  if (!columns.some((column) => column.name === "photo_path")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN photo_path TEXT");
+  }
+}
+
 /** Create tables and insert the invented seed. Idempotent. */
 export function seedDatabase(db: ValeDb): void {
   db.exec(schemaSql());
+  migrateDatabase(db);
   const addClient = db.prepare("INSERT OR IGNORE INTO clients (name) VALUES (?)");
   for (const name of seedData.clients) addClient.run(name);
   const addService = db.prepare(
