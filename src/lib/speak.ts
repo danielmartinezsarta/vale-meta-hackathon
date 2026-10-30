@@ -12,6 +12,7 @@ const VOICE_PRIORITY: Record<ValeLanguage, string[]> = {
 const FALLBACK_LANG: Record<ValeLanguage, string> = { es: "es-CO", en: "en-US" };
 export const SEAMLESS_SPEAKER = 10;
 const SEAMLESS_MAX_CHARS = 500;
+const SEAMLESS_CHUNK_CHARS = 400;
 const VOICES_WAIT_MS = 1000;
 
 export type VoiceEngine = "browser" | "seamless";
@@ -80,23 +81,38 @@ function ensureVoices(synth: SpeechSynthesis): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
-function sayWithBrowser(
-  synth: SpeechSynthesis,
-  text: string,
-  voices: readonly SpeechSynthesisVoice[],
-  language: ValeLanguage = DEFAULT_LANGUAGE,
-): void {
-  try {
-    synth.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.9;
-    const voice = pickVoice(voices, language);
-    utterance.lang = voice?.lang ?? FALLBACK_LANG[language];
-    if (voice) utterance.voice = voice;
-    synth.speak(utterance);
-  } catch {
-    /* voice output is best-effort; the text stays on screen */
+/**
+ * Reply split for sentence-by-sentence output: the first sentence reaches
+ * the speaker while the rest still synthesizes. Splits on . ! ? …, keeps
+ * the punctuation, and breaks overlong chunks on commas before hard-cutting.
+ */
+export function splitSentences(text: string): string[] {
+  const raw =
+    text.match(/[^.!?…]+[.!?…]+["»”)]?|.+$/g)?.map((part) => part.trim()) ??
+    [];
+  const sentences: string[] = [];
+  for (const part of raw) {
+    if (part === "") continue;
+    if (part.length <= SEAMLESS_CHUNK_CHARS) {
+      sentences.push(part);
+      continue;
+    }
+    const sub =
+      part
+        .match(/[^,;:]+[,;:]+|.+$/g)
+        ?.map((piece) => piece.trim())
+        .filter((piece) => piece !== "") ?? [part];
+    for (const piece of sub) {
+      if (piece.length <= SEAMLESS_CHUNK_CHARS) {
+        sentences.push(piece);
+      } else {
+        for (let at = 0; at < piece.length; at += SEAMLESS_CHUNK_CHARS) {
+          sentences.push(piece.slice(at, at + SEAMLESS_CHUNK_CHARS).trim());
+        }
+      }
+    }
   }
+  return sentences.filter((sentence) => sentence !== "");
 }
 
 let seamlessAudio: HTMLAudioElement | null = null;
@@ -112,40 +128,71 @@ export function stopSeamlessSpeech(): void {
   seamlessAudio = null;
 }
 
-async function playSeamless(
-  text: string,
-  language: ValeLanguage = DEFAULT_LANGUAGE,
+async function playSentence(
+  playId: number,
+  sentence: string,
+  language: ValeLanguage,
+  onDone: () => void,
 ): Promise<void> {
-  stopSeamlessSpeech();
-  const playId = seamlessPlayId;
   let response: Response;
   try {
     response = await fetch(
-      `/api/seamless-voice?speaker=${SEAMLESS_SPEAKER}&text=${encodeURIComponent(text.slice(0, SEAMLESS_MAX_CHARS))}`,
+      `/api/seamless-voice?speaker=${SEAMLESS_SPEAKER}&text=${encodeURIComponent(sentence.slice(0, SEAMLESS_MAX_CHARS))}`,
     );
   } catch {
-    sayBrowserFallback(text, language);
+    sayBrowserFallback(sentence, language);
+    onDone();
     return;
   }
   if (!response.ok || playId !== seamlessPlayId) {
-    if (response.ok) return;
-    sayBrowserFallback(text, language);
+    if (!response.ok && playId === seamlessPlayId) {
+      sayBrowserFallback(sentence, language);
+    }
+    onDone();
     return;
   }
   try {
     const blob = await response.blob();
-    if (playId !== seamlessPlayId) return;
+    if (playId !== seamlessPlayId) {
+      onDone();
+      return;
+    }
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     seamlessAudio = audio;
     audio.onended = () => {
       URL.revokeObjectURL(url);
       if (seamlessAudio === audio) seamlessAudio = null;
+      onDone();
     };
     await audio.play();
   } catch {
-    sayBrowserFallback(text, language);
+    if (playId === seamlessPlayId) sayBrowserFallback(sentence, language);
+    onDone();
   }
+}
+
+/**
+ * Sentence by sentence: the first sentence fetches and plays at once, each
+ * ending cues the next. First audio no longer waits for the whole reply.
+ */
+function playSeamless(
+  text: string,
+  language: ValeLanguage = DEFAULT_LANGUAGE,
+): void {
+  stopSeamlessSpeech();
+  const playId = seamlessPlayId;
+  const sentences = splitSentences(text);
+  if (sentences.length === 0) return;
+  let index = 0;
+  const next = (): void => {
+    if (playId !== seamlessPlayId) return;
+    if (index >= sentences.length) return;
+    const sentence = sentences[index];
+    index += 1;
+    void playSentence(playId, sentence, language, next);
+  };
+  next();
 }
 
 /** Seamless failed: the browser voice says it instead of silence. */
@@ -155,7 +202,37 @@ function sayBrowserFallback(
 ): void {
   const s = synth();
   if (!s) return;
-  void ensureVoices(s).then((voices) => sayWithBrowser(s, text, voices, language));
+  const sentences = splitSentences(text);
+  if (sentences.length === 0) return;
+  const voices = s.getVoices();
+  if (voices.length > 0) {
+    saySentencesWithBrowser(s, sentences, voices, language);
+    return;
+  }
+  void ensureVoices(s).then((late) =>
+    saySentencesWithBrowser(s, sentences, late, language),
+  );
+}
+
+function saySentencesWithBrowser(
+  s: SpeechSynthesis,
+  sentences: string[],
+  voices: readonly SpeechSynthesisVoice[],
+  language: ValeLanguage,
+): void {
+  try {
+    s.cancel();
+    for (const sentence of sentences) {
+      const utterance = new SpeechSynthesisUtterance(sentence);
+      utterance.rate = 0.9;
+      const voice = pickVoice(voices, language);
+      utterance.lang = voice?.lang ?? FALLBACK_LANG[language];
+      if (voice) utterance.voice = voice;
+      s.speak(utterance);
+    }
+  } catch {
+    /* voice output is best-effort; the text stays on screen */
+  }
 }
 
 export function speak(
@@ -163,20 +240,24 @@ export function speak(
   language: ValeLanguage = DEFAULT_LANGUAGE,
 ): void {
   if (text.trim() === "") return;
+  const sentences = splitSentences(text);
+  if (sentences.length === 0) return;
   if (engine === "seamless") {
     // The demo speaker is fixed; the reply text itself stays in the
     // selected language, so Seamless never invents another one.
-    void playSeamless(text, language);
+    playSeamless(text, language);
     return;
   }
   const s = synth();
   if (!s) return;
   const voices = s.getVoices();
   if (voices.length > 0) {
-    sayWithBrowser(s, text, voices, language);
+    saySentencesWithBrowser(s, sentences, voices, language);
     return;
   }
-  void ensureVoices(s).then((late) => sayWithBrowser(s, text, late, language));
+  void ensureVoices(s).then((late) =>
+    saySentencesWithBrowser(s, sentences, late, language),
+  );
 }
 
 export function stopSpeaking(reason: string): void {
