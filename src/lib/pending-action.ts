@@ -61,7 +61,13 @@ export function pendingConfirmTitle(
   if (open) {
     const client = clean(open.client_name);
     const service = clean(open.service_name);
+    const closes = actions.some((entry) => entry.tool === "close_session");
     if (client !== undefined && service !== undefined) {
+      if (closes) {
+        return en
+          ? `Close the open session and open ${client} for ${service}?`
+          : `¿Cierro la sesión abierta y abro ${client} de ${service}?`;
+      }
       return en
         ? `Open session with ${client} for ${service}?`
         : `¿Abro sesión con ${client} de ${service}?`;
@@ -126,9 +132,37 @@ export function buildPendingActions(
   db: ValeDb,
   toolName: string,
   args: Record<string, unknown>,
-  toolResult: { ok: boolean; pendingCreate?: unknown },
+  toolResult: {
+    ok: boolean;
+    pendingCreate?: unknown;
+    pendingSessionSwitch?: unknown;
+  },
 ): PendingAction[] | undefined {
   if (!toolResult.ok) {
+    // A live session blocks the requested open: a yes closes it first.
+    // Unknown clients join the same yes; the open re-validates the service.
+    if (toolName === "open_session") {
+      const target = toolResult.pendingSessionSwitch as
+        | { client_name?: unknown; service_name?: unknown }
+        | undefined;
+      const client = clean(target?.client_name);
+      const service = clean(target?.service_name);
+      if (
+        client !== undefined &&
+        service !== undefined &&
+        matchOne(allServices(db), service).kind === "match"
+      ) {
+        const steps: PendingAction[] = [{ tool: "close_session", args: {} }];
+        if (matchOne(allClients(db), client).kind === "none") {
+          steps.push({ tool: "create_client", args: { name: client } });
+        }
+        steps.push({
+          tool: "open_session",
+          args: { client_name: client, service_name: service },
+        });
+        return steps;
+      }
+    }
     if (toolName === "log_supply_use") {
       const name = clean(toolResult.pendingCreate);
       if (name !== undefined && getOpenSession(db) !== null) {

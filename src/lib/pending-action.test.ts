@@ -11,7 +11,7 @@ import {
   setPendingAction,
   takePendingAction,
 } from "./pending-action";
-import { openSession } from "./vale-tools";
+import { getOpenSession, openSession } from "./vale-tools";
 import { windowMs } from "./wake";
 
 describe("pending action", () => {
@@ -210,5 +210,38 @@ describe("pending action", () => {
     setPendingAction("pend-peek-stale", [{ tool: "create_client", args: { name: "Noa" } }], 1000);
     expect(peekPendingAction("pend-peek-stale", 1000 + 60_000)).toBe(false);
     expect(takePendingAction("pend-peek-stale", 1000 + 60_000)).toBeUndefined();
+  });
+
+  it("switches a live session on yes: close, register, open", () => {
+    const db = freshTestDb();
+    openSession(db, { client_name: "Ana", service_name: "Gel refill" });
+    const proposal = buildPendingActions(
+      db,
+      "open_session",
+      { client_name: "Chloe", service_name: "Gel refill" },
+      {
+        ok: false,
+        pendingSessionSwitch: { client_name: "Chloe", service_name: "Gel refill" },
+      },
+    );
+    expect(proposal).toEqual([
+      { tool: "close_session", args: {} },
+      { tool: "create_client", args: { name: "Chloe" } },
+      {
+        tool: "open_session",
+        args: { client_name: "Chloe", service_name: "Gel refill" },
+      },
+    ]);
+    expect(pendingConfirmTitle(proposal ?? [], "en")).toBe(
+      "Close the open session and open Chloe for Gel refill?",
+    );
+    setPendingAction("pend-switch", proposal ?? []);
+    const executed = runPendingActions(db, "pend-switch", takePendingAction("pend-switch") ?? []);
+    expect(executed.toolUsed).toBe("open_session");
+    const open = getOpenSession(db);
+    expect(open?.client_id).toBeGreaterThan(0);
+    const name = db.prepare("SELECT name FROM clients WHERE id = ?").get(open?.client_id ?? -1) as { name: string };
+    expect(name.name).toBe("Chloe");
+    db.close();
   });
 });

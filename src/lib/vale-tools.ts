@@ -21,6 +21,8 @@ export interface ToolResult {
   pendingCreate?: string;
   /** Set when an off-hours booking waits for the user's yes. */
   pendingOffHours?: boolean;
+  /** Set when a live session blocks the requested open: a yes closes it first. */
+  pendingSessionSwitch?: { client_name: string; service_name: string };
 }
 
 interface Named {
@@ -372,12 +374,18 @@ export function openSession(db: ValeDb, args: { client_name?: unknown; service_n
       name: string;
     } | undefined;
     const who = `${clientLabel(db, already.client_id)}, ${service?.name ?? "unknown"}`;
+    const requestedClient = typeof args.client_name === "string" ? args.client_name.trim() : "";
+    const requestedService = typeof args.service_name === "string" ? args.service_name.trim() : "";
     return {
       ok: false,
       message:
         language === "en"
-          ? `There is already an open session (${who}). Do not call close_session yet: first tell the user what is open and ask whether to close it.`
-          : `Ya hay una sesión abierta (${who}). No llames close_session todavía: primero dile al usuario qué hay abierto y pregunta si lo cierra.`,
+          ? `There is already an open session (${who}). Do not call close_session yet: first tell the user what is open and ask whether to close it and open ${requestedClient || "the new one"}.`
+          : `Ya hay una sesión abierta (${who}). No llames close_session todavía: primero dile al usuario qué hay abierto y pregunta si lo cierra y abre ${requestedClient || "la nueva"}.`,
+      pendingSessionSwitch:
+        requestedClient !== "" && requestedService !== ""
+          ? { client_name: requestedClient, service_name: requestedService }
+          : undefined,
     };
   }
   const clientName = typeof args.client_name === "string" ? args.client_name : "";
