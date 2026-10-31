@@ -802,4 +802,58 @@ describe("closed reply language", () => {
     expect(modelFetch).not.toHaveBeenCalled();
     db.close();
   });
+
+  it("sends a yes answering Vale's own open question to the model", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        return sseResponse([spoken("resp_y", "Closing Emma, opening Chloe.")]);
+      }),
+    );
+    const db = freshTestDb();
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "yes",
+      language: "en",
+      slotKey: "pend-open-question",
+      db,
+      history: [
+        { role: "user", text: "Vale, open a session with Chloe for gel refill", tool: null },
+        {
+          role: "vale",
+          text: "Emma's session is still open. Should I close it and open Chloe for gel refill?",
+          tool: null,
+        },
+      ],
+    });
+    expect(result.text).toBe("Closing Emma, opening Chloe.");
+    expect(bodies).toHaveLength(1);
+    expect(String(bodies[0].instructions)).toContain("just said yes to your last question");
+    db.close();
+  });
+
+  it("still clarifies a yes when Vale's question already ran a tool", async () => {
+    const modelFetch = vi.fn(async () => sseResponse([spoken("resp_z", "Done.")]));
+    vi.stubGlobal("fetch", modelFetch);
+    const db = freshTestDb();
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "yes",
+      language: "en",
+      slotKey: "pend-acted-question",
+      db,
+      history: [
+        { role: "user", text: "Vale, save a note for Emma", tool: null },
+        { role: "vale", text: "Saved. Anything else?", tool: "add_note" },
+      ],
+    });
+    expect(result.text).toBe("What would you like me to confirm?");
+    expect(result.toolUsed).toBeNull();
+    expect(modelFetch).not.toHaveBeenCalled();
+    db.close();
+  });
 });

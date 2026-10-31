@@ -395,6 +395,31 @@ async function postResponses(
 /** Max model rounds per turn: enough for ask-then-act chains, never unbounded. */
 const MAX_TOOL_ROUNDS = 4;
 
+/**
+ * Vale's own still-open question: her last reply asked one without acting.
+ * No tool ran, so no proposal was stored and the duplicate guard must not
+ * swallow the yes — the yes authorizes what she asked. A question asked
+ * through a tool (refusal, ask-first) already stored or deliberately
+ * cleared its proposal, so only a tool-less question counts.
+ */
+function answersOpenQuestion(history: HistoryTurn[]): boolean {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const turn = history[i];
+    if (turn.role !== "vale") continue;
+    return turn.tool == null && turn.text.trim().endsWith("?");
+  }
+  return false;
+}
+
+/**
+ * Traffic rule for a yes that answers Vale's own open question: carry out
+ * what she proposed with the tools, or clarify if there is nothing to do.
+ * Volatile, so it rides with the state facts at the end, never the base.
+ */
+const YES_TO_OPEN_QUESTION =
+  "The user just said yes to your last question, which you asked without acting: " +
+  "carry out what you proposed with the tools now, or clarify if there is nothing to carry out.";
+
 export interface AgentTurnOptions {
   key: string;
   transcript: string;
@@ -420,9 +445,15 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   const db = options.db ?? getDb();
   const language = options.language ?? DEFAULT_LANGUAGE;
   const slotKey = options.slotKey ?? "local";
-  // A yes with nothing stored never reaches the model: it can only confirm
-  // a proposal, and repeating the last write is the E5 duplicate-note bug.
-  if (isConfirmYes(options.transcript) && !peekPendingAction(slotKey)) {
+  // A yes with nothing stored answers Vale's own still-open question when
+  // her last reply asked one without acting: it goes to the model so the
+  // question carries an executable proposal. Any other yes clarifies — it
+  // can only confirm a proposal, and repeating a write is the E5 bug.
+  const openQuestion =
+    isConfirmYes(options.transcript) &&
+    !peekPendingAction(slotKey) &&
+    answersOpenQuestion(options.history ?? []);
+  if (isConfirmYes(options.transcript) && !peekPendingAction(slotKey) && !openQuestion) {
     return {
       text: clarifyText(language),
       usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
@@ -435,6 +466,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   // base across turns while the date, name, slots and session ride at the end.
   const instructions = [
     buildInstructions(language),
+    ...(openQuestion ? [YES_TO_OPEN_QUESTION] : []),
     buildStateFacts(
       localDay(),
       options.userName ?? userName(db),

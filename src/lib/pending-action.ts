@@ -93,7 +93,7 @@ export function pendingConfirmTitle(
   return en ? "Should I save it?" : "¿Lo guardo?";
 }
 
-/** Peek without consuming: a bare yes with nothing stored clarifies instead of calling the model. */
+/** Peek without consuming: true while a stored proposal waits for its yes. */
 export function peekPendingAction(
   key: string,
   now: number = Date.now(),
