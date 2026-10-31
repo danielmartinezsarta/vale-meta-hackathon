@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   PRIVATE_NOTE_LABEL,
   freshTestDb,
@@ -8,6 +10,7 @@ import {
   getPublicNotes,
   recentTurns,
   recordTurn,
+  resolveDbFile,
   seedDatabase,
   userName,
 } from "./db";
@@ -135,6 +138,34 @@ describe("test-database guards", () => {
     seedDatabase(db);
     expect(userName(db)).toBe("Maria");
     db.close();
+  });
+
+  it("resolves the live file by default and honors VALE_DB_PATH", () => {
+    const saved = process.env.VALE_DB_PATH;
+    try {
+      delete process.env.VALE_DB_PATH;
+      expect(resolveDbFile("/tmp/x")).toBe(join("/tmp", "x", "data", "vale.db"));
+      process.env.VALE_DB_PATH = "data/eval.db";
+      expect(resolveDbFile("/tmp/x")).toBe(join("/tmp", "x", "data", "eval.db"));
+      process.env.VALE_DB_PATH = "/tmp/abs/eval.db";
+      expect(resolveDbFile("/tmp/x")).toBe("/tmp/abs/eval.db");
+    } finally {
+      if (saved === undefined) delete process.env.VALE_DB_PATH;
+      else process.env.VALE_DB_PATH = saved;
+    }
+  });
+
+  it("never lets the eval runner target the live database file", () => {
+    const source = readFileSync(
+      join(process.cwd(), "scripts", "eval-hack017.mjs"),
+      "utf8",
+    );
+    // The runner resolves its own disposable file through VALE_DB_PATH.
+    expect(source).toContain("VALE_DB_PATH");
+    // No reset or open may name the live file: rmSync vale.db once
+    // deleted Daniel's real turns, clients and appointments.
+    expect(source).not.toMatch(/rmSync\([^)]*vale\.db/);
+    expect(source).not.toMatch(/new DatabaseSync\([^)]*vale\.db/);
   });
 
   it("refuses the file database under vitest", () => {

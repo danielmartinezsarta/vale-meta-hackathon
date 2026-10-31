@@ -1,13 +1,24 @@
 // Server-side only: holds the SQLite database. Never import from client code.
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import seedData from "./seed-data.json";
 import { quotePrice, type PricingConfig } from "./quote";
 
 export type ValeDb = DatabaseSync;
 
-export const DB_FILE = join(process.cwd(), "data", "vale.db");
+/**
+ * File database location. VALE_DB_PATH overrides it (absolute, or relative
+ * to the working directory) so evals and tools can use their own file and
+ * never touch the live data/vale.db. Pure for tests: pass cwd explicitly.
+ */
+export function resolveDbFile(cwd: string = process.cwd()): string {
+  const override = process.env.VALE_DB_PATH?.trim();
+  if (override) return isAbsolute(override) ? override : join(cwd, override);
+  return join(cwd, "data", "vale.db");
+}
+
+export const DB_FILE = resolveDbFile();
 
 // Placeholder shown wherever a private health note would appear.
 // The real text never leaves this module toward the cloud.
@@ -304,8 +315,9 @@ export function getDb(): ValeDb {
     );
   }
   try {
-    mkdirSync(dirname(DB_FILE), { recursive: true });
-    shared = new DatabaseSync(DB_FILE);
+    const file = resolveDbFile();
+    mkdirSync(dirname(file), { recursive: true });
+    shared = new DatabaseSync(file);
     seedDatabase(shared);
     return shared;
   } catch {

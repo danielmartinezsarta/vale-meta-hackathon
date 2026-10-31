@@ -1,18 +1,27 @@
 // HACK-017 conversation eval runner. Usage:
-//   node scripts/eval-hack017.mjs <server-url> <conversations.json> [--lang=es] [--server-log=path]
-// Resets data/vale.db (schema + minimal invented services/supplies), runs
-// every turn as POST /api/voice?language=<lang>&client=<run>-<conv> with a
-// JSON transcript, and prints one JSON object with per-turn client timings
-// plus every event name seen. Server-side [voice-turn] lines (ttft, tool,
-// cost, ignored, chain, cached tokens) are matched by client key from
-// --server-log when given, and their input/cached totals print at the end.
+//   VALE_DB_PATH=data/eval.db node scripts/eval-hack017.mjs <server-url> <conversations.json> [--lang=es] [--server-log=path]
+// Resets its OWN database file (VALE_DB_PATH, default data/eval.db: schema +
+// minimal invented services/supplies) and never touches the live data/vale.db.
+// Launch the server under test with the same VALE_DB_PATH. Runs every turn as
+// POST /api/voice?language=<lang>&client=<run>-<conv> with a JSON transcript,
+// and prints one JSON object with per-turn client timings plus every event
+// name seen. Server-side [voice-turn] lines (ttft, tool, cost, ignored, chain,
+// cached tokens) are matched by client key from --server-log when given, and
+// their input/cached totals print at the end.
 // All data invented; the Meta key stays server-side (never sent by this script).
 import { readFileSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { join, dirname } from "node:path";
+import { isAbsolute, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// Own disposable file: the live data/vale.db is never reset nor opened here.
+// Run the server with the same VALE_DB_PATH so both sides share this file.
+const dbFile = (() => {
+  const override = (process.env.VALE_DB_PATH ?? "").trim();
+  if (!override) return join(root, "data", "eval.db");
+  return isAbsolute(override) ? override : join(root, override);
+})();
 const [server, convFile] = process.argv.slice(2);
 if (!server || !convFile) {
   console.error("usage: node scripts/eval-hack017.mjs <server-url> <conversations.json> [--lang=es] [--server-log=path]");
@@ -27,13 +36,13 @@ const convs = JSON.parse(readFileSync(convFile, "utf8")).conversations;
 // deleting it under a live server orphans its handle and every write fails.
 const noReset = process.argv.includes("--no-reset");
 if (!noReset) {
-  rmSync(join(root, "data", "vale.db"), { force: true });
+  rmSync(dbFile, { force: true });
   {
     const { mkdirSync } = await import("node:fs");
     mkdirSync(join(root, "data"), { recursive: true });
   }
 }
-const db = new DatabaseSync(join(root, "data", "vale.db"));
+const db = new DatabaseSync(dbFile);
 if (!noReset) {
   db.exec(readFileSync(join(root, "src", "lib", "schema.sql"), "utf8"));
 }
