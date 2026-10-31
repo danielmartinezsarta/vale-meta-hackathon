@@ -23,7 +23,7 @@ export function normalizeWakeText(value: string): string {
     .trim();
 }
 
-function wakeWords(): string[] {
+export function wakeWords(): string[] {
   const words = (process.env.VALE_WAKE_WORDS ?? "")
     .split(",")
     .map((word) => normalizeWakeText(word.trim()))
@@ -31,10 +31,14 @@ function wakeWords(): string[] {
   return words.length > 0 ? words : DEFAULT_WAKE_WORDS;
 }
 
-export function windowMs(): number {
+/** Open service session on the table: the window stretches to 90 s. */
+export const SESSION_WINDOW_S = 90;
+
+/** Sliding window, longer while a service session is open on the table. */
+export function windowMs(sessionOpen = false): number {
   const seconds = Number(process.env.VALE_ATTENTION_WINDOW_S);
   if (!Number.isFinite(seconds) || seconds < 0) {
-    return DEFAULT_WINDOW_S * 1000;
+    return (sessionOpen ? SESSION_WINDOW_S : DEFAULT_WINDOW_S) * 1000;
   }
   return seconds * 1000;
 }
@@ -148,9 +152,10 @@ export function checkWake(
   transcript: string,
   clientId: string,
   now: number = Date.now(),
+  sessionOpen = false,
 ): WakeVerdict {
   const since = attentionSince.get(clientId);
-  const inWindow = since !== undefined && now - since < windowMs();
+  const inWindow = since !== undefined && now - since < windowMs(sessionOpen);
   const sinceReplyS = since === undefined ? null : (now - since) / 1000;
   if (namesVale(transcript)) {
     attentionSince.set(clientId, now);

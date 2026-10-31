@@ -137,7 +137,7 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
     });
     const first = FakeWs.instances[1];
     first.open();
-    driver!.onFrame(speechFrame());
+    for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
     driver!.onSpeechEnd();
     first.serverMessage({
       type: "transcript",
@@ -157,7 +157,7 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
     });
     const second = FakeWs.instances[2];
     second.open();
-    driver!.onFrame(speechFrame());
+    for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
     driver!.onSpeechEnd();
     await waitFor(() => {
       expect(

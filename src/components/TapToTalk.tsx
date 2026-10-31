@@ -58,6 +58,10 @@ function hasVisibleContent(turn: {
 
 // Mirrors the VAD threshold in capture.ts.
 const VOICE_ENERGY_THRESHOLD = 200;
+/** Below this much voiced audio the utterance is noise, never a turn. */
+const MIN_VOICED_MS = 300;
+/** 960 samples at the 24 kHz capture rate (capture.ts). */
+const FRAME_MS = 40;
 
 function SpeakerIcon() {
   return (
@@ -932,6 +936,27 @@ export function TapToTalk() {
           onSpeechEnd: () => {
             if (!sessionRef.current || posted) return;
             posted = true;
+            // Below ~300 ms of voiced audio the mic heard noise, not Daniel:
+            // drop the turn before it reaches the wire. An empty never cuts
+            // her voice (audible starts never cut) and never moves the window
+            // (the server only stamps attention on executed turns and replies).
+            const transport = transports.get(currentId);
+            if ((transport?.voiced ?? 0) * FRAME_MS < MIN_VOICED_MS) {
+              if (transport) {
+                transport.failed = true;
+                const socket = transport.socket;
+                if (socket) {
+                  try {
+                    socket.close();
+                  } catch {
+                    /* already closed */
+                  }
+                }
+              }
+              removeTurn(currentId);
+              openTurn(false);
+              return;
+            }
             // Every utterance is transcribed; the server tells echo
             // (gate:eco, ignored) apart from a real turn (reply).
             endTurnTransport(currentId);

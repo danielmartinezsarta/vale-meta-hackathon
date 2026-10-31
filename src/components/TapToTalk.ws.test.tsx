@@ -125,7 +125,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     // No per-turn socket while the conversation socket is up.
     expect(FakeWs.instances).toHaveLength(1);
 
-    driver!.onFrame(speechFrame());
+    for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
     expect(ws.sentBinaryCount()).toBeGreaterThan(0);
 
     // End of speech: a JSON control ends the turn (never audio bytes).
@@ -235,7 +235,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     expect(first.url).toContain("/voice");
     first.open();
     driver!.onSpeechStart();
-    driver!.onFrame(speechFrame());
+    for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
 
     // Drop before speech end: the turn falls back to POST, no alert.
     first.drop();
@@ -269,7 +269,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     expect(ws.url).toContain("/voice");
     ws.open();
     driver!.onSpeechStart();
-    driver!.onFrame(speechFrame());
+    for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
     driver!.onSpeechEnd();
     await waitFor(() => {
       expect(

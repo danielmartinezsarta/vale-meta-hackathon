@@ -38,7 +38,7 @@ function burst(callbacks: CaptureCallbacks) {
   const frame = new Int16Array(960).fill(4000);
   callbacks.onFrame(frame);
   callbacks.onSpeechStart();
-  callbacks.onFrame(frame);
+  for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
   callbacks.onSpeechEnd();
 }
 

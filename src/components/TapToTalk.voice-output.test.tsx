@@ -121,14 +121,18 @@ describe("browser voice output", () => {
     FakeWs.instances[0].open();
     const ws = FakeWs.instances[0];
     const frame = new Int16Array(960);
+    const voiced = new Int16Array(960).fill(4000);
+    const voice = (n: number) => {
+      for (let i = 0; i < n; i += 1) driver!.onFrame?.(voiced);
+    };
     const endStreams = () =>
       ws.sentStrings().filter((raw) => raw.includes("endStream")).length;
 
-    // Silence: speech cuts nothing (nothing to cut) and the turn rides the
-    // conversation socket, never the buffered POST.
+    // Real voice: speech cuts nothing (nothing to cut) and the turn rides
+    // the conversation socket, never the buffered POST.
     driver!.onSpeechStart();
     expect(mockStopSpeaking).toHaveBeenCalledTimes(1);
-    driver!.onFrame?.(frame);
+    voice(8);
     driver!.onSpeechEnd();
     expect(endStreams()).toBe(1);
 
@@ -151,8 +155,7 @@ describe("browser voice output", () => {
     driver!.onSpeechStart();
     expect(mockStopSpeaking).not.toHaveBeenCalled();
     expect(FakeWs.instances).toHaveLength(1);
-    driver!.onFrame?.(frame);
-    driver!.onFrame?.(frame);
+    voice(8);
     expect(ws.sentBinaryCount()).toBeGreaterThan(binaryBefore);
     driver!.onSpeechEnd();
     expect(endStreams()).toBe(2);
@@ -172,7 +175,7 @@ describe("browser voice output", () => {
     // the streaming text.
     driver!.onSpeechStart();
     expect(mockStopSpeaking).not.toHaveBeenCalled();
-    driver!.onFrame?.(frame);
+    voice(8);
     ws.serverMessage({
       type: "transcript",
       transcript: "Vale, book it November first",
@@ -196,7 +199,7 @@ describe("browser voice output", () => {
     driver!.onFrame?.(frame);
     speakAudibleRef.current = false;
     driver!.onSpeechStart();
-    driver!.onFrame?.(frame);
+    voice(8);
     expect(mockStopSpeaking).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Listo, te agendo.")).toBeDefined();
     driver!.onSpeechEnd();
@@ -206,6 +209,56 @@ describe("browser voice output", () => {
     await waitFor(() => {
       expect(screen.getByText("Listo, te agendo.")).toBeDefined();
     });
+  });
+
+  it("drops a sub-300ms blip before the wire: no turn, no cut, no window move", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+    });
+    vi.stubGlobal("WebSocket", FakeWs);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("no post", { status: 500 })));
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      driver = {
+        onSpeechStart: callbacks.onSpeechStart,
+        onSpeechEnd: callbacks.onSpeechEnd,
+        onFrame: callbacks.onFrame,
+      };
+      return { stop: () => {} };
+    });
+    speakAudibleRef.current = false;
+
+    render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
+    await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(1);
+    });
+    FakeWs.instances[0].open();
+    const ws = FakeWs.instances[0];
+    const endStreams = () =>
+      ws.sentStrings().filter((raw) => raw.includes("endStream")).length;
+
+    // Two voiced frames (80 ms): a mic blip, not Daniel.
+    driver!.onSpeechStart();
+    const voiced = new Int16Array(960).fill(4000);
+    driver!.onFrame?.(voiced);
+    driver!.onFrame?.(voiced);
+    const stopsBefore = mockStopSpeaking.mock.calls.length;
+    driver!.onSpeechEnd();
+    // Nothing reached the wire, no bubble, no alert: the session lives on.
+    expect(endStreams()).toBe(0);
+    expect(mockStopSpeaking.mock.calls.length).toBe(stopsBefore);
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // The next real utterance flows as usual on a fresh turn.
+    driver!.onSpeechStart();
+    for (let i = 0; i < 8; i += 1) driver!.onFrame?.(voiced);
+    driver!.onSpeechEnd();
+    expect(endStreams()).toBe(1);
+    expect(FakeWs.instances).toHaveLength(1);
   });
 });
 
@@ -278,6 +331,7 @@ describe("voice engine switch", () => {
       driver = {
         onSpeechStart: callbacks.onSpeechStart,
         onSpeechEnd: callbacks.onSpeechEnd,
+        onFrame: callbacks.onFrame,
       };
       return { stop: () => {} };
     });
@@ -297,6 +351,7 @@ describe("voice engine switch", () => {
     FakeWs.instances[0].open();
     driver!.onSpeechStart();
     const ws = FakeWs.instances[0];
+    for (let i = 0; i < 8; i += 1) driver!.onFrame?.(new Int16Array(960).fill(4000));
     driver!.onSpeechEnd();
     ws.serverMessage({ type: "reply", text: "Sesión abierta." });
     await waitFor(() => {
@@ -315,6 +370,7 @@ describe("voice engine switch", () => {
       driver = {
         onSpeechStart: callbacks.onSpeechStart,
         onSpeechEnd: callbacks.onSpeechEnd,
+        onFrame: callbacks.onFrame,
       };
       return { stop: () => {} };
     });
@@ -332,6 +388,7 @@ describe("voice engine switch", () => {
     FakeWs.instances[0].open();
     driver!.onSpeechStart();
     const ws = FakeWs.instances[0];
+    for (let i = 0; i < 8; i += 1) driver!.onFrame?.(new Int16Array(960).fill(4000));
     driver!.onSpeechEnd();
     ws.serverMessage({ type: "transcript", transcript: "ruido", final: true });
     ws.serverMessage({ type: "ignored" });
@@ -354,6 +411,7 @@ describe("voice engine switch", () => {
       driver = {
         onSpeechStart: callbacks.onSpeechStart,
         onSpeechEnd: callbacks.onSpeechEnd,
+        onFrame: callbacks.onFrame,
       };
       return { stop: () => {} };
     });
@@ -371,6 +429,7 @@ describe("voice engine switch", () => {
     FakeWs.instances[0].open();
     driver!.onSpeechStart();
     const ws = FakeWs.instances[0];
+    for (let i = 0; i < 8; i += 1) driver!.onFrame?.(new Int16Array(960).fill(4000));
     driver!.onSpeechEnd();
     ws.serverMessage({ type: "transcript", transcript: "vale, hola", final: true });
     ws.serverMessage({ type: "reply", text: "Hola, soy Vale." });
@@ -423,9 +482,12 @@ describe("voice engine switch", () => {
     // The conversation socket is up before speech: no per-turn socket.
     FakeWs.instances[0].open();
     const ws = FakeWs.instances[0];
-    const frame = new Int16Array(960);
+    const voiced = new Int16Array(960).fill(4000);
+    const voice = (n: number) => {
+      for (let i = 0; i < n; i += 1) driver!.onFrame?.(voiced);
+    };
     driver!.onSpeechStart();
-    driver!.onFrame?.(frame);
+    voice(8);
     driver!.onSpeechEnd();
     ws.serverMessage({ type: "reply", text: "Vale, te escucho." });
     await waitFor(() => {
@@ -443,7 +505,7 @@ describe("voice engine switch", () => {
     driver!.onSpeechStart();
     expect(mockStopSpeaking).not.toHaveBeenCalled();
     expect(screen.getByText("Vale, te escucho.")).toBeDefined();
-    driver!.onFrame?.(frame);
+    voice(8);
     expect(ws.sentBinaryCount()).toBeGreaterThan(binaryBefore);
     ws.serverMessage({ type: "transcript", transcript: "Vale, te" });
     expect(mockStopSpeaking).not.toHaveBeenCalled();

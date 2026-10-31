@@ -12,9 +12,11 @@ import {
 import {
   checkWake,
   collapseEcho,
+  noteAttention,
   requestClientId,
   type WakeVerdict,
 } from "@/lib/wake";
+import { getOpenSession } from "@/lib/vale-tools";
 import { openAsrConnection } from "@/lib/asr";
 import { estimateCost, formatTurnLog } from "@/lib/turn-log";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
@@ -259,6 +261,8 @@ export async function POST(request: Request): Promise<Response> {
               const executed = runPendingActions(getDb(), clientKey, actions, language);
               recordTurn(getDb(), clientKey, "vale", executed.text, executed.toolUsed);
               send("reply", { text: executed.text });
+              // Her reply restarts the window: the next turn counts from here.
+              noteAttention(clientKey);
               send("board", { board: getBoard(getDb()) });
               logTurn({
                 ts,
@@ -294,6 +298,8 @@ export async function POST(request: Request): Promise<Response> {
           });
           if (!aborted) recordTurn(getDb(), clientKey, "vale", result.text, result.toolUsed);
           send("reply", { text: result.text });
+          // Her reply restarts the window: the next turn counts from here.
+          noteAttention(clientKey);
           send("board", { board: getBoard(getDb()) });
           logTurn({
             ts,
@@ -347,7 +353,8 @@ export async function POST(request: Request): Promise<Response> {
           send("final", { transcript: cannedTranscript });
           // Sliding gate first: background chatter never reaches the model,
           // the board or the memory.
-          const verdict = checkWake(cannedTranscript, clientKey);
+          const sessionOpen = getOpenSession(getDb()) !== null;
+          const verdict = checkWake(cannedTranscript, clientKey, Date.now(), sessionOpen);
           if (!verdict.execute) {
             const cannedSlots = getSlots(clientKey);
             logTurn({
@@ -476,7 +483,8 @@ export async function POST(request: Request): Promise<Response> {
           closeStream();
           return;
         }
-        const verdict = checkWake(finalText, clientKey);
+        const sessionOpen = getOpenSession(getDb()) !== null;
+        const verdict = checkWake(finalText, clientKey, Date.now(), sessionOpen);
         if (!verdict.execute) {
           // Background chatter without the name: silent discard.
           const ignoredSlots = getSlots(clientKey);

@@ -55,8 +55,7 @@ describe("buffered turn upload (Safari iOS has no streaming request body)", () =
       window.setTimeout(() => {
         callbacks.onFrame(frame);
         callbacks.onSpeechStart();
-        callbacks.onFrame(frame);
-        callbacks.onFrame(frame);
+        for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
         callbacks.onSpeechEnd();
       }, 0);
       return { stop: () => {} };

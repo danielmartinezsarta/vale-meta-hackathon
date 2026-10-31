@@ -18,6 +18,7 @@ import {
   takePendingAction,
 } from "./pending-action";
 import { getSlots } from "./slot-memory";
+import { getOpenSession } from "./vale-tools";
 import {
   DEFAULT_LANGUAGE,
   parseLanguage,
@@ -436,6 +437,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           const executed = runPendingActions(getDb(), clientId, actions, turnLanguage);
           recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
           sendJson(browser, { type: "reply", text: executed.text });
+          // Her reply restarts the window: the next turn counts from here.
+          noteAttention(clientId);
           sendJson(browser, { type: "board", board: getBoard(getDb()) });
           logTurn({
             ts,
@@ -477,6 +480,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       );
       if (!browserGone) recordTurn(getDb(), clientId, "vale", result.text, result.toolUsed);
       sendJson(browser, { type: "reply", text: result.text });
+      // Her reply restarts the window: the next turn counts from here.
+      noteAttention(clientId);
       sendJson(browser, { type: "board", board: getBoard(getDb()) });
       logTurn({
         ts,
@@ -614,7 +619,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           return;
         }
         {
-          const verdict = checkWake(finalText, clientId);
+          const sessionOpen = getOpenSession(getDb()) !== null;
+          const verdict = checkWake(finalText, clientId, Date.now(), sessionOpen);
           if (!verdict.execute) {
             // Background chatter without the name: silent discard.
             logTurn({

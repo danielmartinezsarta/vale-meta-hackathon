@@ -756,6 +756,61 @@ describe("echo guard (her own reply back through the mic)", () => {
   });
 });
 
+describe("empty finals (noise, not Daniel)", () => {
+  it("discards an empty final without the model, the window or the board", async () => {
+    receivedEndStream = 0;
+    const agent = vi.fn(fakeAgent("Should never run."));
+    finalTranscript = "   ";
+    const lines: string[] = [];
+    const logSpy = vi
+      .spyOn(console, "log")
+      .mockImplementation((line: string) => {
+        lines.push(String(line));
+      });
+    try {
+      const browser = new FakeBrowser();
+      const client = `conv-empty-${Date.now()}`;
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: client,
+        metaUrl: url,
+        runAgent: agent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().filter((frame) => frame.type === "done").length,
+        ).toBe(1);
+      });
+      // Nothing executed: no model call, no reply, no board move.
+      expect(agent).not.toHaveBeenCalled();
+      expect(
+        browser.frames().filter((frame) => frame.type === "reply"),
+      ).toHaveLength(0);
+      expect(
+        browser.frames().filter((frame) => frame.type === "board"),
+      ).toHaveLength(0);
+      const served = lines
+        .filter((line) => line.startsWith("[voice-turn] "))
+        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
+      const empty = served.find((entry) => entry.transcript === "");
+      expect(empty).toMatchObject({ modelSkipped: true, gate: null });
+      browser.close(1000, "test done");
+    } finally {
+      logSpy.mockRestore();
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
+});
+
 describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
   it("parses string and Buffer endStream controls, ignores binary audio", () => {
     expect(tryParseControl(JSON.stringify({ type: "endStream" }))).toEqual({

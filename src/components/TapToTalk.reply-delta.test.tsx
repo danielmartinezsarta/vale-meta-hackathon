@@ -99,6 +99,7 @@ describe("reply streaming (transient output fix)", () => {
     const ws = FakeWs.instances[0];
     driver!.onFrame(speechFrame());
     driver!.onSpeechStart();
+    for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
     driver!.onSpeechEnd();
 
     ws.serverMessage({ type: "transcript", transcript: "five november", final: true });

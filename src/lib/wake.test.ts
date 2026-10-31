@@ -8,6 +8,7 @@ import {
   namesVale,
   requestClientId,
   sanitizeClientId,
+  wakeWords,
 } from "./wake";
 
 describe("wake word gate", () => {
@@ -126,6 +127,43 @@ describe("wake word gate", () => {
 
   it("ignores strangers outside the window", () => {
     expect(checkWake("qué hora es", "ip-2", 2000).execute).toBe(false);
+  });
+
+  it("never mistakes endearments for the name", () => {
+    for (const word of [
+      "darling",
+      "love",
+      "honey",
+      "dear",
+      "sweetie",
+      "babe",
+      "hun",
+    ]) {
+      expect(wakeWords()).not.toContain(word);
+      expect(namesVale(`hey ${word}, good morning`)).toBe(false);
+    }
+    // Field case: with headphones on, 16 min after the last reply, the ASR
+    // heard "darling" for "Vale". Outside the window it stays ignored.
+    expect(checkWake("Hey darling, good morning", "ip-darling", 1000)).toEqual(
+      {
+        execute: false,
+        namedVale: false,
+        gate: "ignorado",
+        sinceReplyS: null,
+      },
+    );
+  });
+
+  it("stretches the window to 90 s with an open session", () => {
+    checkWake("vale, open a session", "ip-w90", 1000, true);
+    // Expiry first: an in-window probe would renew the window itself.
+    expect(checkWake("follow up", "ip-w90", 1000 + 90_000, true).execute).toBe(
+      false,
+    );
+    checkWake("vale, open a session", "ip-w90b", 1000, true);
+    expect(
+      checkWake("follow up", "ip-w90b", 1000 + 89_000, true).execute,
+    ).toBe(true);
   });
 
   it("ignores after the window expires", () => {
