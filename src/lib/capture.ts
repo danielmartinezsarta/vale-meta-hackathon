@@ -87,6 +87,8 @@ export interface CaptureCallbacks {
   onFrame: (frame: Int16Array) => void;
   onSpeechStart: () => void;
   onSpeechEnd: () => void;
+  /** Fires on every audio block, speech or silence: the stall watchdog. */
+  onHeartbeat?: () => void;
   /** Listening feedback, 0..1 mic level; optional. */
   onLevel?: (level: number) => void;
   /** The context never left "suspended": zeros would flow. Tap again. */
@@ -143,6 +145,8 @@ function takePrepared(): AudioContext | null {
 
 export interface CaptureHandle {
   stop: () => void;
+  /** Live AudioContext state: the stall watchdog reports it, never blocks on it. */
+  state: () => string;
 }
 
 export function startCapture(
@@ -187,6 +191,11 @@ export function startCapture(
 
   processor.onaudioprocess = (event: AudioProcessingEvent) => {
     if (stopped) return;
+    try {
+      callbacks.onHeartbeat?.();
+    } catch {
+      /* the watchdog must never break capture */
+    }
     const input = event.inputBuffer.getChannelData(0);
     let mono = input;
     if (event.inputBuffer.numberOfChannels > 1) {
@@ -240,6 +249,13 @@ export function startCapture(
         /* already torn down */
       }
       void context.close().catch(() => {});
+    },
+    state() {
+      try {
+        return context.state;
+      } catch {
+        return "unknown";
+      }
     },
   };
 }

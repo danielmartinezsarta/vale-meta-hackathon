@@ -49,7 +49,7 @@ describe("buffered turn upload (Safari iOS has no streaming request body)", () =
     // One speech burst on the first capture only; later turns stay silent.
     let fired = false;
     mockStartCapture.mockImplementation((_stream, callbacks) => {
-      if (fired) return { stop: () => {} };
+      if (fired) return { stop: () => {}, state: () => "running" };
       fired = true;
       const frame = new Int16Array(960).fill(4000);
       window.setTimeout(() => {
@@ -58,7 +58,7 @@ describe("buffered turn upload (Safari iOS has no streaming request body)", () =
         for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
         callbacks.onSpeechEnd();
       }, 0);
-      return { stop: () => {} };
+      return { stop: () => {}, state: () => "running" };
     });
 
     const fetchMock = vi.fn((..._args: unknown[]) => {

@@ -104,7 +104,7 @@ describe("browser voice output", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {} };
+      return { stop: () => {}, state: () => "running" };
     });
     speakAudibleRef.current = false;
 
@@ -222,7 +222,7 @@ describe("browser voice output", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {} };
+      return { stop: () => {}, state: () => "running" };
     });
     speakAudibleRef.current = false;
 
@@ -331,7 +331,7 @@ describe("voice engine switch", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {} };
+      return { stop: () => {}, state: () => "running" };
     });
 
     render(<TapToTalk />);
@@ -368,7 +368,7 @@ describe("voice engine switch", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {} };
+      return { stop: () => {}, state: () => "running" };
     });
 
     render(<TapToTalk />);
@@ -408,7 +408,7 @@ describe("voice engine switch", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {} };
+      return { stop: () => {}, state: () => "running" };
     });
 
     render(<TapToTalk />);
@@ -458,7 +458,7 @@ describe("voice engine switch", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {} };
+      return { stop: () => {}, state: () => "running" };
     });
     speakAudibleRef.current = false;
 

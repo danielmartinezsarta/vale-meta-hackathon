@@ -5,7 +5,10 @@ import { startCapture, unlockAudioContext } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
   // jsdom has no AudioContext.
-  startCapture: vi.fn(() => ({ stop: () => {} })),
+  startCapture: vi.fn(() => ({
+    stop: () => {},
+    state: () => "running",
+  })),
   unlockAudioContext: vi.fn(),
 }));
 

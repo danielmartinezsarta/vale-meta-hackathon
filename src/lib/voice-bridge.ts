@@ -97,6 +97,7 @@ export function tryParseControl(
   | { type: "language"; language: ValeLanguage }
   | { type: "client"; client: string }
   | { type: "wake" }
+  | { type: "client-state"; state: Record<string, unknown> }
   | null {
   let text: string | null = null;
   if (typeof data === "string") {
@@ -111,9 +112,21 @@ export function tryParseControl(
       type?: unknown;
       language?: unknown;
       client?: unknown;
+      state?: unknown;
     };
     if (message.type === "endStream") return { type: "endStream" };
     if (message.type === "wake") return { type: "wake" };
+    if (
+      message.type === "client-state" &&
+      message.state !== null &&
+      typeof message.state === "object" &&
+      !Array.isArray(message.state)
+    ) {
+      return {
+        type: "client-state",
+        state: message.state as Record<string, unknown>,
+      };
+    }
     if (message.type === "language") {
       return { type: "language", language: parseLanguage(message.language) };
     }
@@ -151,8 +164,6 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       1,
       Number(process.env.VOICE_TURN_TIMEOUT_MS) || BRIDGE_TURN_TIMEOUT_MS,
     ),
-    retryBaseMs = 1000,
-    retryMaxMs = 8000,
     maxConsecutiveFailures = 5,
   } = options;
 
@@ -233,11 +244,15 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     clearTimeout(timer);
   };
 
+  // An ASR outage never kills the conversation: the turn is discarded
+  // silently and the next voice redials Meta at once. The user only sees an
+  // error after maxConsecutiveFailures straight failures, then the socket
+  // closes with a clear reason. One browser socket = visible alert only then.
   const failTurn = (message: string, code: string) => {
     if (settled) return;
-    sendJson(browser, { type: "error", message, code });
-    sendJson(browser, { type: "done" });
     if (!conversation) {
+      sendJson(browser, { type: "error", message, code });
+      sendJson(browser, { type: "done" });
       finish(1011, "turn-failed");
       return;
     }
@@ -253,8 +268,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     } catch {
       /* already closed */
     }
+    clearRetry();
     if (failedTurns >= maxConsecutiveFailures) {
-      // No silent redial loop: the browser sees the error above, then this.
+      // No silent redial loop: the browser sees the error below, then this.
+      sendJson(browser, { type: "error", message, code });
+      sendJson(browser, { type: "done" });
       settled = true;
       try {
         browser.close(1011, "meta-unavailable");
@@ -263,18 +281,29 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       }
       return;
     }
-    if (retryTimer === undefined) {
-      const delay = Math.min(
-        retryBaseMs * 2 ** (failedTurns - 1),
-        retryMaxMs,
-      );
-      retryTimer = setTimeout(() => {
-        retryTimer = undefined;
-        if (!settled && !browserGone && browser.readyState === 1) {
-          beginNextTurn();
-        }
-      }, delay);
-    }
+    // Silent discard: the next voice redials Meta; no visible error.
+    logTurn({
+      ts: new Date().toISOString(),
+      transcript: finalText,
+      ttftMs: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      audioSeconds: bufferedBytes / 48000,
+      tool: null,
+      modelSkipped: true,
+      error: code,
+      ignored: true,
+      asrMs: null,
+      chain: "none",
+      key: clientId,
+      slots: slotSnapshot(),
+      gate: null,
+      sinceReplyS: null,
+      totalMs: null,
+    });
+    sendJson(browser, { type: "ignored" });
+    sendJson(browser, { type: "done" });
+    beginNextTurn();
   };
 
   // The browser announces its stable id in a {type:"client"} frame (the
@@ -752,6 +781,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       // Tapping talk opens the window like naming Vale does.
       if (control.type === "wake") {
         noteAttention(clientId);
+        return;
+      }
+      // Field diagnostics: capture, AudioContext, tab visibility, speech
+      // and echo-hold state. Logged, never answered, never a turn.
+      if (control.type === "client-state") {
+        console.log(
+          `[client-state] client=${clientId} ${JSON.stringify(control.state).slice(0, 500)}`,
+        );
         return;
       }
       // Nothing ever voiced: answer locally instead of dialing Meta for it.

@@ -84,7 +84,7 @@ describe("interruption (fake-device fallback)", () => {
     const seen: CaptureCallbacks[] = [];
     mockStartCapture.mockImplementation((_stream, callbacks) => {
       seen.push(callbacks);
-      return { stop: () => {} };
+      return { stop: () => {}, state: () => "running" };
     });
     const turn = gatedTurn();
     const fetchMock = vi.fn(() => {

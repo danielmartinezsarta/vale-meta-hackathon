@@ -34,6 +34,8 @@ let server: WebSocketServer;
 let url = "";
 let dropOnAudio = false;
 let holdFinal = false;
+/** Next endStream gets a Meta error frame instead of a final. */
+let asrErrorOnce = false;
 let finalTranscript = "vale, live from the bridge";
 let receivedBinaryBytes = 0;
 let receivedEndStream = 0;
@@ -93,6 +95,13 @@ beforeAll(async () => {
       if (message.type === "endStream") {
         receivedEndStream += 1;
         if (holdFinal) return;
+        if (asrErrorOnce) {
+          asrErrorOnce = false;
+          socket.send(
+            JSON.stringify({ type: "error", message: "slow ingress" }),
+          );
+          return;
+        }
         socket.send(
           JSON.stringify({
             type: "transcript",
@@ -503,52 +512,54 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     browser.close(1000, "test done");
   });
 
-  it("redials once after a drop and resets the count on success", async () => {
+  it("discards a dropped turn silently and answers the next one", async () => {
     receivedAuth = [];
     dropOnAudio = true;
+    finalTranscript = "vale, second try";
     try {
       const browser = new FakeBrowser();
+      const agent = vi.fn(fakeAgent());
       attachVoiceBridge({
         browser: browser as unknown as WebSocket,
         key: "test-key",
         clientId: "conv-retry-ok",
         metaUrl: url,
-        runAgent: fakeAgent(),
+        runAgent: agent,
         conversation: true,
-        retryBaseMs: 50,
-        retryMaxMs: 100,
       });
       browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      // Silent discard: ignored, no visible error, socket stays up.
       await vi.waitFor(() => {
         expect(
-          browser.frames().some((frame) => frame.type === "error"),
+          browser.frames().some((frame) => frame.type === "ignored"),
         ).toBe(true);
       });
-      // No eager redial: the next voice opens it, after the backoff.
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      expect(receivedAuth.length).toBe(1);
+      expect(
+        browser.frames().some((frame) => frame.type === "error"),
+      ).toBe(false);
+      expect(browser.closed).toBeNull();
+      // The next voice redials Meta at once and runs the agent.
       dropOnAudio = false;
       browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
-      await vi.waitFor(() => {
-        expect(receivedAuth.length).toBe(2);
-      });
       browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
       await vi.waitFor(() => {
         expect(browser.frames().some((frame) => frame.type === "reply")).toBe(
           true,
         );
       });
+      expect(agent).toHaveBeenCalledTimes(1);
       expect(
         browser.frames().filter((frame) => frame.type === "error"),
-      ).toHaveLength(1);
+      ).toHaveLength(0);
       expect(browser.closed).toBeNull();
       browser.close(1000, "test done");
     } finally {
       dropOnAudio = false;
+      finalTranscript = "vale, live from the bridge";
     }
   });
 
-  it("closes the socket with a clear reason after straight failures", async () => {
+  it("shows the error only after straight failures, then closes", async () => {
     receivedAuth = [];
     dropOnAudio = true;
     try {
@@ -560,25 +571,32 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
         metaUrl: url,
         runAgent: fakeAgent(),
         conversation: true,
-        retryBaseMs: 20,
-        retryMaxMs: 40,
         maxConsecutiveFailures: 3,
       });
-      for (let turn = 1; turn <= 3; turn += 1) {
+      // First two failures stay silent: discarded, socket stays up.
+      for (let turn = 1; turn <= 2; turn += 1) {
         browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
         await vi.waitFor(() => {
           expect(
-            browser.frames().filter((frame) => frame.type === "error").length,
+            browser.frames().filter((frame) => frame.type === "ignored").length,
           ).toBe(turn);
         });
       }
+      expect(
+        browser.frames().some((frame) => frame.type === "error"),
+      ).toBe(false);
+      expect(browser.closed).toBeNull();
+      // Third straight failure: one visible error, then the close.
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().filter((frame) => frame.type === "error").length,
+        ).toBe(1);
+      });
       await vi.waitFor(() => {
         expect(browser.closed?.code).toBe(1011);
       });
       expect(browser.closed?.reason).toBe("meta-unavailable");
-      expect(
-        browser.frames().filter((frame) => frame.type === "error").length,
-      ).toBeGreaterThan(0);
       // Capped: no fourth dial even when audio keeps coming.
       const dials = receivedAuth.length;
       browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
@@ -586,6 +604,104 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       expect(receivedAuth.length).toBe(dials);
     } finally {
       dropOnAudio = false;
+    }
+  });
+
+  it("discards a mid-turn ASR error silently and keeps the conversation", async () => {
+    asrErrorOnce = true;
+    finalTranscript = "vale, after the outage";
+    try {
+      const browser = new FakeBrowser();
+      const agent = vi.fn(fakeAgent());
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: "conv-asr-error",
+        metaUrl: url,
+        runAgent: agent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      // The failed turn is discarded: no error, no reply, socket stays up.
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "ignored"),
+        ).toBe(true);
+      });
+      expect(
+        browser.frames().some((frame) => frame.type === "error"),
+      ).toBe(false);
+      expect(browser.closed).toBeNull();
+      expect(agent).not.toHaveBeenCalled();
+      // Next voice redials and runs normally.
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "reply")).toBe(
+          true,
+        );
+      });
+      expect(agent).toHaveBeenCalledTimes(1);
+      browser.close(1000, "test done");
+    } finally {
+      asrErrorOnce = false;
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
+
+  it("logs client-state frames without failing the turn", async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
+      logs.push(String(line));
+    });
+    finalTranscript = "vale, state check";
+    try {
+      const browser = new FakeBrowser();
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: "conv-client-state",
+        metaUrl: url,
+        runAgent: fakeAgent(),
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      // Diagnostics ride along mid-turn: logged, never a turn of their own.
+      browser.peerMessage(
+        Buffer.from(
+          JSON.stringify({
+            type: "client-state",
+            state: { capture: "live", visible: true },
+          }),
+        ),
+      );
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "reply")).toBe(
+          true,
+        );
+      });
+      expect(
+        logs.some((line) => line.startsWith("[client-state]")),
+      ).toBe(true);
+      expect(
+        browser.frames().some((frame) => frame.type === "error"),
+      ).toBe(false);
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+      spy.mockRestore();
     }
   });
 
@@ -837,6 +953,16 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
       type: "language",
       language: "en",
     });
+    expect(
+      tryParseControl(
+        Buffer.from(
+          JSON.stringify({ type: "client-state", state: { visible: false } }),
+        ),
+      ),
+    ).toEqual({ type: "client-state", state: { visible: false } });
+    expect(
+      tryParseControl(JSON.stringify({ type: "client-state" })),
+    ).toBeNull();
   });
 });
 

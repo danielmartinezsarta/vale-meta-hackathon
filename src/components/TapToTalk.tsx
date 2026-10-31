@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { startCapture, unlockAudioContext } from "@/lib/capture";
+import type { CaptureCallbacks, CaptureHandle } from "@/lib/capture";
 import { LevelMeter } from "@/components/LevelMeter";
 import { ValeBoard } from "@/components/ValeBoard";
 import type { Board } from "@/lib/board";
@@ -125,8 +126,10 @@ export function TapToTalk() {
   const controllersRef = useRef(new Set<AbortController>());
   const socketsRef = useRef(new Set<WebSocket>());
   const quietTimerRef = useRef(0);
+  const watchdogRef = useRef(0);
+  const visibilityHandlerRef = useRef<(() => void) | null>(null);
   const sessionEndRef = useRef<(() => void) | null>(null);
-  const captureRef = useRef<{ stop: () => void } | null>(null);
+  const captureRef = useRef<CaptureHandle | null>(null);
   const repliesRef = useRef(new Map<number, string>());
   const finalReceivedRef = useRef(new Set<number>());
   // Only a still-open turn's reply can be interrupted.
@@ -134,10 +137,22 @@ export function TapToTalk() {
   // Silent streak: the banner shows only on repeated silence.
   const silentStreakRef = useRef(0);
 
+  const clearCaptureWatch = useCallback(() => {
+    window.clearTimeout(quietTimerRef.current);
+    window.clearInterval(watchdogRef.current);
+    if (visibilityHandlerRef.current) {
+      document.removeEventListener(
+        "visibilitychange",
+        visibilityHandlerRef.current,
+      );
+      visibilityHandlerRef.current = null;
+    }
+  }, []);
+
   const stopSession = useCallback(() => {
     sessionRef.current = false;
     stopSpeaking("tap");
-    window.clearTimeout(quietTimerRef.current);
+    clearCaptureWatch();
     controllersRef.current.forEach((controller) => {
       try {
         controller.abort();
@@ -166,7 +181,7 @@ export function TapToTalk() {
     sessionEndRef.current?.();
     sessionEndRef.current = null;
     setStatus("idle");
-  }, []);
+  }, [clearCaptureWatch]);
 
   useEffect(() => stopSession, [stopSession]);
 
@@ -187,7 +202,7 @@ export function TapToTalk() {
   const endSessionWithAlert = useCallback(
     (message: string, code: string | null = null) => {
       sessionRef.current = false;
-      window.clearTimeout(quietTimerRef.current);
+      clearCaptureWatch();
       controllersRef.current.forEach((controller) => {
         try {
           controller.abort();
@@ -222,7 +237,7 @@ export function TapToTalk() {
       sessionEndRef.current?.();
       sessionEndRef.current = null;
     },
-    [],
+    [clearCaptureWatch],
   );
 
   const runSession = useCallback(
@@ -863,11 +878,93 @@ export function TapToTalk() {
         1,
         Number(process.env.NEXT_PUBLIC_VAD_END_SILENCE_MS) || 800,
       );
-      const capture = startCapture(
-        stream,
-        {
+      // Stall watchdog: the processor feeds a heartbeat on every audio
+      // block, speech or silence, so a quiet mic still proves it is alive.
+      // No blocks for STALL_MS means capture died (suspended context,
+      // throttled tab, killed processor) and restarts on the same stream.
+      // Silence never trips it: only the heartbeat counts, never frames.
+      const STALL_MS = 5000;
+      let lastBeatAt = Date.now();
+      let framesOut = 0;
+      // Latest echo hold for the field log: speech that started while Vale
+      // was audible and has not cut her yet.
+      const echoHold = (): boolean => {
+        const transport = transports.get(currentId);
+        return transport ? transport.heardVale && !transport.interrupted : false;
+      };
+      const snapshotState = (capture: string): Record<string, unknown> => ({
+        capture,
+        audio: captureRef.current?.state() ?? "unknown",
+        visible:
+          typeof document !== "undefined" ? document.visibilityState : "?",
+        speaking: isSpeaking(),
+        echoHold: echoHold(),
+        framesOut,
+        idleMs: Date.now() - lastBeatAt,
+      });
+      const sendClientState = (capture: string) => {
+        let payload = "";
+        try {
+          payload = JSON.stringify({
+            type: "client-state",
+            state: snapshotState(capture),
+          });
+        } catch {
+          return;
+        }
+        // Diagnostics ride the open socket; they never open one themselves.
+        try {
+          if (
+            convOpen &&
+            convSocket &&
+            typeof WebSocket !== "undefined" &&
+            convSocket.readyState === WebSocket.OPEN
+          ) {
+            convSocket.send(payload);
+            return;
+          }
+          const socket = transports.get(currentId)?.socket;
+          if (
+            socket &&
+            typeof WebSocket !== "undefined" &&
+            socket.readyState === WebSocket.OPEN
+          ) {
+            socket.send(payload);
+          }
+        } catch {
+          /* diagnostics never break the turn */
+        }
+      };
+      const logClientState = (event: string) => {
+        const snapshot = snapshotState(event);
+        try {
+          console.log(
+            `[capture] ${event} visible=${String(snapshot.visible)} audio=${String(snapshot.audio)} speaking=${String(snapshot.speaking)} echoHold=${String(snapshot.echoHold)} frames=${String(snapshot.framesOut)} idleMs=${String(snapshot.idleMs)}`,
+          );
+        } catch {
+          /* logging never breaks the turn */
+        }
+        sendClientState(event);
+      };
+      const beginCapture = () => {
+        try {
+          captureRef.current?.stop();
+        } catch {
+          /* already stopped */
+        }
+        captureRef.current = startCapture(stream, captureCallbacks, {
+          threshold: 200,
+          endSilenceMs,
+        });
+        lastBeatAt = Date.now();
+      };
+      const captureCallbacks: CaptureCallbacks = {
+          onHeartbeat: () => {
+            lastBeatAt = Date.now();
+          },
           onFrame: (frame) => {
             if (!sessionRef.current) return;
+            framesOut += 1;
             // Track her audibility every frame: the 500 ms tail below hangs
             // on this, not on a single check at speech start.
             if (isSpeaking()) lastValeAudibleAt = Date.now();
@@ -966,18 +1063,59 @@ export function TapToTalk() {
               null,
             );
           },
-        },
         // Threshold 200 with 1 s pre-roll; the end silence comes from
         // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
-        { threshold: 200, endSilenceMs },
-      );
-
-      captureRef.current = capture;
+        };
+        beginCapture();
+      // A stall resumes alone: no audio blocks for STALL_MS restarts
+      // capture on the same stream instead of ending the session. The mic
+      // stream itself dead is the only honest alert left.
+      watchdogRef.current = window.setInterval(() => {
+        if (!sessionRef.current) return;
+        if (Date.now() - lastBeatAt < STALL_MS) return;
+        const tracks =
+          typeof stream.getTracks === "function" ? stream.getTracks() : [];
+        const micLive =
+          tracks.length === 0 ||
+          tracks.some((track) => track.readyState === "live");
+        if (!micLive) {
+          endSessionWithAlert(
+            turnErrorText("suspended", languageRef.current),
+            null,
+          );
+          return;
+        }
+        logClientState("stall-restart");
+        try {
+          beginCapture();
+        } catch {
+          endSessionWithAlert(
+            turnErrorText("suspended", languageRef.current),
+            null,
+          );
+        }
+      }, 2000);
+      // Hidden tabs stop the processor on some platforms: log the state on
+      // every change and re-check on return; the watchdog restarts a stall.
+      const onVisibility = () => {
+        if (!sessionRef.current) return;
+        logClientState("visibility");
+      };
+      visibilityHandlerRef.current = onVisibility;
+      document.addEventListener("visibilitychange", onVisibility);
       openConvSocket();
       openTurn();
       await ended;
+      clearCaptureWatch();
     },
-    [patchTurn, removeTurn, pruneIfEmpty, endSessionWithAlert, clientId],
+    [
+      patchTurn,
+      removeTurn,
+      pruneIfEmpty,
+      endSessionWithAlert,
+      clearCaptureWatch,
+      clientId,
+    ],
   );
 
   const handleTap = useCallback(async () => {

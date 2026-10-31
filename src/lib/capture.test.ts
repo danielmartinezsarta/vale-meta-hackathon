@@ -283,4 +283,12 @@ describe("audio unlock lifecycle (two-tap cycle)", () => {
     expect(callbacks.onBlocked).not.toHaveBeenCalled();
     handle.stop();
   });
+
+  it("reports the live context state for the stall watchdog", () => {
+    stubAudio();
+    const handle = startCapture({} as MediaStream, quietCallbacks());
+    expect(handle.state()).toBe("running");
+    handle.stop();
+    expect(handle.state()).toBe("closed");
+  });
 });

@@ -31,7 +31,7 @@ function setupDevice() {
   const seen: CaptureCallbacks[] = [];
   mockStartCapture.mockImplementation((_stream, callbacks) => {
     seen.push(callbacks);
-    return { stop: () => {} };
+    return { stop: () => {}, state: () => "running" };
   });
   return seen;
 }
