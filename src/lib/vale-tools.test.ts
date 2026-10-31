@@ -377,6 +377,46 @@ describe("appointments", () => {
     db.close();
   });
 
+  it("rejects days missing from the calendar", () => {
+    const db = freshTestDb();
+    const nov31 = createAppointment(
+      db,
+      {
+        client_name: "Ana",
+        service_name: "retiro",
+        day: "2026-11-31",
+        time: "18:00",
+        confirm_off_hours: true,
+      },
+      "en",
+    );
+    expect(nov31.ok).toBe(false);
+    expect(nov31.message).toContain("30 days");
+    const feb29 = createAppointment(db, {
+      client_name: "Ana",
+      service_name: "retiro",
+      day: "2025-02-29",
+      time: "18:00",
+      confirm_off_hours: true,
+    });
+    expect(feb29.ok).toBe(false);
+    const feb29Leap = createAppointment(
+      db,
+      {
+        client_name: "Ana",
+        service_name: "retiro",
+        day: "2024-02-29",
+        time: "18:00",
+        confirm_off_hours: true,
+      },
+      "en",
+    );
+    expect(feb29Leap.ok).toBe(true);
+    const count = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
+    expect(count.n).toBe(1);
+    db.close();
+  });
+
   it("asks before acting on ambiguous clients or broken dates", () => {
     const db = freshTestDb();
     createClient(db, { name: "Ana Ruiz" });

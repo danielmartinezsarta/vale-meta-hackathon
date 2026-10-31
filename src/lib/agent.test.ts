@@ -7,8 +7,10 @@ import {
   SPOKEN_SYSTEM_PROMPT,
   buildInstructions,
   runAgentTurn,
+  sessionContext,
 } from "./agent";
 import { freshTestDb } from "./db";
+import { openSession } from "./vale-tools";
 import { clearPendingAction, takePendingAction } from "./pending-action";
 import { clearSlots } from "./slot-memory";
 import { VALE_TOOLS, runValeTool } from "./vale-tools";
@@ -110,7 +112,9 @@ describe("agent prompt", () => {
     expect(bodies).toHaveLength(1);
     expect(bodies[0].model).toBe(AGENT_MODEL);
     expect(bodies[0].reasoning).toEqual({ effort: "minimal" });
-    expect(bodies[0].instructions).toBe(SPOKEN_SYSTEM_PROMPT);
+    // The static prompt opens the instructions; the live session facts ride after it.
+    expect(String(bodies[0].instructions).startsWith(SPOKEN_SYSTEM_PROMPT)).toBe(true);
+    expect(String(bodies[0].instructions)).toContain("Session context");
     expect(bodies[0].tools).toEqual(VALE_TOOLS);
   });
 });
@@ -564,6 +568,30 @@ describe("closed reply language", () => {
     expect(
       buildInstructions("en", "2026-10-31", "Maria"),
     ).toContain("The user's name is Maria");
+  });
+
+  it("grounds the turn in the open session without filtering it", () => {
+    const at = new Date("2026-10-31T16:30:00.000Z");
+    const empty = freshTestDb();
+    expect(sessionContext(empty, at)).toContain("No session is open");
+    expect(sessionContext(empty, at)).toContain("2026-10-31");
+    expect(sessionContext(empty, at)).toContain("never invent one");
+    empty.close();
+
+    const db = freshTestDb();
+    const opened = openSession(db, {
+      client_name: "Ana",
+      service_name: "retiro",
+    });
+    expect(opened.ok).toBe(true);
+    const line = sessionContext(db, at);
+    expect(line).toContain("Open session");
+    expect(line).toContain("Ana");
+    expect(line).toContain("America/Bogota");
+    expect(line).toContain("belongs to the session client");
+    expect(line).toContain("leaves the session untouched");
+    expect(line).toContain("never use the session");
+    db.close();
   });
 
   it("sends the English instructions to the model when selected", async () => {

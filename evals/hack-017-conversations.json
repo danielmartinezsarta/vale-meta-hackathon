@@ -124,6 +124,56 @@
     "Well, I think we are done here",
     "Available slots are filling fast."
    ]
+  },
+  {
+   "id": "C12",
+   "goal": "unnamed booking uses the session client and service",
+   "turns": [
+    "Vale, open a session with Emma for gel refill",
+    "book her for tomorrow at 6 PM"
+   ]
+  },
+  {
+   "id": "C13",
+   "goal": "follow-up merges into one booking, never list_today (field case)",
+   "turns": [
+    "Vale, book Emma for gel refill today at 6 PM",
+    "book her again next month",
+    "same day and time as today"
+   ]
+  },
+  {
+   "id": "C14",
+   "goal": "booking another client leaves the session untouched",
+   "turns": [
+    "Vale, open a session with Emma for gel refill",
+    "Vale, book Sofia for a spa pedicure tomorrow at 5 PM"
+   ]
+  },
+  {
+   "id": "C15",
+   "goal": "shopping question ignores the session",
+   "turns": [
+    "Vale, open a session with Emma for gel refill",
+    "Vale, add top coat to the shopping list"
+   ]
+  },
+  {
+   "id": "C16",
+   "goal": "impossible date proposes the nearest valid day",
+   "turns": [
+    "Vale, book Ava for November 31st at 6 PM for gel refill",
+    "yes"
+   ]
+  },
+  {
+   "id": "C17",
+   "goal": "next month without time fills today's time and says so",
+   "turns": [
+    "Vale, book Mia for gel refill today at 6 PM",
+    "book her again next month",
+    "yes"
+   ]
   }
  ],
  "note": "All names and facts are invented for the hackathon demo. No real client data."

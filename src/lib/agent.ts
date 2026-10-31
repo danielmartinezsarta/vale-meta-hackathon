@@ -1,4 +1,10 @@
-import { VALE_TOOLS, getOpenSession, localDay, runValeTool } from "./vale-tools";
+import {
+  VALE_TOOLS,
+  clientLabel,
+  getOpenSession,
+  localDay,
+  runValeTool,
+} from "./vale-tools";
 import { DEFAULT_USER_NAME, getDb, userName, type HistoryTurn, type ValeDb } from "./db";
 import { DEFAULT_LANGUAGE, type ValeLanguage } from "./vale-language";
 import {
@@ -56,6 +62,7 @@ const LANGUAGE_SUFFIX: Record<ValeLanguage, string> = {
     "Act right away on direct requests; only ask first when in doubt, saying what you would do in one sentence with the confirmation question Should I save it?, and wait for yes before calling.",
     "When the user says undo it, call undo_last_write at once.",
     "Health topics always use add_note with kind health; confirm with Private note saved. and never repeat the health text.",
+    "If a date does not exist (November 31st), propose the nearest valid day at the same time, say the correction plainly, and ask for confirmation before writing.",
   ].join(" "),
 };
 
@@ -88,6 +95,64 @@ export interface AgentResult {
   usage: AgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
+}
+
+/** Bogotá clock for the session facts; the salon runs on America/Bogota. */
+function bogotaParts(when: Date): { day: string; time: string; weekday: string } {
+  const day = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(when);
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Bogota",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(when);
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Bogota",
+    weekday: "long",
+  }).format(when);
+  return { day, time, weekday };
+}
+
+/**
+ * Durable session facts for the prompt: context, not a filter. The model
+ * still decides per turn; these facts only ground names, dates and the
+ * open service. Exported for tests.
+ */
+export function sessionContext(db: ValeDb, now = new Date()): string {
+  const { day, time, weekday } = bogotaParts(now);
+  const head =
+    `Session context (facts, not filters): today is ${weekday} ${day}, ` +
+    `${time} America/Bogota.`;
+  const open = getOpenSession(db);
+  if (!open) {
+    return (
+      `${head} No session is open: a booking needs a client name, ` +
+      `never invent one.`
+    );
+  }
+  const service = db
+    .prepare("SELECT name FROM services WHERE id = ?")
+    .get(open.service_id) as { name: string } | undefined;
+  const started = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Bogota",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(open.started_at));
+  return (
+    `${head} Open session: client ${clientLabel(db, open.client_id)}, ` +
+    `service ${service?.name ?? "unknown"}, started ${started}. ` +
+    `A booking with no client name belongs to the session client; a booking ` +
+    `naming another client belongs to that client and leaves the session ` +
+    `untouched. Shopping and stock questions never use the session. When you ` +
+    `fill a missing date or time from today or the session, say so in the ` +
+    `confirmation question.`
+  );
 }
 
 /** One history turn as a Responses input message. */
@@ -362,9 +427,10 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     options.userName ?? userName(db),
   );
   const slotLine = slotContext(slotKey, language);
-  const instructions = slotLine
-    ? `${staticInstructions} ${slotLine}`
-    : staticInstructions;
+  const sessionLine = sessionContext(db);
+  const instructions = [staticInstructions, slotLine, sessionLine]
+    .filter((line) => line !== "")
+    .join(" ");
   const privacyLine = language === "en" ? PRIVACY_LINE_EN : PRIVACY_LINE;
 
   // Explicit memory: the last turns travel in the input, oldest first.

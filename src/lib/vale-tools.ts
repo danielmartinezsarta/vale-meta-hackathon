@@ -725,6 +725,21 @@ function checkDayTime(day: unknown, time: unknown): string | null {
   return null;
 }
 
+/** The day exists on the calendar: November 31st and February 29th on
+ * non-leap years do not. Returns the problem in the screen language. */
+function checkCalendarDay(day: string, language: ValeLanguage): string | null {
+  const [year, month, date] = day.split("-").map(Number);
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (date <= last) return null;
+  const monthName = new Date(Date.UTC(year, month - 1, 1)).toLocaleString("en-US", {
+    month: "long",
+    timeZone: "UTC",
+  });
+  return language === "en"
+    ? `${monthName} ${year} has ${last} days, so ${monthName} ${date} does not exist.`
+    : `${monthName} de ${year} tiene ${last} días, así que esa fecha no existe.`;
+}
+
 interface AppointmentRow {
   id: number;
   client: string;
@@ -775,6 +790,8 @@ export function createAppointment(
   const serviceName = typeof args.service_name === "string" ? args.service_name : "";
   const problem = checkDayTime(args.day, args.time);
   if (problem) return { ok: false, message: problem };
+  const calendar = checkCalendarDay(args.day as string, language);
+  if (calendar) return { ok: false, message: calendar };
   const client = matchOne(
     db.prepare("SELECT id, name FROM clients ORDER BY id").all() as unknown as Named[],
     clientName,
