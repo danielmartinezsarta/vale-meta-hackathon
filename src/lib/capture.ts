@@ -89,6 +89,56 @@ export interface CaptureCallbacks {
   onSpeechEnd: () => void;
   /** Listening feedback, 0..1 mic level; optional. */
   onLevel?: (level: number) => void;
+  /** The context never left "suspended": zeros would flow. Tap again. */
+  onBlocked?: () => void;
+}
+
+/** Warm context adopted by the next startCapture. Only one lives at a time. */
+let prepared: AudioContext | null = null;
+
+function audioCtor(): typeof AudioContext | null {
+  try {
+    return (
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext ??
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Call synchronously inside the tap handler, before any await: resume() only
+ * unlocks audio inside the user gesture. After an awaited getUserMedia iOS
+ * keeps the context suspended and the ScriptProcessor delivers zeros.
+ */
+export function unlockAudioContext(): void {
+  const Ctor = audioCtor();
+  if (!Ctor) return;
+  try {
+    if (prepared && prepared.state !== "closed") {
+      void prepared.resume().catch(() => {});
+      return;
+    }
+    try {
+      void prepared?.close().catch(() => {});
+    } catch {
+      /* already torn down */
+    }
+    prepared = new Ctor({ sampleRate: CAPTURE_RATE });
+    void prepared.resume().catch(() => {});
+  } catch {
+    /* unsupported here: startCapture throws the clear error */
+  }
+}
+
+function takePrepared(): AudioContext | null {
+  const ctx = prepared;
+  prepared = null;
+  if (!ctx || ctx.state === "closed") return null;
+  return ctx;
 }
 
 export interface CaptureHandle {
@@ -100,12 +150,27 @@ export function startCapture(
   callbacks: CaptureCallbacks,
   detectorOptions?: ConstructorParameters<typeof SpeechDetector>[0],
 ): CaptureHandle {
-  const AudioContextCtor =
-    window.AudioContext ??
-    (window as unknown as { webkitAudioContext?: typeof AudioContext })
-      .webkitAudioContext;
+  const AudioContextCtor = audioCtor();
   if (!AudioContextCtor) throw new Error("AudioContext is not supported.");
-  const context = new AudioContextCtor({ sampleRate: CAPTURE_RATE });
+  // Prefer the context warmed inside the tap gesture; a post-await resume
+  // does not unlock iOS, so a context born here may stay suspended.
+  const context = takePrepared() ?? new AudioContextCtor({ sampleRate: CAPTURE_RATE });
+  try {
+    void context.resume().catch(() => {});
+  } catch {
+    /* resume is best-effort; the watchdog below reports a stuck context */
+  }
+  let blockedNotified = false;
+  window.setTimeout(() => {
+    if (!stopped && !blockedNotified && context.state === "suspended") {
+      blockedNotified = true;
+      try {
+        callbacks.onBlocked?.();
+      } catch {
+        /* the alert must never break capture */
+      }
+    }
+  }, 1000);
   const actualRate = context.sampleRate;
   const source = context.createMediaStreamSource(stream);
   const processor = context.createScriptProcessor(4096, 1, 1);

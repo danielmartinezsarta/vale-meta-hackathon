@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   floatToPcm16,
   resampleLinear,
   SpeechDetector,
+  startCapture,
+  unlockAudioContext,
   FRAME_SAMPLES,
   CAPTURE_RATE,
   PREROLL_FRAMES,
@@ -156,5 +158,129 @@ describe("end-of-turn pause (NEXT_PUBLIC_VAD_END_SILENCE_MS)", () => {
     expect(
       splits(new SpeechDetector({ endSilenceMs: 1200 }), phrase(8, 45)),
     ).toBe(1);
+  });
+});
+
+class FakeAudioNode {
+  connect(): void {}
+  disconnect(): void {}
+}
+
+class FakeAudioContext {
+  static instances: FakeAudioContext[] = [];
+  /** New contexts start suspended until resume() unlocks them. */
+  static startSuspended = false;
+  static resumeUnlocks = true;
+  state = "running";
+  sampleRate = CAPTURE_RATE;
+  resumed = 0;
+  closedCount = 0;
+  destination = {};
+  onaudioprocess: ((event: unknown) => void) | null = null;
+  constructor(options?: { sampleRate?: number }) {
+    if (options?.sampleRate) this.sampleRate = options.sampleRate;
+    if (FakeAudioContext.startSuspended) this.state = "suspended";
+    FakeAudioContext.instances.push(this);
+  }
+  resume(): Promise<void> {
+    this.resumed += 1;
+    if (FakeAudioContext.resumeUnlocks) this.state = "running";
+    return Promise.resolve();
+  }
+  close(): Promise<void> {
+    this.closedCount += 1;
+    this.state = "closed";
+    return Promise.resolve();
+  }
+  createMediaStreamSource(): FakeAudioNode {
+    return new FakeAudioNode();
+  }
+  createScriptProcessor(): FakeAudioNode {
+    return new FakeAudioNode();
+  }
+  createGain(): FakeAudioNode & { gain: { value: number } } {
+    return Object.assign(new FakeAudioNode(), { gain: { value: 0 } });
+  }
+}
+
+function stubAudio() {
+  FakeAudioContext.instances = [];
+  FakeAudioContext.startSuspended = false;
+  FakeAudioContext.resumeUnlocks = true;
+  vi.stubGlobal("window", {
+    AudioContext: FakeAudioContext,
+    setTimeout: (...args: [() => void, number]) =>
+      (globalThis.setTimeout as typeof setTimeout)(...args),
+  });
+}
+
+function quietCallbacks() {
+  return {
+    onFrame: () => {},
+    onSpeechStart: () => {},
+    onSpeechEnd: () => {},
+    onBlocked: vi.fn(),
+  };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe("audio unlock lifecycle (two-tap cycle)", () => {
+  it("unlocks in the tap, adopts the warmed context, and closes on stop", () => {
+    stubAudio();
+    unlockAudioContext();
+    expect(FakeAudioContext.instances).toHaveLength(1);
+    expect(FakeAudioContext.instances[0].resumed).toBe(1);
+    const handle = startCapture({} as MediaStream, quietCallbacks());
+    // Adopted, not recreated.
+    expect(FakeAudioContext.instances).toHaveLength(1);
+    handle.stop();
+    expect(FakeAudioContext.instances[0].closedCount).toBe(1);
+  });
+
+  it("two taps never leave two live contexts", () => {
+    stubAudio();
+    unlockAudioContext();
+    const first = startCapture({} as MediaStream, quietCallbacks());
+    first.stop();
+    unlockAudioContext();
+    const second = startCapture({} as MediaStream, quietCallbacks());
+    expect(FakeAudioContext.instances).toHaveLength(2);
+    expect(
+      FakeAudioContext.instances.filter((ctx) => ctx.state !== "closed"),
+    ).toHaveLength(1);
+    second.stop();
+    expect(
+      FakeAudioContext.instances.filter((ctx) => ctx.state !== "closed"),
+    ).toHaveLength(0);
+  });
+
+  it("alerts once when the context stays suspended past the gesture", () => {
+    stubAudio();
+    FakeAudioContext.startSuspended = true;
+    FakeAudioContext.resumeUnlocks = false;
+    vi.useFakeTimers();
+    const callbacks = quietCallbacks();
+    const handle = startCapture({} as MediaStream, callbacks);
+    vi.advanceTimersByTime(999);
+    expect(callbacks.onBlocked).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(callbacks.onBlocked).toHaveBeenCalledTimes(1);
+    handle.stop();
+  });
+
+  it("stays quiet when resume unlocks the context", () => {
+    stubAudio();
+    FakeAudioContext.startSuspended = true;
+    FakeAudioContext.resumeUnlocks = true;
+    vi.useFakeTimers();
+    const callbacks = quietCallbacks();
+    const handle = startCapture({} as MediaStream, callbacks);
+    vi.advanceTimersByTime(5000);
+    expect(callbacks.onBlocked).not.toHaveBeenCalled();
+    handle.stop();
   });
 });

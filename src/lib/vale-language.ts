@@ -17,6 +17,7 @@ export type VoiceErrorKind =
   | "timeout"
   | "lost"
   | "model"
+  | "suspended"
   | "vad-tap"
   | "vad-continue";
 
@@ -36,6 +37,10 @@ const ERROR_TEXT: Record<VoiceErrorKind, Record<ValeLanguage, string>> = {
   model: {
     es: "Perdón, tuve un problema. Toca para intentar de nuevo.",
     en: "Sorry, I had a problem. Tap to try again.",
+  },
+  suspended: {
+    es: "El micrófono no arrancó. Toca para intentar de nuevo.",
+    en: "The microphone did not start. Tap to try again.",
   },
   "vad-tap": {
     es: "No te escuché. Toca y habla.",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { startCapture } from "@/lib/capture";
+import { startCapture, unlockAudioContext } from "@/lib/capture";
 import { LevelMeter } from "@/components/LevelMeter";
 import { ValeBoard } from "@/components/ValeBoard";
 import type { Board } from "@/lib/board";
@@ -946,6 +946,14 @@ export function TapToTalk() {
             lastLevelRef.current = now;
             setLevel(value);
           },
+          // iOS kept the context suspended past the gesture: zeros flow.
+          onBlocked: () => {
+            if (!sessionRef.current) return;
+            endSessionWithAlert(
+              turnErrorText("suspended", languageRef.current),
+              null,
+            );
+          },
         },
         // Threshold 200 with 1 s pre-roll; the end silence comes from
         // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
@@ -962,6 +970,13 @@ export function TapToTalk() {
 
   const handleTap = useCallback(async () => {
     if (status === "requesting") return;
+    // In-gesture audio unlock: resume() after the getUserMedia await below
+    // no longer counts as a gesture on iOS and the mic delivers zeros.
+    try {
+      unlockAudioContext();
+    } catch {
+      /* startCapture throws the clear error when unsupported */
+    }
     if (status === "live" || status === "error") {
       stopSession();
       setAlert(null);

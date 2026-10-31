@@ -26,6 +26,8 @@ describe("closed language set", () => {
     expect(turnErrorText("lost", "en")).toContain("dropped");
     expect(turnErrorText("model", "es")).toContain("Perdón");
     expect(turnErrorText("model", "en")).toContain("Sorry");
+    expect(turnErrorText("suspended", "es")).toContain("no arrancó");
+    expect(turnErrorText("suspended", "en")).toContain("did not start");
     expect(turnErrorText("vad-tap", "es")).toContain("Toca y habla");
     expect(turnErrorText("vad-tap", "en")).toContain("Tap and speak");
     expect(turnErrorText("vad-continue", "es")).toContain("te escucho");
