@@ -63,14 +63,30 @@ function outputLine(language: ValeLanguage): string {
  */
 export function buildInstructions(
   language: ValeLanguage = DEFAULT_LANGUAGE,
-  today: string = localDay(),
-  name: string = DEFAULT_USER_NAME,
 ): string {
-  return (
-    `${SPOKEN_BASE} Today is ${today}. ` +
-    `The user's name is ${name}: say it occasionally, never every turn, and never as an endearment. ` +
-    `Use that date as today and resolve relative days from it. ${outputLine(language)}`
-  );
+  return `${SPOKEN_BASE} ${outputLine(language)}`;
+}
+
+/**
+ * Volatile session facts, appended AFTER the stable base so Meta's prefix
+ * cache holds on the base. Date, name, slots, session: everything the turn
+ * changes rides here, never before the stable content. Exported for tests.
+ */
+export function buildStateFacts(
+  today: string,
+  name: string,
+  slotLine: string,
+  sessionLine: string,
+): string {
+  return [
+    `Today is ${today}.`,
+    `The user's name is ${name}: say it occasionally, never every turn, and never as an endearment.`,
+    "Use that date as today and resolve relative days from it.",
+    slotLine,
+    sessionLine,
+  ]
+    .filter((line) => line !== "")
+    .join(" ");
 }
 
 // Spoken-style prompt: plain text, 1-2 short sentences, confirm before writing.
@@ -399,16 +415,17 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   const db = options.db ?? getDb();
   const language = options.language ?? DEFAULT_LANGUAGE;
   const slotKey = options.slotKey ?? "local";
-  const staticInstructions = buildInstructions(
-    language,
-    localDay(),
-    options.userName ?? userName(db),
-  );
-  const slotLine = slotContext(slotKey, language);
-  const sessionLine = sessionContext(db);
-  const instructions = [staticInstructions, slotLine, sessionLine]
-    .filter((line) => line !== "")
-    .join(" ");
+  // Stable base first, volatile facts last: Meta's prefix cache holds the
+  // base across turns while the date, name, slots and session ride at the end.
+  const instructions = [
+    buildInstructions(language),
+    buildStateFacts(
+      localDay(),
+      options.userName ?? userName(db),
+      slotContext(slotKey, language),
+      sessionContext(db),
+    ),
+  ].join(" ");
 
   // Explicit memory: the last turns travel in the input, oldest first.
   // No response chains, no retries: a failure surfaces as E-MODEL at once.

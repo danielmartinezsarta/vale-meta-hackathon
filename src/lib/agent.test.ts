@@ -4,6 +4,7 @@ import {
   AGENT_MODEL,
   SPOKEN_SYSTEM_PROMPT,
   buildInstructions,
+  buildStateFacts,
   runAgentTurn,
   sessionContext,
 } from "./agent";
@@ -588,10 +589,22 @@ describe("closed reply language", () => {
     ]) {
       expect(instructions).toContain(word);
     }
-    expect(instructions).toContain("The user's name is Daniel");
     expect(
-      buildInstructions("en", "2026-10-31", "Maria"),
+      buildStateFacts("2026-10-31", "Daniel", "", ""),
+    ).toContain("The user's name is Daniel");
+    expect(
+      buildStateFacts("2026-10-31", "Maria", "", ""),
     ).toContain("The user's name is Maria");
+  });
+
+  it("keeps the stable base before the volatile state facts", () => {
+    const base = buildInstructions("en");
+    const state = buildStateFacts("2026-10-31", "Daniel", "slot", "session");
+    expect(base).toContain("You are Vale, a hands-free voice helper");
+    expect(base).not.toContain("Today is");
+    expect(base).not.toContain("The user's name is");
+    expect(state).toContain("Today is 2026-10-31");
+    expect(state).toContain("slot");
   });
 
   it("grounds the turn in the open session without filtering it", () => {
