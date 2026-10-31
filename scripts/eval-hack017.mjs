@@ -1,10 +1,11 @@
 // HACK-017 conversation eval runner. Usage:
-//   node scripts/eval-hack017.mjs <server-url> <conversations.json>
+//   node scripts/eval-hack017.mjs <server-url> <conversations.json> [--lang=es] [--server-log=path]
 // Resets data/vale.db (schema + minimal invented services/supplies), runs
-// every turn as POST /api/voice?language=en&client=<run>-<conv> with a JSON
-// transcript, and prints one JSON object with per-turn client timings plus
-// every event name seen. Server-side [voice-turn] lines (ttft, tool, cost,
-// ignored, chain) are matched by client key from the server log afterwards.
+// every turn as POST /api/voice?language=<lang>&client=<run>-<conv> with a
+// JSON transcript, and prints one JSON object with per-turn client timings
+// plus every event name seen. Server-side [voice-turn] lines (ttft, tool,
+// cost, ignored, chain, cached tokens) are matched by client key from
+// --server-log when given, and their input/cached totals print at the end.
 // All data invented; the Meta key stays server-side (never sent by this script).
 import { readFileSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -14,9 +15,11 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const [server, convFile] = process.argv.slice(2);
 if (!server || !convFile) {
-  console.error("usage: node scripts/eval-hack017.mjs <server-url> <conversations.json>");
+  console.error("usage: node scripts/eval-hack017.mjs <server-url> <conversations.json> [--lang=es] [--server-log=path]");
   process.exit(1);
 }
+const lang = (process.argv.find((a) => a.startsWith("--lang=")) || "--lang=en").slice(7);
+const serverLogPath = (process.argv.find((a) => a.startsWith("--server-log=")) || "").slice(13);
 const convs = JSON.parse(readFileSync(convFile, "utf8")).conversations;
 
 // Fresh database with the minimum invented catalog a session needs.
@@ -83,7 +86,7 @@ for (const conv of convs) {
     let httpError = null;
     try {
       const res = await fetch(
-        `${server}/api/voice?language=en&client=${encodeURIComponent(client)}`,
+        `${server}/api/voice?language=${lang}&client=${encodeURIComponent(client)}`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -131,4 +134,31 @@ for (const conv of convs) {
   }
 }
 
-console.log(JSON.stringify({ run, results }, null, 1));
+// Prefix-cache measure: match this run's server [voice-turn] lines by key.
+let serverTokens = null;
+if (serverLogPath) {
+  try {
+    const lines = readFileSync(serverLogPath, "utf8").split("\n");
+    let input = 0;
+    let cached = 0;
+    let turns = 0;
+    for (const line of lines) {
+      const at = line.indexOf("[voice-turn]");
+      if (at === -1) continue;
+      try {
+        const fields = JSON.parse(line.slice(at + 12));
+        if (typeof fields.key !== "string" || !fields.key.startsWith(run)) continue;
+        turns += 1;
+        input += fields.inputTokens ?? 0;
+        cached += fields.cachedInputTokens ?? 0;
+      } catch {
+        /* a truncated line never breaks the totals */
+      }
+    }
+    serverTokens = { turns, input, cached, cachedRatio: input > 0 ? cached / input : 0 };
+  } catch {
+    serverTokens = { error: "unreadable server log" };
+  }
+}
+
+console.log(JSON.stringify({ run, lang, results, serverTokens }, null, 1));

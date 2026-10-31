@@ -37,6 +37,7 @@ const MAX_BUFFERED_BYTES = 2_000_000;
 export interface BridgeAgentUsage {
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens?: number;
 }
 
 export interface BridgeAgentResult {
@@ -332,6 +333,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     ttftMs: number | null;
     inputTokens: number;
     outputTokens: number;
+    cachedInputTokens?: number | null;
     audioSeconds: number;
     tool: string | null;
     modelSkipped: boolean;
@@ -349,7 +351,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       formatTurnLog({
         ...fields,
         costUsd: estimateCost(
-          { inputTokens: fields.inputTokens, outputTokens: fields.outputTokens },
+          {
+            inputTokens: fields.inputTokens,
+            outputTokens: fields.outputTokens,
+            cachedInputTokens: fields.cachedInputTokens ?? 0,
+          },
           fields.audioSeconds,
         ),
       }),
@@ -606,6 +612,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         ttftMs: result.firstTokenMs,
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
+        cachedInputTokens: result.usage.cachedInputTokens,
         audioSeconds:
           audioProcessedMs !== null
             ? audioProcessedMs / 1000

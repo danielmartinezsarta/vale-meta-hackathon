@@ -204,6 +204,7 @@ export async function POST(request: Request): Promise<Response> {
         ttftMs: number | null;
         inputTokens: number;
         outputTokens: number;
+        cachedInputTokens?: number | null;
         audioSeconds: number;
         tool: string | null;
         modelSkipped: boolean;
@@ -221,7 +222,11 @@ export async function POST(request: Request): Promise<Response> {
           formatTurnLog({
             ...fields,
             costUsd: estimateCost(
-              { inputTokens: fields.inputTokens, outputTokens: fields.outputTokens },
+              {
+                inputTokens: fields.inputTokens,
+                outputTokens: fields.outputTokens,
+                cachedInputTokens: fields.cachedInputTokens ?? 0,
+              },
               fields.audioSeconds,
             ),
           }),
@@ -310,6 +315,7 @@ export async function POST(request: Request): Promise<Response> {
             ttftMs: result.firstTokenMs,
             inputTokens: result.usage.inputTokens,
             outputTokens: result.usage.outputTokens,
+            cachedInputTokens: result.usage.cachedInputTokens,
             audioSeconds,
             tool: result.toolUsed,
             modelSkipped: false,

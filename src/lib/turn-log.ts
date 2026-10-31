@@ -14,6 +14,8 @@ export interface TurnLogFields {
   ttftMs: number | null;
   inputTokens: number;
   outputTokens: number;
+  /** Prefix-cache hits inside input_tokens; absent on paths that never reach the agent. */
+  cachedInputTokens?: number | null;
   costUsd: number;
   audioSeconds: number;
   tool: string | null;

@@ -92,6 +92,8 @@ export const SPOKEN_SYSTEM_PROMPT = buildInstructions("es");
 export interface AgentUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Prefix-cache hits inside input_tokens, for the per-commit measure. */
+  cachedInputTokens: number;
 }
 
 export interface AgentResult {
@@ -309,6 +311,9 @@ async function postResponses(
     usage?: {
       input_tokens?: number;
       output_tokens?: number;
+      input_tokens_details?: {
+        cached_tokens?: number;
+      };
     };
   }
   let completed: CompletedResponse | null = null;
@@ -378,6 +383,7 @@ async function postResponses(
     usage: {
       inputTokens: completed.usage?.input_tokens ?? 0,
       outputTokens: completed.usage?.output_tokens ?? 0,
+      cachedInputTokens: completed.usage?.input_tokens_details?.cached_tokens ?? 0,
     },
     calls: functionCalls(completed.output),
     firstTokenMs,
@@ -441,7 +447,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   // A pending proposal dies with the next real turn unless that turn stores
   // a new one: a later yes must never fire a stale proposal (eval C17).
   let storedThisTurn = false;
-  const usage: AgentUsage = { inputTokens: 0, outputTokens: 0 };
+  const usage: AgentUsage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
   let firstTokenMs: number | null = null;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
@@ -461,6 +467,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     );
     usage.inputTokens += turn.usage.inputTokens;
     usage.outputTokens += turn.usage.outputTokens;
+    usage.cachedInputTokens += turn.usage.cachedInputTokens;
     firstTokenMs = firstTokenMs ?? turn.firstTokenMs;
     if (turn.calls.length === 0) {
       text = turn.text;
