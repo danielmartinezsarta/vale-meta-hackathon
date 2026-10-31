@@ -16,23 +16,25 @@ describe("wake word gate", () => {
   it("names Vale with case, accents and punctuation around it", () => {
     expect(namesVale("vale, abre una sesión")).toBe(true);
     expect(namesVale("¿Vale?")).toBe(true);
-    // Second word without an opener does not count, even accented.
-    expect(namesVale("Sì, vale")).toBe(false);
+    expect(namesVale("Sì, vale")).toBe(true);
     expect(namesVale("hola")).toBe(false);
     expect(namesVale("chavales")).toBe(false);
     expect(namesVale("")).toBe(false);
   });
 
-  it("hears Vale first or right after an opener, never mid-sentence", () => {
+  it("hears Vale in any of the first three words, in either language", () => {
     expect(namesVale("vale, sí agrégalo")).toBe(true);
     expect(namesVale("thanks, Vale")).toBe(true);
     expect(namesVale("okay, Vale")).toBe(true);
     expect(namesVale("hey Bale")).toBe(true);
-    expect(namesVale("sí, vale, agrégalo")).toBe(false);
-    expect(namesVale("the Vale shop")).toBe(false);
+    expect(namesVale("sí, vale, agrégalo")).toBe(true);
+    expect(namesVale("Hola Vale")).toBe(true);
+    expect(namesVale("Oye Vale, abre sesión")).toBe(true);
+    expect(namesVale("Buenas Vale")).toBe(true);
+    expect(namesVale("oye por favor Vale abre")).toBe(false);
     expect(checkWake("thanks, Vale", "ip-confirm", 1000).execute).toBe(true);
     expect(
-      checkWake("sí, vale, agrégalo", "ip-confirm-cold", 1000).execute,
+      checkWake("oye por favor Vale abre", "ip-confirm-cold", 1000).execute,
     ).toBe(false);
   });
 
@@ -47,9 +49,11 @@ describe("wake word gate", () => {
     expect(namesVale("Balle, repeat that please")).toBe(true);
     expect(namesVale("Thanks, Bali. That's all.")).toBe(true);
     expect(namesVale("Vale, open a session")).toBe(true);
-    // Bale first wakes Vale (Daniel's call): the measured false-accept cost.
+    // A positional rule wakes on mentions inside the first three words:
+    // the accepted cost of no opener or greeting lists (lead call).
     expect(namesVale("Bale nails are so trendy")).toBe(true);
-    expect(namesVale("Nails by Bale are trendy")).toBe(false);
+    expect(namesVale("Nails by Bale are trendy")).toBe(true);
+    expect(namesVale("the Vale shop")).toBe(true);
     expect(namesVale("chavales")).toBe(false);
   });
 

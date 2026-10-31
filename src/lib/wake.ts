@@ -10,9 +10,6 @@ import type { ValeLanguage } from "./vale-language";
 // heard in negatives, position rule below carries the risk).
 const DEFAULT_WAKE_WORDS = ["vale", "balle", "bali", "bale", "veil", "vail"];
 
-// The name counts only first, or right after an opener: mid-sentence
-// mentions of a client ("Bale broke a nail") must not wake Vale.
-const OPENER_PREFIX = /^(?:hey|okay|ok|thanks)\b[\s,]*/;
 const DEFAULT_WINDOW_S = 45;
 
 export function normalizeWakeText(value: string): string {
@@ -45,12 +42,19 @@ export function windowMs(sessionOpen = false): number {
   return seconds * 1000;
 }
 
+/**
+ * The name activates in any of the first three words, in either language,
+ * with no opener or greeting lists ("Hola Vale", "Oye Vale", "Buenas Vale"
+ * all count). A bare first-word client mention ("Bale broke a nail")
+ * still wakes: that is the accepted cost of a purely positional rule.
+ */
 export function namesVale(transcript: string, words: string[] = wakeWords()): boolean {
-  const head = ` ${normalizeWakeText(transcript).replace(OPENER_PREFIX, "")} `;
-  return words.some((word) => {
-    const needle = normalizeWakeText(word);
-    return needle !== "" && head.startsWith(` ${needle} `);
-  });
+  const tokens = normalizeWakeText(transcript)
+    .split(" ")
+    .filter((token) => token !== "");
+  return tokens
+    .slice(0, 3)
+    .some((token) => words.includes(normalizeWakeText(token)));
 }
 
 /** Client key for the attention window: first forwarded IP or direct peer. */
