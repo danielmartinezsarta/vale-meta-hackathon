@@ -103,7 +103,7 @@ describe("sessions", () => {
     expect(refused.ok).toBe(false);
     expect(refused.message).toContain("already an open session");
     expect(refused.message).toContain("Ana");
-    expect(refused.message).toContain("never close it unasked");
+    expect(refused.message).toContain("Do not call close_session yet");
     db.close();
   });
 

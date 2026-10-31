@@ -600,6 +600,10 @@ describe("closed reply language", () => {
     ).toContain("The user's name is Maria");
   });
 
+  it("names the open session and asks instead of closing unasked", () => {
+    expect(SPOKEN_SYSTEM_PROMPT).toContain("A refused write is never a license");
+  });
+
   it("keeps the stable base before the volatile state facts", () => {
     const base = buildInstructions("en");
     const state = buildStateFacts("2026-10-31", "Daniel", "slot", "session");
