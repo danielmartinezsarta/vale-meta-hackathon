@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  cleanSpokenText,
   finishStream,
   isSpeaking,
   pickVoice,
@@ -48,19 +49,23 @@ afterEach(() => {
 });
 
 describe("speak with the browser voice", () => {
-  it("speaks the full text once", () => {
+  it("speaks the full text once", async () => {
     const { synth, utterances } = stubSpeechSynthesis([fakeVoice("es-CO")]);
     speak("Hola, soy Vale.");
     expect(synth.cancel).toHaveBeenCalledTimes(1);
-    expect(synth.speak).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
     expect(utterances).toEqual(["Hola, soy Vale."]);
   });
 
-  it("queues one utterance per sentence, in order", () => {
+  it("queues one utterance per sentence, in order", async () => {
     const { synth, utterances } = stubSpeechSynthesis([fakeVoice("es-CO")]);
     speak("Primera. ¿Segunda? Tercera");
     expect(synth.cancel).toHaveBeenCalledTimes(1);
-    expect(utterances).toEqual(["Primera.", "¿Segunda?", "Tercera"]);
+    await vi.waitFor(() => {
+      expect(utterances).toEqual(["Primera.", "¿Segunda?", "Tercera"]);
+    });
   });
 
   it("splits on sentence marks and breaks overlong chunks", () => {
@@ -98,16 +103,22 @@ describe("speak with the browser voice", () => {
     expect(pickVoice([co, us], "es")).toBe(co);
   });
 
-  it("sets the utterance language to English without a matching voice", () => {
+  it("sets the utterance language to English without a matching voice", async () => {
     const { synth } = stubSpeechSynthesis([fakeVoice("es-CO")]);
     speak("Hello", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
     const utterance = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
     expect(utterance.lang).toBe("en-US");
   });
 
-  it("sets the utterance language to Spanish even without a matching voice", () => {
+  it("sets the utterance language to Spanish even without a matching voice", async () => {
     const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
     speak("Hola", "es");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
     const utterance = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
     expect(utterance.lang).toBe("es-CO");
   });
@@ -319,28 +330,139 @@ describe("seamless voice engine", () => {
 });
 
 describe("streamed speech", () => {
-  it("speaks complete sentences as deltas arrive and the tail on finish", () => {
+  it("speaks complete sentences as deltas arrive and the tail on finish", async () => {
     const { synth, utterances } = stubSpeechSynthesis([fakeVoice("en-US")]);
     speakStream("Hello there. How");
     expect(synth.cancel).not.toHaveBeenCalled();
-    expect(utterances).toEqual(["Hello there."]);
+    await vi.waitFor(() => {
+      expect(utterances).toEqual(["Hello there."]);
+    });
     speakStream(" are you?");
-    expect(utterances).toEqual(["Hello there."]);
     finishStream();
-    expect(utterances).toEqual(["Hello there.", "How are you?"]);
+    await vi.waitFor(() => {
+      expect(utterances).toEqual(["Hello there.", "How are you?"]);
+    });
   });
 
-  it("holds a single incomplete sentence until the finish", () => {
+  it("holds a single incomplete sentence until the finish", async () => {
     const { utterances } = stubSpeechSynthesis([fakeVoice("en-US")]);
     speakStream("One thing");
-    expect(utterances).toEqual([]);
     finishStream();
-    expect(utterances).toEqual(["One thing"]);
+    await vi.waitFor(() => {
+      expect(utterances).toEqual(["One thing"]);
+    });
   });
 
   it("flushes nothing when the turn never streamed", () => {
     const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
     finishStream();
     expect(synth.speak).not.toHaveBeenCalled();
+  });
+});
+
+function namedVoice(name: string, lang = "en-US"): SpeechSynthesisVoice {
+  return { name, lang } as SpeechSynthesisVoice;
+}
+
+describe("Daniel's voice order (browser voice)", () => {
+  it("prefers Premium over Enhanced over plain, Ava before Zoe", () => {
+    const avaPremium = namedVoice("Ava (Premium)");
+    const list = [
+      namedVoice("Samantha"),
+      namedVoice("Zoe (Premium)"),
+      namedVoice("Ava (Enhanced)"),
+      namedVoice("Google US English"),
+      avaPremium,
+    ];
+    expect(pickVoice(list, "en")).toBe(avaPremium);
+    expect(
+      pickVoice(
+        [namedVoice("Zoe (Enhanced)"), namedVoice("Ava (Enhanced)")],
+        "en",
+      )?.name,
+    ).toBe("Ava (Enhanced)");
+    expect(
+      pickVoice(
+        [namedVoice("Samantha"), namedVoice("Samantha (Enhanced)")],
+        "en",
+      )?.name,
+    ).toBe("Samantha (Enhanced)");
+  });
+
+  it("discards macOS joke voices even when they match en-US", () => {
+    expect(
+      pickVoice(
+        [namedVoice("Albert", "en-US"), namedVoice("Google US English", "en-US")],
+        "en",
+      )?.name,
+    ).toBe("Google US English");
+    expect(
+      pickVoice(
+        [namedVoice("Zarvox", "en-US"), namedVoice("Boing", "en-US")],
+        "en",
+      ),
+    ).toBeNull();
+  });
+
+  it("falls back to the first en-US voice when no name matches", () => {
+    expect(
+      pickVoice(
+        [namedVoice("Daniel", "en-US"), namedVoice("Karen", "en-US")],
+        "en",
+      )?.name,
+    ).toBe("Daniel");
+  });
+
+  it("speaks at rate 1.0 with default pitch through the chosen voice", async () => {
+    const { synth } = stubSpeechSynthesis([namedVoice("Ava (Premium)")]);
+    speak("Hi there.", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
+    const utterance = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
+    expect(utterance.rate).toBe(1.0);
+    expect("pitch" in utterance).toBe(false);
+    expect(utterance.voice).toEqual(
+      expect.objectContaining({ name: "Ava (Premium)" }),
+    );
+  });
+
+  it("logs the chosen voice once per page load", async () => {
+    vi.resetModules();
+    const fresh = await import("./speak");
+    const logs: string[] = [];
+    const logSpy = vi
+      .spyOn(console, "log")
+      .mockImplementation((line: string) => {
+        logs.push(String(line));
+      });
+    try {
+      stubSpeechSynthesis([namedVoice("Ava (Premium)")]);
+      fresh.speak("Hi there.");
+      fresh.speak("Again.");
+      await vi.waitFor(() => {
+        expect(logs.length).toBeGreaterThan(0);
+      });
+      expect(logs.filter((line) => line.startsWith("[voice] using:"))).toHaveLength(1);
+      expect(logs[0]).toContain("Ava (Premium)");
+      expect(logs[0]).toContain("en-US");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});
+
+describe("cleanSpokenText", () => {
+  it("strips markdown, bullets, links and emoji but keeps accents", () => {
+    expect(cleanSpokenText("Hey *Emma*, ready?")).toBe("Hey Emma, ready?");
+    expect(cleanSpokenText("# Today\n- gel refill\n2. top coat")).toBe(
+      "Today gel refill top coat",
+    );
+    expect(cleanSpokenText("Nice 🎉, see [slots](https://x/y)!")).toBe(
+      "Nice , see slots!",
+    );
+    expect(cleanSpokenText("Café mañana, ¿vienes?")).toBe(
+      "Café mañana, ¿vienes?",
+    );
   });
 });

@@ -9,6 +9,36 @@ const VOICE_PRIORITY: Record<ValeLanguage, string[]> = {
   es: ["es-CO", "es-419", "es-MX"],
   en: ["en-US", "en"],
 };
+/** Daniel's order: Premium first, then Enhanced, then the plain ones. */
+const VOICE_NAME_ORDER = [
+  "Ava (Premium)",
+  "Zoe (Premium)",
+  "Ava (Enhanced)",
+  "Zoe (Enhanced)",
+  "Samantha (Enhanced)",
+  "Samantha",
+  "Google US English",
+];
+/** macOS novelty voices: never a reply voice, even when en-US. */
+const JOKE_VOICES = new Set(
+  [
+    "Albert",
+    "Bad News",
+    "Bahh",
+    "Bells",
+    "Boing",
+    "Bubbles",
+    "Cellos",
+    "Good News",
+    "Jester",
+    "Organ",
+    "Superstar",
+    "Trinoids",
+    "Whisper",
+    "Wobble",
+    "Zarvox",
+  ].map((name) => name.toLowerCase()),
+);
 const FALLBACK_LANG: Record<ValeLanguage, string> = { es: "es-CO", en: "en-US" };
 export const SEAMLESS_SPEAKER = 10;
 const SEAMLESS_MAX_CHARS = 500;
@@ -29,19 +59,44 @@ export function voiceEngine(): VoiceEngine {
   return engine;
 }
 
+function isJokeVoice(voice: SpeechSynthesisVoice): boolean {
+  return JOKE_VOICES.has((voice.name ?? "").trim().toLowerCase());
+}
+
 export function pickVoice(
   voices: readonly SpeechSynthesisVoice[],
   language: ValeLanguage = DEFAULT_LANGUAGE,
 ): SpeechSynthesisVoice | null {
+  if (language === "en") {
+    for (const name of VOICE_NAME_ORDER) {
+      const found = voices.find(
+        (voice) =>
+          (voice.name ?? "").toLowerCase() === name.toLowerCase() &&
+          !isJokeVoice(voice),
+      );
+      if (found) return found;
+    }
+    return (
+      voices.find(
+        (voice) =>
+          voice.lang.toLowerCase().startsWith("en-us") &&
+          !isJokeVoice(voice),
+      ) ??
+      voices.find(
+        (voice) =>
+          voice.lang.toLowerCase().startsWith("en") && !isJokeVoice(voice),
+      ) ??
+      null
+    );
+  }
   for (const prefix of VOICE_PRIORITY[language]) {
     const found = voices.find((voice) =>
       voice.lang.toLowerCase().startsWith(prefix.toLowerCase()),
     );
     if (found) return found;
   }
-  const short = language === "en" ? "en" : "es";
   return (
-    voices.find((voice) => voice.lang.toLowerCase().startsWith(short)) ?? null
+    voices.find((voice) => voice.lang.toLowerCase().startsWith("es")) ?? null
   );
 }
 
@@ -51,34 +106,63 @@ function synth(): SpeechSynthesis | null {
 }
 
 /**
- * Browser voices load asynchronously: getVoices() is often empty on the
- * first call, which used to speak with no voice at all. Wait for them.
+ * Browser voices load asynchronously: the first getVoices() is often empty
+ * or partial, which used to give the first phrase the wrong voice. Wait for
+ * voiceschanged before choosing; after it fired once the list is trusted.
  */
+let voicesSettled = false;
+let voicesWatching = false;
 function ensureVoices(synth: SpeechSynthesis): Promise<SpeechSynthesisVoice[]> {
   const available = synth.getVoices();
-  if (available.length > 0) return Promise.resolve(available);
+  if (available.length > 0 && voicesSettled) return Promise.resolve(available);
   return new Promise((resolve) => {
     let done = false;
-    const finish = () => {
+    const finish = (settled: boolean) => {
       if (done) return;
       done = true;
+      if (settled) voicesSettled = true;
       resolve(synth.getVoices());
     };
-    const timer = setTimeout(finish, VOICES_WAIT_MS);
+    const timer = setTimeout(() => finish(false), VOICES_WAIT_MS);
     try {
+      if (!voicesWatching) {
+        voicesWatching = true;
+        synth.addEventListener("voiceschanged", () => {
+          voicesSettled = true;
+        });
+      }
       synth.addEventListener(
         "voiceschanged",
         () => {
           clearTimeout(timer);
-          finish();
+          finish(true);
         },
         { once: true },
       );
     } catch {
       clearTimeout(timer);
-      finish();
+      finish(false);
     }
   });
+}
+
+/**
+ * The reply text is written to be read, not spoken: strip markdown, list
+ * bullets, link targets, and emoji so the voice never reads them aloud.
+ */
+const EMOJI_RE = new RegExp(
+  "[\\p{Extended_Pictographic}\\uFE0F\\u200D\\u20E3\\u00A9\\u00AE\\u2122\\u2190-\\u21FF]",
+  "gu",
+);
+
+export function cleanSpokenText(text: string): string {
+  return text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[*_~`#>]/g, "")
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, "")
+    .replace(EMOJI_RE, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -204,28 +288,14 @@ function sayBrowserFallback(
   if (!s) return;
   const sentences = splitSentences(text);
   if (sentences.length === 0) return;
-  const voices = s.getVoices();
-  if (voices.length > 0) {
-    saySentencesWithBrowser(s, sentences, voices, language);
-    return;
-  }
-  void ensureVoices(s).then((late) =>
-    saySentencesWithBrowser(s, sentences, late, language),
-  );
-}
-
-function saySentencesWithBrowser(
-  s: SpeechSynthesis,
-  sentences: string[],
-  voices: readonly SpeechSynthesisVoice[],
-  language: ValeLanguage,
-): void {
   try {
     s.cancel();
   } catch {
     /* voice output is best-effort; the text stays on screen */
   }
-  queueBrowserSentences(s, sentences, voices, language);
+  void ensureVoices(s).then((late) =>
+    queueBrowserSentences(s, sentences, late, language),
+  );
 }
 
 /**
@@ -237,6 +307,9 @@ function saySentencesWithBrowser(
 let streamPending = "";
 let streamLanguage: ValeLanguage = DEFAULT_LANGUAGE;
 
+/** The chosen voice, logged once per page load for the field test. */
+let voiceLogged = false;
+
 function queueBrowserSentences(
   s: SpeechSynthesis,
   sentences: string[],
@@ -244,10 +317,20 @@ function queueBrowserSentences(
   language: ValeLanguage,
 ): void {
   try {
+    const voice = pickVoice(voices, language);
+    if (voice && !voiceLogged) {
+      voiceLogged = true;
+      try {
+        console.log(`[voice] using: ${voice.name ?? "default"} ${voice.lang}`);
+      } catch {
+        /* logging must never break speech */
+      }
+    }
     for (const sentence of sentences) {
-      const utterance = new SpeechSynthesisUtterance(sentence);
-      utterance.rate = 0.9;
-      const voice = pickVoice(voices, language);
+      const clean = cleanSpokenText(sentence);
+      if (clean === "") continue;
+      const utterance = new SpeechSynthesisUtterance(clean);
+      utterance.rate = 1.0;
       utterance.lang = voice?.lang ?? FALLBACK_LANG[language];
       if (voice) utterance.voice = voice;
       s.speak(utterance);
@@ -269,11 +352,6 @@ export function speakStream(
   const s = synth();
   if (!s) return;
   streamPending = sentences[sentences.length - 1];
-  const voices = s.getVoices();
-  if (voices.length > 0) {
-    queueBrowserSentences(s, sentences.slice(0, -1), voices, language);
-    return;
-  }
   const ready = sentences.slice(0, -1);
   void ensureVoices(s).then((late) =>
     queueBrowserSentences(s, ready, late, language),
@@ -294,11 +372,6 @@ export function finishStream(): void {
   if (!s) return;
   const sentences = splitSentences(tail);
   if (sentences.length === 0) return;
-  const voices = s.getVoices();
-  if (voices.length > 0) {
-    queueBrowserSentences(s, sentences, voices, language);
-    return;
-  }
   void ensureVoices(s).then((late) =>
     queueBrowserSentences(s, sentences, late, language),
   );
@@ -319,13 +392,13 @@ export function speak(
   }
   const s = synth();
   if (!s) return;
-  const voices = s.getVoices();
-  if (voices.length > 0) {
-    saySentencesWithBrowser(s, sentences, voices, language);
-    return;
+  try {
+    s.cancel();
+  } catch {
+    /* voice output is best-effort; the text stays on screen */
   }
   void ensureVoices(s).then((late) =>
-    saySentencesWithBrowser(s, sentences, late, language),
+    queueBrowserSentences(s, sentences, late, language),
   );
 }
 
