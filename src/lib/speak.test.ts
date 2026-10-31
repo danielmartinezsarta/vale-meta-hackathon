@@ -1,13 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  availableVoices,
   cleanSpokenText,
   finishStream,
+  getVoicePrefs,
   isSpeaking,
+  loadVoicePrefs,
   pickVoice,
+  preferredVoice,
   setVoiceEngine,
+  setVoiceForLanguage,
+  setVoicePrefs,
   speak,
   speakStream,
   splitSentences,
+  spokenText,
   stopSpeaking,
 } from "./speak";
 
@@ -51,7 +58,7 @@ afterEach(() => {
 describe("speak with the browser voice", () => {
   it("speaks the full text once", async () => {
     const { synth, utterances } = stubSpeechSynthesis([fakeVoice("es-CO")]);
-    speak("Hola, soy Vale.");
+    speak("Hola, soy Vale.", "es");
     expect(synth.cancel).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => {
       expect(synth.speak).toHaveBeenCalledTimes(1);
@@ -205,7 +212,7 @@ describe("seamless voice engine", () => {
     vi.stubGlobal("fetch", fetchStub);
     try {
       setVoiceEngine("seamless");
-      speak("Hola, soy Vale.");
+      speak("Hola, soy Vale.", "es");
       await vi.waitFor(() => {
         expect(played).toHaveLength(1);
       });
@@ -413,15 +420,15 @@ describe("Daniel's voice order (browser voice)", () => {
     ).toBe("Daniel");
   });
 
-  it("speaks at rate 1.0 with default pitch through the chosen voice", async () => {
+  it("speaks at rate 0.9 with pitch 0.9 through the chosen voice", async () => {
     const { synth } = stubSpeechSynthesis([namedVoice("Ava (Premium)")]);
     speak("Hi there.", "en");
     await vi.waitFor(() => {
       expect(synth.speak).toHaveBeenCalledTimes(1);
     });
     const utterance = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
-    expect(utterance.rate).toBe(1.0);
-    expect(utterance.pitch).toBe(1.0);
+    expect(utterance.rate).toBe(0.9);
+    expect(utterance.pitch).toBe(0.9);
     expect(utterance.voice).toEqual(
       expect.objectContaining({ name: "Ava (Premium)" }),
     );
@@ -464,5 +471,58 @@ describe("cleanSpokenText", () => {
     expect(cleanSpokenText("Café mañana, ¿vienes?")).toBe(
       "Café mañana, ¿vienes?",
     );
+  });
+});
+
+describe("one voice per language (lead round p2)", () => {
+  it("lists only the active language, jokes excluded", () => {
+    const voices = [
+      namedVoice("Ava (Premium)", "en-US"),
+      namedVoice("Albert", "en-US"),
+      namedVoice("Jorge", "es-MX"),
+    ];
+    expect(availableVoices(voices, "en").map((v) => v.name)).toEqual([
+      "Ava (Premium)",
+    ]);
+    expect(availableVoices(voices, "es").map((v) => v.name)).toEqual(["Jorge"]);
+  });
+
+  it("saves each language separately and migrates the legacy single voice", () => {
+    window.localStorage.removeItem("vale-voice");
+    setVoicePrefs({ voiceEn: null, voiceEs: null, rate: 0.9, pitch: 0.9 });
+    setVoiceForLanguage("en", "Ava (Premium)");
+    setVoiceForLanguage("es", "Jorge");
+    expect(preferredVoice("en")).toBe("Ava (Premium)");
+    expect(preferredVoice("es")).toBe("Jorge");
+    setVoiceForLanguage("en", "Zoe (Premium)");
+    expect(preferredVoice("en")).toBe("Zoe (Premium)");
+    expect(preferredVoice("es")).toBe("Jorge");
+    window.localStorage.setItem(
+      "vale-voice",
+      JSON.stringify({ voice: "Samantha" }),
+    );
+    // Legacy shape still loads: the old single voice becomes English.
+    expect(loadVoicePrefs().voiceEn).toBe("Samantha");
+    expect(loadVoicePrefs().voiceEs).toBeNull();
+    expect(getVoicePrefs().rate).toBe(0.9);
+    expect(getVoicePrefs().pitch).toBe(0.9);
+  });
+
+  it("spells her name out in English TTS only", () => {
+    expect(spokenText("Hi, I'm Vale.", "en")).toBe("Hi, I'm Vah-leh.");
+    expect(spokenText("Hola, soy Vale.", "es")).toBe("Hola, soy Vale.");
+    expect(spokenText("Vale, Vale, all Vale.", "en")).toBe(
+      "Vah-leh, Vah-leh, all Vah-leh.",
+    );
+  });
+
+  it("speaks the Vah-leh spelling through the English voice", async () => {
+    const { utterances } = stubSpeechSynthesis([namedVoice("Ava (Premium)")]);
+    window.localStorage.removeItem("vale-voice");
+    setVoicePrefs({ voiceEn: null, voiceEs: null, rate: 0.9, pitch: 0.9 });
+    speak("Hi, I'm Vale.", "en");
+    await vi.waitFor(() => {
+      expect(utterances).toEqual(["Hi, I'm Vah-leh."]);
+    });
   });
 });

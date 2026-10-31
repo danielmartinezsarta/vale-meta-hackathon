@@ -8,28 +8,33 @@ import {
   RATE_MIN,
   getBrowserVoices,
   getVoicePrefs,
+  preferredVoice,
   previewVoice,
+  setVoiceForLanguage,
   setVoicePrefs,
 } from "@/lib/speak";
+import type { ValeLanguage } from "@/lib/vale-language";
 
-/** Runtime voice controls: voice, speed, pitch and a Test button. English only. */
-export function VoiceControls() {
+/** Runtime voice controls: one voice per language, speed, pitch and a Test button. English only. */
+export function VoiceControls({ language = "en" }: { language?: ValeLanguage }) {
   const [voices, setVoices] = useState<{ name: string; lang: string }[]>([]);
   const [prefs, setPrefs] = useState(() => getVoicePrefs());
 
   useEffect(() => {
     let live = true;
-    void getBrowserVoices().then((list) => {
+    void getBrowserVoices(language).then((list) => {
       if (live) setVoices(list);
     });
     return () => {
       live = false;
     };
-  }, []);
+  }, [language]);
 
+  // The selector shows only the active language; each language keeps hers.
   const selected =
-    prefs.voice !== null && voices.some((voice) => voice.name === prefs.voice)
-      ? prefs.voice
+    preferredVoice(language) !== null &&
+    voices.some((voice) => voice.name === preferredVoice(language))
+      ? (preferredVoice(language) as string)
       : "";
   return (
     <fieldset>
@@ -41,7 +46,7 @@ export function VoiceControls() {
           value={selected}
           onChange={(event) => {
             const voice = event.target.value === "" ? null : event.target.value;
-            setPrefs(setVoicePrefs({ voice }));
+            setPrefs(setVoiceForLanguage(language, voice));
           }}
         >
           <option value="">System default</option>
@@ -82,7 +87,7 @@ export function VoiceControls() {
         />{" "}
         {prefs.pitch.toFixed(1)}x
       </label>{" "}
-      <button type="button" onClick={() => previewVoice()}>
+      <button type="button" onClick={() => previewVoice(language)}>
         Test
       </button>
     </fieldset>

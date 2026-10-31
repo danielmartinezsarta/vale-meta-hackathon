@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { VoiceControls } from "./VoiceControls";
 
 function fakeVoice(name: string, lang: string): SpeechSynthesisVoice {
   return { name, lang } as SpeechSynthesisVoice;
@@ -84,7 +85,7 @@ describe("voice controls", () => {
       });
       fireEvent.change(select, { target: { value: "Google US English" } });
       expect(JSON.parse(window.localStorage.getItem("vale-voice") ?? "{}")).toMatchObject({
-        voice: "Google US English",
+        voiceEn: "Google US English",
       });
       expect(logs.some((line) => line.startsWith("[voice] using:"))).toBe(true);
     } finally {
@@ -129,8 +130,25 @@ describe("voice controls", () => {
       voice: SpeechSynthesisVoice;
       rate: number;
     };
-    expect(said.text).toContain("Vale");
+    expect(said.text).toContain("Vah-leh");
+    expect(said.text).not.toContain("Vale");
     expect(said.voice.name).toBe("Ava (Premium)");
     expect(said.rate).toBe(1.2);
+  });
+
+  it("shows only Spanish voices for Spanish and saves per language", async () => {
+    stubSpeechSynthesis(VOICES);
+    render(<VoiceControls language="es" />);
+    const select = screen.getByRole("combobox", { name: "Voice" });
+    await waitFor(() => {
+      expect(select.querySelectorAll("option")).toHaveLength(2);
+    });
+    const names = [...select.querySelectorAll("option")].map((o) => o.textContent);
+    expect(names).toContain("Jorge");
+    expect(names).not.toContain("Ava (Premium)");
+    fireEvent.change(select, { target: { value: "Jorge" } });
+    expect(JSON.parse(window.localStorage.getItem("vale-voice") ?? "{}")).toMatchObject({
+      voiceEs: "Jorge",
+    });
   });
 });
