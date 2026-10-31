@@ -172,7 +172,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "open_session",
-    description: "Open a nail session with a timer for a client and a service. Call it right away when the request names a client and a service; when a session is already open, close it first.",
+    description: "Open a nail session with a timer for a client and a service. Call it right away when the request names a client and a service, even when another session is already open: the refusal carries the switch question and a yes runs it.",
     parameters: {
       type: "object",
       properties: {
