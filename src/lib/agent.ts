@@ -64,6 +64,7 @@ const LANGUAGE_SUFFIX: Record<ValeLanguage, string> = {
     "When the user says undo it, call undo_last_write at once.",
     "Health topics always use add_note with kind health; confirm with Private note saved. and never repeat the health text.",
     "If a date does not exist (November 31st), propose the nearest valid day at the same time, say the correction plainly, and ask for confirmation before writing.",
+    "A yes only executes the proposal from your immediately previous reply; if that reply asked an open question with no concrete proposal, ask what to confirm instead of writing.",
   ].join(" "),
 };
 
@@ -447,6 +448,9 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   ];
   let text = "";
   let toolUsed: string | null = null;
+  // A pending proposal dies with the next real turn unless that turn stores
+  // a new one: a later yes must never fire a stale proposal (eval C17).
+  let storedThisTurn = false;
   let healthSaved = false;
   const usage: AgentUsage = { inputTokens: 0, outputTokens: 0 };
   let firstTokenMs: number | null = null;
@@ -471,6 +475,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     firstTokenMs = firstTokenMs ?? turn.firstTokenMs;
     if (turn.calls.length === 0) {
       text = turn.text;
+      if (!storedThisTurn) clearPendingAction(slotKey);
       break;
     }
     const call = turn.calls[0];
@@ -486,8 +491,10 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       // A complete proposal waits for the yes; anything else retires
       // a stale one instead of confirming the wrong thing.
       const proposal = buildPendingActions(db, call.name, parsed, toolResult);
-      if (proposal) setPendingAction(slotKey, proposal);
-      else clearPendingAction(slotKey);
+      if (proposal) {
+        setPendingAction(slotKey, proposal);
+        storedThisTurn = true;
+      } else clearPendingAction(slotKey);
     }
     updateSlotsFromTool(
       slotKey,

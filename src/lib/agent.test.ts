@@ -11,7 +11,11 @@ import {
 } from "./agent";
 import { freshTestDb } from "./db";
 import { openSession } from "./vale-tools";
-import { clearPendingAction, takePendingAction } from "./pending-action";
+import {
+  clearPendingAction,
+  setPendingAction,
+  takePendingAction,
+} from "./pending-action";
 import { clearSlots } from "./slot-memory";
 import { VALE_TOOLS, runValeTool } from "./vale-tools";
 
@@ -506,6 +510,32 @@ describe("agent single attempt", () => {
       },
     ]);
     clearPendingAction("pend-agent");
+  });
+
+  it("clears a stale pending proposal on a text-only turn", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([spoken("resp_1", "Which day next month?")]),
+      ),
+    );
+    setPendingAction("stale-agent", [
+      {
+        tool: "create_appointment",
+        args: { client_name: "Mia", day: "2026-10-31", time: "18:00" },
+      },
+    ]);
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "book her again next month",
+      language: "en",
+      slotKey: "stale-agent",
+      db: freshTestDb(),
+    });
+
+    expect(result.text).toBe("Which day next month?");
+    expect(takePendingAction("stale-agent")).toBeUndefined();
   });
 
   it("reports the tool it used with no chain state", async () => {
