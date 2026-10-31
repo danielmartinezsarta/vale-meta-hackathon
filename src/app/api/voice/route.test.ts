@@ -565,7 +565,7 @@ describe("POST /api/voice", () => {
     vi.stubGlobal("fetch", modelFetch);
     const postTranscript = (transcript: string) =>
       POST(
-        new Request("http://localhost/api/voice", {
+        new Request("http://localhost/api/voice?language=es", {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -585,7 +585,7 @@ describe("POST /api/voice", () => {
     vi.stubGlobal("fetch", stubAgent("vale mismo"));
     const postTranscript = (transcript: string) =>
       POST(
-        new Request("http://localhost/api/voice", {
+        new Request("http://localhost/api/voice?language=es", {
           method: "POST",
           headers: {
             "content-type": "application/json",

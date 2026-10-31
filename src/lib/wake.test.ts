@@ -5,6 +5,7 @@ import {
   collapseEcho,
   isGreetingOnly,
   isUndoIntent,
+  languageMismatch,
   namesVale,
   requestClientId,
   sanitizeClientId,
@@ -172,14 +173,14 @@ describe("wake word gate", () => {
     expect(checkWake("sigue hablando", "ip-3", 3000 + 45_000).execute).toBe(
       false,
     );
-    checkWake("vale, hola", "ip-3b", 3000);
+    checkWake("vale, hi", "ip-3b", 3000);
     expect(checkWake("sigue hablando", "ip-3b", 3000 + 44_999).execute).toBe(
       true,
     );
   });
 
   it("keeps windows per client", () => {
-    checkWake("vale, hola", "ip-4", 4000);
+    checkWake("vale, hi", "ip-4", 4000);
     expect(checkWake("oye esto", "ip-5", 4000).execute).toBe(false);
     expect(checkWake("oye esto", "ip-4", 4000).execute).toBe(true);
   });
@@ -220,5 +221,38 @@ describe("wake word gate", () => {
     expect(sanitizeClientId("")).toBeNull();
     expect(sanitizeClientId("../../etc")).toBeNull();
     expect(sanitizeClientId(42)).toBeNull();
+  });
+});
+
+describe("language gate (gate:idioma)", () => {
+  it("discards Spanish content under EN without opening the window", () => {
+    expect(languageMismatch("vale abre sesion con Ana", "en")).toBe(true);
+    expect(
+      checkWake("vale abre sesion con Ana", "ip-lang", 1000, false, "en"),
+    ).toMatchObject({ execute: false, gate: "idioma" });
+    // No window opened: a later English turn still needs the name.
+    expect(
+      checkWake("open a session", "ip-lang", 2000, false, "en").execute,
+    ).toBe(false);
+  });
+
+  it("lets a bare name call through and keeps English flowing", () => {
+    expect(languageMismatch("vale", "en")).toBe(false);
+    expect(
+      checkWake("vale", "ip-lang-bare", 1000, false, "en"),
+    ).toMatchObject({ execute: true, gate: "nombre" });
+    expect(languageMismatch("vale book Ana for gel refill", "en")).toBe(
+      false,
+    );
+  });
+
+  it("discards English content under ES", () => {
+    expect(languageMismatch("vale book Ana for tomorrow", "es")).toBe(true);
+    expect(
+      checkWake("vale book Ana for tomorrow", "ip-lang-es", 1000, false, "es"),
+    ).toMatchObject({ execute: false, gate: "idioma" });
+    expect(
+      checkWake("vale abre sesion con Ana", "ip-lang-es", 1000, false, "es"),
+    ).toMatchObject({ execute: true, gate: "nombre" });
   });
 });

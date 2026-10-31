@@ -357,7 +357,7 @@ export async function POST(request: Request): Promise<Response> {
           // Sliding gate first: background chatter never reaches the model,
           // the board or the memory.
           const sessionOpen = getOpenSession(getDb()) !== null;
-          const verdict = checkWake(cannedTranscript, clientKey, Date.now(), sessionOpen);
+          const verdict = checkWake(cannedTranscript, clientKey, Date.now(), sessionOpen, language);
           if (!verdict.execute) {
             const cannedSlots = getSlots(clientKey);
             logTurn({
@@ -488,7 +488,7 @@ export async function POST(request: Request): Promise<Response> {
           return;
         }
         const sessionOpen = getOpenSession(getDb()) !== null;
-        const verdict = checkWake(finalText, clientKey, Date.now(), sessionOpen);
+        const verdict = checkWake(finalText, clientKey, Date.now(), sessionOpen, language);
         if (!verdict.execute) {
           // Background chatter without the name: silent discard.
           const ignoredSlots = getSlots(clientKey);

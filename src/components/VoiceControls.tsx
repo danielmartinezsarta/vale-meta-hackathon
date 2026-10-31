@@ -14,10 +14,12 @@ import {
   setVoiceForLanguage,
   setVoicePrefs,
 } from "@/lib/speak";
+import { uiStrings } from "@/lib/vale-ui";
 import type { ValeLanguage } from "@/lib/vale-language";
 
 /** Runtime voice controls: one voice per language, speed, pitch and a Test button. English only. */
 export function VoiceControls({ language = "en" }: { language?: ValeLanguage }) {
+  const ui = uiStrings(language);
   const [voices, setVoices] = useState<{ name: string; lang: string }[]>([]);
   // Rerender trigger; values always read fresh so a language switch loads hers.
   const [, setPrefs] = useState(() => getVoicePrefs());
@@ -50,18 +52,18 @@ export function VoiceControls({ language = "en" }: { language?: ValeLanguage }) 
     );
   return (
     <fieldset>
-      <legend>Voice</legend>{" "}
+      <legend>{ui.voice}</legend>{" "}
       <label>
-        Voice{" "}
+        {ui.voice}{" "}
         <select
-          aria-label="Voice"
+          aria-label={ui.voice}
           value={selected}
           onChange={(event) => {
             const voice = event.target.value === "" ? null : event.target.value;
             setPrefs(setVoiceForLanguage(language, voice));
           }}
         >
-          <option value="">System default</option>
+          <option value="">{ui.systemDefault}</option>
           {voices.map((voice) => (
             <option key={voice.name} value={voice.name}>
               {voice.name}
@@ -70,10 +72,10 @@ export function VoiceControls({ language = "en" }: { language?: ValeLanguage }) 
         </select>
       </label>{" "}
       <label>
-        Speed{" "}
+        {ui.speed}{" "}
         <input
           type="range"
-          aria-label="Speed"
+          aria-label={ui.speed}
           min={RATE_MIN}
           max={RATE_MAX}
           step={0.1}
@@ -85,10 +87,10 @@ export function VoiceControls({ language = "en" }: { language?: ValeLanguage }) 
         {prosody.rate.toFixed(1)}x
       </label>{" "}
       <label>
-        Pitch{" "}
+        {ui.pitch}{" "}
         <input
           type="range"
-          aria-label="Pitch"
+          aria-label={ui.pitch}
           min={PITCH_MIN}
           max={PITCH_MAX}
           step={0.1}
@@ -100,7 +102,7 @@ export function VoiceControls({ language = "en" }: { language?: ValeLanguage }) 
         {prosody.pitch.toFixed(1)}x
       </label>{" "}
       <button type="button" onClick={() => previewVoice(language)}>
-        Test
+        {ui.test}
       </button>
     </fieldset>
   );

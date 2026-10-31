@@ -20,6 +20,7 @@ import {
   speakStream,
 } from "@/lib/speak";
 import { turnErrorText, type ValeLanguage } from "@/lib/vale-language";
+import { uiStrings } from "@/lib/vale-ui";
 import type { Widget } from "@/lib/widget";
 import { VoiceControls } from "@/components/VoiceControls";
 import { WidgetCard } from "@/components/WidgetCard";
@@ -117,6 +118,7 @@ export function TapToTalk() {
       /* the next turn carries the language frame instead */
     }
   }, []);
+  const ui = uiStrings(language);
   // Stable per-browser id so slots, pending actions and chain lanes survive
   // retaps even behind one shared IP; generated once, then reused.
   const convSocketRef = useRef<WebSocket | null>(null);
@@ -1290,10 +1292,10 @@ export function TapToTalk() {
         disabled={status === "requesting"}
       >
         {status === "live"
-          ? "Stop"
+          ? ui.stop
           : status === "requesting"
-            ? "Waiting for permission…"
-            : "Tap to talk"}
+            ? ui.waiting
+            : ui.tapToTalk}
       </button>{" "}
       <button
         type="button"
@@ -1313,7 +1315,7 @@ export function TapToTalk() {
         <SpeakerIcon /> Voice: {engine === "seamless" ? "Seamless" : "browser"}
       </button>{" "}
       <fieldset>
-        <legend>Language</legend>{" "}
+        <legend>{ui.language}</legend>{" "}
         <label>
           <input
             type="radio"
@@ -1344,11 +1346,7 @@ export function TapToTalk() {
       {status === "live" &&
         turns.every((turn) => !hasVisibleContent(turn)) &&
         !notice && (
-          <p>
-            {language === "en"
-              ? "Your microphone is on. Go ahead, I'm listening."
-              : "Tu micrófono está encendido. Adelante, te escucho."}
-          </p>
+          <p>{ui.listenHint}</p>
         )}
 
       <ol aria-label="Conversation turns">
@@ -1361,7 +1359,7 @@ export function TapToTalk() {
               <p>
                 {turn.final ?? turn.interim}{" "}
                 <small>
-                  {language === "en" ? "ignored (no name)" : "ignorado (sin nombre)"}
+                  {ui.ignoredTag}
                 </small>
               </p>
             ) : (
@@ -1382,7 +1380,7 @@ export function TapToTalk() {
         ))}
       </ol>
 
-      <ValeBoard board={board} />
+      <ValeBoard board={board} language={language} />
 
       {widget && (
         <WidgetCard
@@ -1398,10 +1396,7 @@ export function TapToTalk() {
 
       {status === "blocked" && (
         <div role="alert">
-          <p>
-            Your microphone is blocked, so I can&apos;t hear you. To turn it
-            back on:
-          </p>
+          <p>{ui.micBlockedLead}</p>
           <ul>
             <li>
               iPhone (Safari): open Settings &gt; Safari &gt; Microphone and
@@ -1417,10 +1412,7 @@ export function TapToTalk() {
 
       {status === "error" && !alert && (
         <div role="alert">
-          <p>
-            Something went wrong with the microphone. Check that one is
-            connected and tap again.
-          </p>
+          <p>{ui.micError}</p>
         </div>
       )}
     </section>

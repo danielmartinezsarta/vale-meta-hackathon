@@ -140,7 +140,7 @@ describe("voice controls", () => {
   it("shows only Spanish voices for Spanish and saves per language", async () => {
     stubSpeechSynthesis(VOICES);
     render(<VoiceControls language="es" />);
-    const select = screen.getByRole("combobox", { name: "Voice" });
+    const select = screen.getByRole("combobox", { name: "Voz" });
     await waitFor(() => {
       expect(select.querySelectorAll("option")).toHaveLength(2);
     });
@@ -180,9 +180,9 @@ describe("voice controls", () => {
       [...select.querySelectorAll("option")].map((o) => o.textContent),
     ).toContain("Jorge");
     // Spanish prosody loads its own pair and keeps it across switching.
-    const speed = screen.getByRole("slider", { name: "Speed" });
-    fireEvent.change(speed, { target: { value: "1.1" } });
-    expect((speed as HTMLInputElement).value).toBe("1.1");
+    const speedEs = screen.getByRole("slider", { name: "Velocidad" });
+    fireEvent.change(speedEs, { target: { value: "1.1" } });
+    expect((speedEs as HTMLInputElement).value).toBe("1.1");
     fireEvent.click(screen.getByRole("radio", { name: "English" }));
     await waitFor(() => {
       expect(select.querySelectorAll("option")).toHaveLength(3);
@@ -195,7 +195,8 @@ describe("voice controls", () => {
       expect(select.querySelectorAll("option")).toHaveLength(2);
     });
     expect(
-      (screen.getByRole("slider", { name: "Speed" }) as HTMLInputElement).value,
+      (screen.getByRole("slider", { name: "Velocidad" }) as HTMLInputElement)
+        .value,
     ).toBe("1.1");
   });
 });

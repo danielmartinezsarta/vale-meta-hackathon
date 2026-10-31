@@ -57,4 +57,16 @@ describe("ValeBoard", () => {
     expect(screen.queryByRole("heading", { name: "Sesión" })).toBeNull();
     unmount();
   });
+
+  it("renders English chrome under the EN setting, data untouched", () => {
+    render(<ValeBoard board={board} language="en" />);
+    expect(
+      screen.getByRole("heading", { name: "Session in progress" }),
+    ).toBeDefined();
+    expect(
+      screen.getByRole("heading", { name: "Ana Beltran's card" }),
+    ).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Shopping list" })).toBeDefined();
+    expect(screen.getByText("Esmalte rojo")).toBeDefined();
+  });
 });

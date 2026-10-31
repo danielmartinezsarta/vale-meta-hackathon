@@ -4,6 +4,8 @@
 // otherwise it is silently discarded (no model, no board, ignored:true log).
 // Garbage never touches the previous_response_id chain.
 
+import type { ValeLanguage } from "./vale-language";
+
 // Measured ASR spellings of "Vale", including Bale (Daniel's call, 30/10:
 // heard in negatives, position rule below carries the risk).
 const DEFAULT_WAKE_WORDS = ["vale", "balle", "bali", "bale", "veil", "vail"];
@@ -132,7 +134,43 @@ export function isGreetingOnly(transcript: string): boolean {
   return GREETING_ONLY.test(words.join(" "));
 }
 
-export type WakeGate = "nombre" | "ventana" | "ignorado" | "eco";
+/** Content words that only show up in Spanish transcripts (accents stripped). */
+const SPANISH_MARKERS = new Set(
+  "que una para gracias hola estoy estas estamos tienes tiene quiere quiero abre abro sesion cita manana ficha esmaltado insumo insumos manicurista donde cuando porque quien este esta estos".split(
+    " ",
+  ),
+);
+
+/** Content words that only show up in English transcripts. */
+const ENGLISH_MARKERS = new Set(
+  "the is are you your what with how book booking appointment session open save goal goals today price prices list card service client next hello thanks please done time".split(
+    " ",
+  ),
+);
+
+/**
+ * The transcript speaks the other language: the selector owns the language
+ * end to end, never the transcript. A bare name call still opens the window:
+ * only content past the name can mismatch.
+ */
+export function languageMismatch(
+  transcript: string,
+  language: ValeLanguage = "en",
+): boolean {
+  const tokens = normalizeWakeText(transcript)
+    .split(" ")
+    .filter((word) => word !== "");
+  const words = wakeWords();
+  // The name itself says nothing about the language: drop it everywhere
+  // ("thanks, Vale" is English; "vale, gracias" is Spanish).
+  const content = tokens.filter((token) => !words.includes(token));
+  if (content.length === 0) return false;
+  if (/[¿¡]/.test(transcript)) return language !== "es";
+  const markers = language === "es" ? ENGLISH_MARKERS : SPANISH_MARKERS;
+  return content.some((token) => markers.has(token));
+}
+
+export type WakeGate = "nombre" | "ventana" | "ignorado" | "eco" | "idioma";
 
 export interface WakeVerdict {
   execute: boolean;
@@ -153,10 +191,16 @@ export function checkWake(
   clientId: string,
   now: number = Date.now(),
   sessionOpen = false,
+  language: ValeLanguage = "en",
 ): WakeVerdict {
   const since = attentionSince.get(clientId);
   const inWindow = since !== undefined && now - since < windowMs(sessionOpen);
   const sinceReplyS = since === undefined ? null : (now - since) / 1000;
+  // The selector owns the language end to end: content in the other
+  // language is silently discarded (no model, no writes, gate:idioma).
+  if (languageMismatch(transcript, language)) {
+    return { execute: false, namedVale: false, gate: "idioma", sinceReplyS };
+  }
   if (namesVale(transcript)) {
     attentionSince.set(clientId, now);
     return { execute: true, namedVale: true, gate: "nombre", sinceReplyS };
