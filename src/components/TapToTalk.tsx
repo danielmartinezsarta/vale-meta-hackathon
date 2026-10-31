@@ -95,10 +95,24 @@ export function TapToTalk() {
   const [level, setLevel] = useState(0);
   const [board, setBoard] = useState<Board | null>(null);
   const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
-  // English only: the ES/EN switch is gone, the screen language is fixed.
-  const [language] = useState<ValeLanguage>("en");
+  // Screen selector: EN default. It drives listening (ASR language),
+  // prompt output, voice and UI; there is no auto-detection.
+  const [language, setLanguage] = useState<ValeLanguage>("en");
   // Turn handlers close over the session; the ref keeps the live language.
   const languageRef = useRef<ValeLanguage>(language);
+  const switchLanguage = useCallback((next: ValeLanguage) => {
+    setLanguage(next);
+    stopSpeaking("language-switch");
+    // The live session adopts it from here: the next dial pins ASR to it
+    // and the next reply speaks it.
+    try {
+      window.dispatchEvent(
+        new CustomEvent<ValeLanguage>("vale-language", { detail: next }),
+      );
+    } catch {
+      /* the next turn carries the language frame instead */
+    }
+  }, []);
   // Stable per-browser id so slots, pending actions and chain lanes survive
   // retaps even behind one shared IP; generated once, then reused.
   const convSocketRef = useRef<WebSocket | null>(null);
@@ -128,6 +142,7 @@ export function TapToTalk() {
   const quietTimerRef = useRef(0);
   const watchdogRef = useRef(0);
   const visibilityHandlerRef = useRef<(() => void) | null>(null);
+  const languageHandlerRef = useRef<((event: Event) => void) | null>(null);
   const sessionEndRef = useRef<(() => void) | null>(null);
   const captureRef = useRef<CaptureHandle | null>(null);
   const repliesRef = useRef(new Map<number, string>());
@@ -146,6 +161,10 @@ export function TapToTalk() {
         visibilityHandlerRef.current,
       );
       visibilityHandlerRef.current = null;
+    }
+    if (languageHandlerRef.current) {
+      window.removeEventListener("vale-language", languageHandlerRef.current);
+      languageHandlerRef.current = null;
     }
   }, []);
 
@@ -1103,6 +1122,27 @@ export function TapToTalk() {
       };
       visibilityHandlerRef.current = onVisibility;
       document.addEventListener("visibilitychange", onVisibility);
+      // Mid-session language switch: the ref, the open conversation
+      // socket and the next dial adopt it at once.
+      const onLanguage = (event: Event) => {
+        const next = (event as CustomEvent<ValeLanguage>).detail;
+        if (next !== "es" && next !== "en") return;
+        languageRef.current = next;
+        try {
+          if (
+            convOpen &&
+            convSocket &&
+            typeof WebSocket !== "undefined" &&
+            convSocket.readyState === WebSocket.OPEN
+          ) {
+            convSocket.send(JSON.stringify({ type: "language", language: next }));
+          }
+        } catch {
+          /* the next turn carries the language frame instead */
+        }
+      };
+      languageHandlerRef.current = onLanguage;
+      window.addEventListener("vale-language", onLanguage);
       openConvSocket();
       openTurn();
       await ended;
@@ -1195,7 +1235,32 @@ export function TapToTalk() {
       >
         <SpeakerIcon /> Voice: {engine === "seamless" ? "Seamless" : "browser"}
       </button>{" "}
-      <VoiceControls />
+      <fieldset>
+        <legend>Language</legend>{" "}
+        <label>
+          <input
+            type="radio"
+            aria-label="English"
+            name="vale-language"
+            value="en"
+            checked={language === "en"}
+            onChange={() => switchLanguage("en")}
+          />{" "}
+          EN
+        </label>{" "}
+        <label>
+          <input
+            type="radio"
+            aria-label="Español"
+            name="vale-language"
+            value="es"
+            checked={language === "es"}
+            onChange={() => switchLanguage("es")}
+          />{" "}
+          ES
+        </label>
+      </fieldset>{" "}
+      <VoiceControls language={language} />
 
       {status === "live" && <LevelMeter level={level} />}
 

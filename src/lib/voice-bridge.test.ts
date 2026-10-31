@@ -460,9 +460,45 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     });
     const auth = JSON.parse(receivedAuth[0]) as {
       authorization?: { accessToken?: string };
+      languageBias?: unknown;
     };
+    expect(auth.languageBias).toEqual(["English"]);
     expect(auth.authorization?.accessToken).toBe("Bearer test-key-2");
     browser.close(1000, "test done");
+  });
+
+
+  it("pins the ASR bias to Spanish after a language frame", async () => {
+    receivedAuth = [];
+    finalTranscript = "vale, sesion de prueba";
+    try {
+      const browser = new FakeBrowser();
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: "conv-bias-es",
+        metaUrl: url,
+        runAgent: fakeAgent(),
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(JSON.stringify({ type: "language", language: "es" }));
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      await vi.waitFor(() => {
+        expect(receivedAuth.length).toBeGreaterThan(0);
+      });
+      const auth = JSON.parse(receivedAuth[receivedAuth.length - 1]) as {
+        languageBias?: unknown;
+      };
+      expect(auth.languageBias).toEqual(["Spanish"]);
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+    }
   });
 
   it("carries real voiced PCM byte-identical to Meta, then ends the turn", async () => {

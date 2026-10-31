@@ -406,6 +406,7 @@ export async function POST(request: Request): Promise<Response> {
                 asr = await openAsrConnection({
                   key,
                   url: process.env.META_ASR_URL || undefined,
+                  language,
                   onEvent: (event) => {
                     if (event.kind === "interim") {
                       lastInterim = event.transcript;

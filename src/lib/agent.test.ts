@@ -70,10 +70,9 @@ describe("agent prompt", () => {
   it("states the confirm, undo and privacy rules", () => {
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/plain text/i);
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/no markdown/i);
-    expect(SPOKEN_SYSTEM_PROMPT).toContain("¿lo guardo?");
+    expect(SPOKEN_SYSTEM_PROMPT).toContain("Should I save it?");
     expect(SPOKEN_SYSTEM_PROMPT).toContain("deshazlo");
     expect(SPOKEN_SYSTEM_PROMPT).toContain("undo_last_write");
-    expect(SPOKEN_SYSTEM_PROMPT).toContain("Nota privada guardada.");
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/never claim a write happened/i);
   });
 
@@ -84,14 +83,12 @@ describe("agent prompt", () => {
     expect(SPOKEN_SYSTEM_PROMPT).not.toMatch(/need a short confirmation first/);
   });
 
-  it("speaks always de tú with persona, capabilities and tone examples", () => {
-    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/siempre de tú/i);
-    expect(SPOKEN_SYSTEM_PROMPT).not.toContain("Never invent other wordings");
-    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/Hoy puedes:/);
-    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/Precio y agenda/);
-    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/Ejemplos de tono \(no guion\)/);
-    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/¿qué puedes hacer\?/);
-    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/Saluda variado/);
+  it("carries the warm coworker persona and capabilities in English", () => {
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/trusted colleague/i);
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/a coworker, not a friend/i);
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/You can:/);
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/Greet briefly and varied/);
+    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/outside nails/);
   });
 
   it("sends the Vale tools with the cheapest reasoning mode", async () => {
@@ -554,29 +551,28 @@ describe("agent single attempt", () => {
 });
 
 describe("closed reply language", () => {
-  it("keeps the historic Spanish prompt available in Spanish", () => {
+  it("uses one English prompt; only the output line switches", () => {
     expect(buildInstructions()).toBe(buildInstructions("en"));
-    expect(buildInstructions("es")).toBe(SPOKEN_SYSTEM_PROMPT);
-  });
-
-  it("keeps templates and tone examples out of the English prompt", () => {
-    expect(buildInstructions("es")).toMatch(/Saluda variado/);
-    expect(buildInstructions("en")).not.toMatch(/variety/);
-    expect(buildInstructions("en")).not.toContain("gets exactly Hi");
-    expect(buildInstructions("en")).not.toContain("Which service should I do for Ana?");
-    expect(buildInstructions("en")).not.toMatch(/outside nails/);
-    expect(buildInstructions("en")).not.toMatch(/what can you do/);
+    const es = buildInstructions("es");
+    const en = buildInstructions("en");
+    // Same base, different output line.
+    expect(es).toContain("You are Vale, a hands-free voice helper");
+    expect(en).toContain("You are Vale, a hands-free voice helper");
+    expect(es).toContain("reply only in Spanish");
+    expect(es).toContain("Nunca respondas en otro idioma");
+    expect(en).toContain("reply only in English");
+    expect(en).not.toContain("Nunca respondas");
+    expect(es).toBe(SPOKEN_SYSTEM_PROMPT);
   });
 
   it("answers only in English under the EN setting, never in Spanish", () => {
     const instructions = buildInstructions("en");
     expect(instructions).toContain("only in English");
     expect(instructions).toContain("Should I save it?");
-    expect(instructions).toContain("Private note saved.");
     expect(instructions).toContain("undo it");
+    expect(instructions).toContain("deshazlo");
+    expect(instructions).not.toContain("Nunca respondas");
     expect(instructions).not.toContain("¿lo guardo?");
-    expect(instructions).not.toContain("deshazlo");
-    expect(instructions).not.toContain("¿Para qué clienta es");
   });
 
   it("caps length, bans endearments and names the user", () => {

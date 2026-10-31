@@ -8,6 +8,7 @@ import {
   loadVoicePrefs,
   pickVoice,
   preferredVoice,
+  prosodyFor,
   setVoiceEngine,
   setVoiceForLanguage,
   setVoicePrefs,
@@ -487,9 +488,32 @@ describe("one voice per language (lead round p2)", () => {
     expect(availableVoices(voices, "es").map((v) => v.name)).toEqual(["Jorge"]);
   });
 
+  it("picks Paulina, then Marisol, for Spanish", () => {
+    const paulina = namedVoice("Paulina (Enhanced)", "es-MX");
+    const marisol = namedVoice("Marisol (Premium)", "es-ES");
+    const jorge = namedVoice("Jorge", "es-MX");
+    expect(pickVoice([jorge, marisol, paulina], "es")).toBe(paulina);
+    expect(pickVoice([jorge, marisol], "es")).toBe(marisol);
+    expect(pickVoice([jorge], "es")).toBe(jorge);
+    expect(
+      availableVoices([jorge, marisol, paulina], "es").map((v) => v.name),
+    ).toEqual(["Paulina (Enhanced)", "Marisol (Premium)", "Jorge"]);
+  });
+
+  it("keeps speed and pitch per language", () => {
+    window.localStorage.removeItem("vale-voice");
+    setVoicePrefs({ rateEn: 1.2, rateEs: 0.8, pitchEn: 1.1, pitchEs: 0.9 });
+    expect(prosodyFor("en")).toEqual({ rate: 1.2, pitch: 1.1 });
+    expect(prosodyFor("es")).toEqual({ rate: 0.8, pitch: 0.9 });
+    setVoicePrefs({ rateEs: 1.0 });
+    // The other language keeps hers.
+    expect(prosodyFor("en")).toEqual({ rate: 1.2, pitch: 1.1 });
+    expect(prosodyFor("es")).toEqual({ rate: 1.0, pitch: 0.9 });
+  });
+
   it("saves each language separately and migrates the legacy single voice", () => {
     window.localStorage.removeItem("vale-voice");
-    setVoicePrefs({ voiceEn: null, voiceEs: null, rate: 0.9, pitch: 0.9 });
+    setVoicePrefs({ voiceEn: null, voiceEs: null, rateEn: 0.9, pitchEn: 0.9, rateEs: 0.9, pitchEs: 0.9 });
     setVoiceForLanguage("en", "Ava (Premium)");
     setVoiceForLanguage("es", "Jorge");
     expect(preferredVoice("en")).toBe("Ava (Premium)");
@@ -504,8 +528,10 @@ describe("one voice per language (lead round p2)", () => {
     // Legacy shape still loads: the old single voice becomes English.
     expect(loadVoicePrefs().voiceEn).toBe("Samantha");
     expect(loadVoicePrefs().voiceEs).toBeNull();
-    expect(getVoicePrefs().rate).toBe(0.9);
-    expect(getVoicePrefs().pitch).toBe(0.9);
+    expect(getVoicePrefs().rateEn).toBe(0.9);
+    expect(getVoicePrefs().rateEs).toBe(0.9);
+    expect(getVoicePrefs().pitchEn).toBe(0.9);
+    expect(getVoicePrefs().pitchEs).toBe(0.9);
   });
 
   it("spells her name out in English TTS only", () => {
@@ -519,7 +545,7 @@ describe("one voice per language (lead round p2)", () => {
   it("speaks the Vah-leh spelling through the English voice", async () => {
     const { utterances } = stubSpeechSynthesis([namedVoice("Ava (Premium)")]);
     window.localStorage.removeItem("vale-voice");
-    setVoicePrefs({ voiceEn: null, voiceEs: null, rate: 0.9, pitch: 0.9 });
+    setVoicePrefs({ voiceEn: null, voiceEs: null, rateEn: 0.9, pitchEn: 0.9, rateEs: 0.9, pitchEs: 0.9 });
     speak("Hi, I'm Vale.", "en");
     await vi.waitFor(() => {
       expect(utterances).toEqual(["Hi, I'm Vah-leh."]);

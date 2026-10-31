@@ -19,6 +19,8 @@ const VOICE_NAME_ORDER = [
   "Samantha",
   "Google US English",
 ];
+/** Daniel's Spanish order: Paulina (es-MX), then Marisol (es-ES). Siri voices do not exist on the web; never look for them. */
+const VOICE_NAME_ORDER_ES = ["Paulina (Enhanced)", "Marisol (Premium)"];
 /** macOS novelty voices: never a reply voice, even when en-US. */
 const JOKE_VOICES = new Set(
   [
@@ -49,16 +51,28 @@ export type VoiceEngine = "browser" | "seamless";
 
 let engine: VoiceEngine = "browser";
 
-/** Daniel's runtime voice controls: one voice per language, shared speed and pitch. Persisted, no reload. */
+/** Daniel's runtime voice controls: voice, speed and pitch per language. Switching language loads hers. Persisted, no reload. */
 export interface VoicePrefs {
   /** Exact English voice name, or null for the automatic pick (Ava Premium). */
   voiceEn: string | null;
-  /** Exact Spanish voice name, or null for the automatic pick. */
+  /** Exact Spanish voice name, or null for the automatic pick (Paulina). */
   voiceEs: string | null;
-  /** 0.8 (slow) to 1.3 (fast). */
-  rate: number;
-  /** 0.8 (low) to 1.2 (high). */
-  pitch: number;
+  /** English speed 0.8 (slow) to 1.3 (fast). */
+  rateEn: number;
+  /** English pitch 0.8 (low) to 1.2 (high). */
+  pitchEn: number;
+  /** Spanish speed 0.8 (slow) to 1.3 (fast). */
+  rateEs: number;
+  /** Spanish pitch 0.8 (low) to 1.2 (high). */
+  pitchEs: number;
+}
+
+/** Speed and pitch for one language. */
+export function prosodyFor(language: ValeLanguage): { rate: number; pitch: number } {
+  const prefs = getVoicePrefs();
+  return language === "es"
+    ? { rate: prefs.rateEs, pitch: prefs.pitchEs }
+    : { rate: prefs.rateEn, pitch: prefs.pitchEn };
 }
 
 export const RATE_MIN = 0.8;
@@ -82,8 +96,10 @@ export function loadVoicePrefs(): VoicePrefs {
   const fallback: VoicePrefs = {
     voiceEn: null,
     voiceEs: null,
-    rate: RATE_DEFAULT,
-    pitch: PITCH_DEFAULT,
+    rateEn: RATE_DEFAULT,
+    pitchEn: PITCH_DEFAULT,
+    rateEs: RATE_DEFAULT,
+    pitchEs: PITCH_DEFAULT,
   };
   try {
     if (typeof window === "undefined") return fallback;
@@ -91,14 +107,20 @@ export function loadVoicePrefs(): VoicePrefs {
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<VoicePrefs> & {
       voice?: unknown;
+      rate?: unknown;
+      pitch?: unknown;
     };
-    // Legacy single-voice prefs become the English choice.
+    // Legacy prefs merge: the single voice and prosody become English.
     const legacy = cleanName(parsed.voice);
+    const legacyRate = clamp(parsed.rate, RATE_MIN, RATE_MAX, RATE_DEFAULT);
+    const legacyPitch = clamp(parsed.pitch, PITCH_MIN, PITCH_MAX, PITCH_DEFAULT);
     return {
       voiceEn: cleanName(parsed.voiceEn) ?? legacy,
       voiceEs: cleanName(parsed.voiceEs),
-      rate: clamp(parsed.rate, RATE_MIN, RATE_MAX, RATE_DEFAULT),
-      pitch: clamp(parsed.pitch, PITCH_MIN, PITCH_MAX, PITCH_DEFAULT),
+      rateEn: clamp(parsed.rateEn ?? legacyRate, RATE_MIN, RATE_MAX, RATE_DEFAULT),
+      pitchEn: clamp(parsed.pitchEn ?? legacyPitch, PITCH_MIN, PITCH_MAX, PITCH_DEFAULT),
+      rateEs: clamp(parsed.rateEs ?? legacyRate, RATE_MIN, RATE_MAX, RATE_DEFAULT),
+      pitchEs: clamp(parsed.pitchEs ?? legacyPitch, PITCH_MIN, PITCH_MAX, PITCH_DEFAULT),
     };
   } catch {
     return fallback;
@@ -119,8 +141,10 @@ export function setVoicePrefs(patch: Partial<VoicePrefs>): VoicePrefs {
   voicePrefs = {
     voiceEn: patch.voiceEn !== undefined ? patch.voiceEn : current.voiceEn,
     voiceEs: patch.voiceEs !== undefined ? patch.voiceEs : current.voiceEs,
-    rate: clamp(patch.rate ?? current.rate, RATE_MIN, RATE_MAX, RATE_DEFAULT),
-    pitch: clamp(patch.pitch ?? current.pitch, PITCH_MIN, PITCH_MAX, PITCH_DEFAULT),
+    rateEn: clamp(patch.rateEn ?? current.rateEn, RATE_MIN, RATE_MAX, RATE_DEFAULT),
+    pitchEn: clamp(patch.pitchEn ?? current.pitchEn, PITCH_MIN, PITCH_MAX, PITCH_DEFAULT),
+    rateEs: clamp(patch.rateEs ?? current.rateEs, RATE_MIN, RATE_MAX, RATE_DEFAULT),
+    pitchEs: clamp(patch.pitchEs ?? current.pitchEs, PITCH_MIN, PITCH_MAX, PITCH_DEFAULT),
   };
   try {
     if (typeof window !== "undefined") {
@@ -154,11 +178,12 @@ export function availableVoices(
   voices: readonly SpeechSynthesisVoice[],
   language: ValeLanguage = "en",
 ): { name: string; lang: string }[] {
+  const named = language === "es" ? VOICE_NAME_ORDER_ES : VOICE_NAME_ORDER;
   const order = (name: string): number => {
-    const index = VOICE_NAME_ORDER.findIndex(
+    const index = named.findIndex(
       (ordered) => ordered.toLowerCase() === (name ?? "").toLowerCase(),
     );
-    return index === -1 ? VOICE_NAME_ORDER.length : index;
+    return index === -1 ? named.length : index;
   };
   const prefix = language === "es" ? "es" : "en";
   return voices
@@ -188,7 +213,7 @@ function logVoiceChoice(): void {
   const prefs = getVoicePrefs();
   try {
     console.log(
-      `[voice] using: en=${prefs.voiceEn ?? "automatic"} es=${prefs.voiceEs ?? "automatic"} rate=${prefs.rate.toFixed(1)} pitch=${prefs.pitch.toFixed(1)}`,
+      `[voice] using: en=${prefs.voiceEn ?? "automatic"} es=${prefs.voiceEs ?? "automatic"} rateEn=${prefs.rateEn.toFixed(1)} pitchEn=${prefs.pitchEn.toFixed(1)} rateEs=${prefs.rateEs.toFixed(1)} pitchEs=${prefs.pitchEs.toFixed(1)}`,
     );
   } catch {
     /* logging must never break speech */
@@ -244,14 +269,28 @@ export function pickVoice(
       null
     );
   }
+  for (const name of VOICE_NAME_ORDER_ES) {
+    const found = voices.find(
+      (voice) =>
+        (voice.name ?? "").toLowerCase() === name.toLowerCase() &&
+        (voice.lang ?? "").toLowerCase().startsWith("es") &&
+        !isJokeVoice(voice),
+    );
+    if (found) return found;
+  }
   for (const prefix of VOICE_PRIORITY[language]) {
-    const found = voices.find((voice) =>
-      voice.lang.toLowerCase().startsWith(prefix.toLowerCase()),
+    const found = voices.find(
+      (voice) =>
+        voice.lang.toLowerCase().startsWith(prefix.toLowerCase()) &&
+        !isJokeVoice(voice),
     );
     if (found) return found;
   }
   return (
-    voices.find((voice) => voice.lang.toLowerCase().startsWith("es")) ?? null
+    voices.find(
+      (voice) =>
+        voice.lang.toLowerCase().startsWith("es") && !isJokeVoice(voice),
+    ) ?? null
   );
 }
 
@@ -499,12 +538,13 @@ function queueBrowserSentences(
         /* logging must never break speech */
       }
     }
+    const prosody = prosodyFor(language);
     for (const sentence of sentences) {
       const clean = spokenText(sentence, language);
       if (clean === "") continue;
       const utterance = new SpeechSynthesisUtterance(clean);
-      utterance.rate = prefs.rate;
-      utterance.pitch = prefs.pitch;
+      utterance.rate = prosody.rate;
+      utterance.pitch = prosody.pitch;
       utterance.lang = voice?.lang ?? FALLBACK_LANG[language];
       if (voice) utterance.voice = voice;
       s.speak(utterance);

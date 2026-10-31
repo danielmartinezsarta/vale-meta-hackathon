@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
 import { VoiceControls } from "./VoiceControls";
+import { setVoicePrefs } from "@/lib/speak";
 
 function fakeVoice(name: string, lang: string): SpeechSynthesisVoice {
   return { name, lang } as SpeechSynthesisVoice;
@@ -106,8 +107,8 @@ describe("voice controls", () => {
     expect((speed as HTMLInputElement).value).toBe("1.3");
     expect((pitch as HTMLInputElement).value).toBe("0.8");
     expect(JSON.parse(window.localStorage.getItem("vale-voice") ?? "{}")).toMatchObject({
-      rate: 1.3,
-      pitch: 0.8,
+      rateEn: 1.3,
+      pitchEn: 0.8,
     });
   });
 
@@ -150,5 +151,51 @@ describe("voice controls", () => {
     expect(JSON.parse(window.localStorage.getItem("vale-voice") ?? "{}")).toMatchObject({
       voiceEs: "Jorge",
     });
+  });
+
+  it("switches the voice list and prosody with the language selector", async () => {
+    setVoicePrefs({
+      voiceEn: null,
+      voiceEs: null,
+      rateEn: 0.9,
+      pitchEn: 0.9,
+      rateEs: 0.9,
+      pitchEs: 0.9,
+    });
+    stubSpeechSynthesis(VOICES);
+    renderTalk();
+    const select = screen.getByRole("combobox", { name: "Voice" });
+    await waitFor(() => {
+      expect(select.querySelectorAll("option")).toHaveLength(3);
+    });
+    // English default: Ava on top, no Jorge.
+    expect(
+      [...select.querySelectorAll("option")].map((o) => o.textContent),
+    ).toContain("Ava (Premium)");
+    fireEvent.click(screen.getByRole("radio", { name: "Espa\u00f1ol" }));
+    await waitFor(() => {
+      expect(select.querySelectorAll("option")).toHaveLength(2);
+    });
+    expect(
+      [...select.querySelectorAll("option")].map((o) => o.textContent),
+    ).toContain("Jorge");
+    // Spanish prosody loads its own pair and keeps it across switching.
+    const speed = screen.getByRole("slider", { name: "Speed" });
+    fireEvent.change(speed, { target: { value: "1.1" } });
+    expect((speed as HTMLInputElement).value).toBe("1.1");
+    fireEvent.click(screen.getByRole("radio", { name: "English" }));
+    await waitFor(() => {
+      expect(select.querySelectorAll("option")).toHaveLength(3);
+    });
+    expect(
+      (screen.getByRole("slider", { name: "Speed" }) as HTMLInputElement).value,
+    ).toBe("0.9");
+    fireEvent.click(screen.getByRole("radio", { name: "Espa\u00f1ol" }));
+    await waitFor(() => {
+      expect(select.querySelectorAll("option")).toHaveLength(2);
+    });
+    expect(
+      (screen.getByRole("slider", { name: "Speed" }) as HTMLInputElement).value,
+    ).toBe("1.1");
   });
 });

@@ -736,6 +736,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             audioEncoding: ASR_ENCODING,
             model: ASR_MODEL,
             mode: "PUSH_TO_TALK",
+            // Pin listening to the screen language (names, not tags).
+            languageBias: [turnLanguage === "es" ? "Spanish" : "English"],
           }),
         );
       } catch {

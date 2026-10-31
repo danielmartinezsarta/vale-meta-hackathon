@@ -10,6 +10,7 @@ import {
   getVoicePrefs,
   preferredVoice,
   previewVoice,
+  prosodyFor,
   setVoiceForLanguage,
   setVoicePrefs,
 } from "@/lib/speak";
@@ -18,7 +19,8 @@ import type { ValeLanguage } from "@/lib/vale-language";
 /** Runtime voice controls: one voice per language, speed, pitch and a Test button. English only. */
 export function VoiceControls({ language = "en" }: { language?: ValeLanguage }) {
   const [voices, setVoices] = useState<{ name: string; lang: string }[]>([]);
-  const [prefs, setPrefs] = useState(() => getVoicePrefs());
+  // Rerender trigger; values always read fresh so a language switch loads hers.
+  const [, setPrefs] = useState(() => getVoicePrefs());
 
   useEffect(() => {
     let live = true;
@@ -30,12 +32,22 @@ export function VoiceControls({ language = "en" }: { language?: ValeLanguage }) 
     };
   }, [language]);
 
-  // The selector shows only the active language; each language keeps hers.
+  // The selector shows only the active language; each language keeps hers,
+  // voice and prosody both. Switching language loads its own saved pair.
   const selected =
     preferredVoice(language) !== null &&
     voices.some((voice) => voice.name === preferredVoice(language))
       ? (preferredVoice(language) as string)
       : "";
+  const prosody = prosodyFor(language);
+  const setProsody = (patch: { rate?: number; pitch?: number }) =>
+    setPrefs(
+      setVoicePrefs(
+        language === "es"
+          ? { rateEs: patch.rate, pitchEs: patch.pitch }
+          : { rateEn: patch.rate, pitchEn: patch.pitch },
+      ),
+    );
   return (
     <fieldset>
       <legend>Voice</legend>{" "}
@@ -65,12 +77,12 @@ export function VoiceControls({ language = "en" }: { language?: ValeLanguage }) 
           min={RATE_MIN}
           max={RATE_MAX}
           step={0.1}
-          value={prefs.rate}
+          value={prosody.rate}
           onChange={(event) => {
-            setPrefs(setVoicePrefs({ rate: Number(event.target.value) }));
+            setProsody({ rate: Number(event.target.value) });
           }}
         />{" "}
-        {prefs.rate.toFixed(1)}x
+        {prosody.rate.toFixed(1)}x
       </label>{" "}
       <label>
         Pitch{" "}
@@ -80,12 +92,12 @@ export function VoiceControls({ language = "en" }: { language?: ValeLanguage }) 
           min={PITCH_MIN}
           max={PITCH_MAX}
           step={0.1}
-          value={prefs.pitch}
+          value={prosody.pitch}
           onChange={(event) => {
-            setPrefs(setVoicePrefs({ pitch: Number(event.target.value) }));
+            setProsody({ pitch: Number(event.target.value) });
           }}
         />{" "}
-        {prefs.pitch.toFixed(1)}x
+        {prosody.pitch.toFixed(1)}x
       </label>{" "}
       <button type="button" onClick={() => previewVoice(language)}>
         Test
