@@ -436,7 +436,7 @@ describe("voice engine switch", () => {
       expect(screen.getByText("Hi, I am Vale.")).toBeDefined();
     });
     const turns = screen.getByRole("list", { name: "Conversation turns" });
-    const board = screen.getByRole("heading", { name: "Lista de compras" });
+    const board = screen.getByRole("heading", { name: "Shopping list" });
     expect(
       turns.compareDocumentPosition(board) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
