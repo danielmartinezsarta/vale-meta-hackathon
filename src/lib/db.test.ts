@@ -4,6 +4,7 @@ import {
   PRIVATE_NOTE_LABEL,
   freshTestDb,
   getCounts,
+  getDb,
   getPublicNotes,
   recentTurns,
   recordTurn,
@@ -96,5 +97,31 @@ describe("conversation turns", () => {
     expect(turns[0].text).toBe("turn 5");
     expect(turns[19].text).toBe("turn 24");
     db.close();
+  });
+});
+
+describe("test-database guards", () => {
+  it("refuses turns without a client key", () => {
+    const db = freshTestDb();
+    recordTurn(db, "unknown", "user", "hello?");
+    recordTurn(db, "   ", "user", "hello?");
+    recordTurn(db, "c1", "user", "Vale, open a session");
+    const turns = recentTurns(db, "c1", 20);
+    expect(turns).toHaveLength(1);
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM turns").get() as { n: number }).n,
+    ).toBe(1);
+    db.close();
+  });
+
+  it("refuses the file database under vitest", () => {
+    const saved = process.env.VALE_DB_MEMORY;
+    delete process.env.VALE_DB_MEMORY;
+    try {
+      expect(() => getDb()).toThrow(/under vitest/);
+    } finally {
+      if (saved === undefined) delete process.env.VALE_DB_MEMORY;
+      else process.env.VALE_DB_MEMORY = saved;
+    }
   });
 });

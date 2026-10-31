@@ -210,6 +210,12 @@ export function recordTurn(
   text: string,
   tool: string | null = null,
 ): void {
+  // Without a key nothing is saved: "unknown" (or blank) keys used to mix
+  // test and headless traffic into Daniel's live turns.
+  if (clientKey.trim() === "" || clientKey === "unknown") {
+    console.warn(`[vale-db] refusing turn without client key (role=${role})`);
+    return;
+  }
   db.prepare("INSERT INTO turns (client_key, role, text, tool) VALUES (?, ?, ?, ?)").run(
     clientKey,
     role,
@@ -272,6 +278,11 @@ export function getDb(): ValeDb {
     seedDatabase(shared);
     console.log("[vale-db] VALE_DB_MEMORY=1; using in-memory seed");
     return shared;
+  }
+  if (process.env.VITEST === "true") {
+    throw new Error(
+      "[vale-db] refusing the file database under vitest; tests use VALE_DB_MEMORY=1 or a tmp file",
+    );
   }
   try {
     mkdirSync(dirname(DB_FILE), { recursive: true });
