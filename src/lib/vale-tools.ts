@@ -376,8 +376,8 @@ export function openSession(db: ValeDb, args: { client_name?: unknown; service_n
       ok: false,
       message:
         language === "en"
-          ? `There is already an open session (${who}). Close it before opening another.`
-          : `Ya hay una sesión abierta (${who}). Ciérrala antes de abrir otra.`,
+          ? `There is already an open session (${who}). Tell the user and ask whether to close it before opening another; never close it unasked.`
+          : `Ya hay una sesión abierta (${who}). Díselo al usuario y pregunta si la cierra antes de abrir otra; nunca la cierres sin que te lo pida.`,
     };
   }
   const clientName = typeof args.client_name === "string" ? args.client_name : "";
