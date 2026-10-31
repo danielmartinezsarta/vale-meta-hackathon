@@ -144,13 +144,19 @@ for (const conv of convs) {
 }
 
 // Prefix-cache measure: match this run's server [voice-turn] lines by key.
+// The harness is strictly sequential, so each key's lines arrive in turn
+// order: shift one gate per result. gateCounts totals every gate seen,
+// including gate:idioma discards and ignored turns.
 let serverTokens = null;
+let gateCounts = null;
 if (serverLogPath) {
   try {
+    const gatesByKey = new Map();
     const lines = readFileSync(serverLogPath, "utf8").split("\n");
     let input = 0;
     let cached = 0;
     let turns = 0;
+    gateCounts = {};
     for (const line of lines) {
       const at = line.indexOf("[voice-turn]");
       if (at === -1) continue;
@@ -160,9 +166,17 @@ if (serverLogPath) {
         turns += 1;
         input += fields.inputTokens ?? 0;
         cached += fields.cachedInputTokens ?? 0;
+        const gate = fields.gate ?? null;
+        gateCounts[String(gate)] = (gateCounts[String(gate)] ?? 0) + 1;
+        if (!gatesByKey.has(fields.key)) gatesByKey.set(fields.key, []);
+        gatesByKey.get(fields.key).push(gate);
       } catch {
         /* a truncated line never breaks the totals */
       }
+    }
+    for (const result of results) {
+      const queue = gatesByKey.get(result.client);
+      result.serverGate = queue && queue.length > 0 ? queue.shift() : null;
     }
     serverTokens = { turns, input, cached, cachedRatio: input > 0 ? cached / input : 0 };
   } catch {
@@ -170,4 +184,4 @@ if (serverLogPath) {
   }
 }
 
-console.log(JSON.stringify({ run, lang, results, serverTokens }, null, 1));
+console.log(JSON.stringify({ run, lang, results, gateCounts, serverTokens }, null, 1));

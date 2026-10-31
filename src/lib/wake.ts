@@ -200,12 +200,15 @@ export function checkWake(
   const since = attentionSince.get(clientId);
   const inWindow = since !== undefined && now - since < windowMs(sessionOpen);
   const sinceReplyS = since === undefined ? null : (now - since) / 1000;
-  // The selector owns the language end to end: content in the other
-  // language is silently discarded (no model, no writes, gate:idioma).
-  if (languageMismatch(transcript, language)) {
+  // A phrase that names Vale is never discarded for language: the name
+  // itself says nothing about the language, and the selector owns the
+  // reply language end to end. Only unnamed content in the other language
+  // is silently discarded (no model, no writes, gate:idioma).
+  const named = namesVale(transcript);
+  if (!named && languageMismatch(transcript, language)) {
     return { execute: false, namedVale: false, gate: "idioma", sinceReplyS };
   }
-  if (namesVale(transcript)) {
+  if (named) {
     attentionSince.set(clientId, now);
     return { execute: true, namedVale: true, gate: "nombre", sinceReplyS };
   }

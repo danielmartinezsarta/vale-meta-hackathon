@@ -235,14 +235,24 @@ describe("language gate (gate:idioma)", () => {
       checkWake("¿Qué le digo?", "ip-ear", 1000, false, "en"),
     ).toMatchObject({ execute: false, gate: "idioma" });
   });
-  it("discards Spanish content under EN without opening the window", () => {
+  it("never idioma-discards a phrase that names Vale, in either language", () => {
     expect(languageMismatch("vale abre sesion con Ana", "en")).toBe(true);
     expect(
       checkWake("vale abre sesion con Ana", "ip-lang", 1000, false, "en"),
+    ).toMatchObject({ execute: true, namedVale: true, gate: "nombre" });
+    expect(languageMismatch("vale book Ana for tomorrow", "es")).toBe(true);
+    expect(
+      checkWake("vale book Ana for tomorrow", "ip-lang-2", 1000, false, "es"),
+    ).toMatchObject({ execute: true, namedVale: true, gate: "nombre" });
+  });
+
+  it("still discards unnamed content in the other language", () => {
+    expect(
+      checkWake("abre sesion con Ana", "ip-lang-unnamed", 1000, false, "en"),
     ).toMatchObject({ execute: false, gate: "idioma" });
     // No window opened: a later English turn still needs the name.
     expect(
-      checkWake("open a session", "ip-lang", 2000, false, "en").execute,
+      checkWake("open a session", "ip-lang-unnamed", 2000, false, "en").execute,
     ).toBe(false);
   });
 
@@ -256,11 +266,7 @@ describe("language gate (gate:idioma)", () => {
     );
   });
 
-  it("discards English content under ES", () => {
-    expect(languageMismatch("vale book Ana for tomorrow", "es")).toBe(true);
-    expect(
-      checkWake("vale book Ana for tomorrow", "ip-lang-es", 1000, false, "es"),
-    ).toMatchObject({ execute: false, gate: "idioma" });
+  it("lets matching content through under its own selector", () => {
     expect(
       checkWake("vale abre sesion con Ana", "ip-lang-es", 1000, false, "es"),
     ).toMatchObject({ execute: true, gate: "nombre" });
