@@ -737,7 +737,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         }
         {
           const sessionOpen = getOpenSession(getDb()) !== null;
-          const verdict = checkWake(finalText, clientId, Date.now(), sessionOpen);
+          const verdict = checkWake(finalText, clientId, Date.now(), sessionOpen, turnLanguage);
           if (!verdict.execute) {
             // Background chatter without the name: silent discard.
             logTurn({
