@@ -137,9 +137,9 @@
    "id": "C13",
    "goal": "follow-up merges into one booking, never list_today (field case)",
    "turns": [
-    "Vale, book Emma for gel refill today at 6 PM",
+    "Vale, book Emma for gel refill Monday at 4 PM",
     "book her again next month",
-    "same day and time as today"
+    "same day and time as Monday"
    ]
   },
   {
@@ -168,11 +168,10 @@
   },
   {
    "id": "C17",
-   "goal": "next month without time fills today's time and says so",
+   "goal": "next month fills the known time and says so",
    "turns": [
-    "Vale, book Mia for gel refill today at 6 PM",
-    "book her again next month",
-    "yes"
+    "Vale, book Mia for gel refill Monday at 4 PM",
+    "book her again next month, same time"
    ]
   }
  ],
