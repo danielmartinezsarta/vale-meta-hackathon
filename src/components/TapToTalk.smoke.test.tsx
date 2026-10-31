@@ -14,7 +14,7 @@ describe("TapToTalk smoke", () => {
     render(<TapToTalk />);
 
     const buttons = screen.getAllByRole("button");
-    expect(buttons).toHaveLength(4);
+    expect(buttons).toHaveLength(3);
     expect(
       screen.getByRole("button", { name: "Tap to talk" }),
     ).toBeDefined();
@@ -27,24 +27,18 @@ describe("TapToTalk smoke", () => {
     vi.unstubAllGlobals();
   });
 
-  it("marks the selected language with a visible active state", () => {
+  it("shows voice controls instead of a language switch", () => {
     const getUserMedia = vi.fn();
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
 
     render(<TapToTalk />);
 
-    const es = screen.getByRole("button", { name: "ES" });
-    const en = screen.getByRole("button", { name: "EN" });
-    expect(en.getAttribute("aria-pressed")).toBe("true");
-    expect(en.style.fontWeight).toBe("bold");
-    expect(es.getAttribute("aria-pressed")).toBe("false");
-    expect(es.style.fontWeight).not.toBe("bold");
-
-    fireEvent.click(es);
-    expect(es.getAttribute("aria-pressed")).toBe("true");
-    expect(es.style.fontWeight).toBe("bold");
-    expect(en.getAttribute("aria-pressed")).toBe("false");
-    expect(en.style.fontWeight).not.toBe("bold");
+    expect(screen.queryByRole("button", { name: "ES" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "EN" })).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Voice" })).toBeDefined();
+    expect(screen.getByRole("slider", { name: "Speed" })).toBeDefined();
+    expect(screen.getByRole("slider", { name: "Pitch" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Test" })).toBeDefined();
 
     vi.unstubAllGlobals();
   });

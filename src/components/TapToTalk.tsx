@@ -18,12 +18,8 @@ import {
   finishStream,
   speakStream,
 } from "@/lib/speak";
-import {
-  DEFAULT_LANGUAGE,
-  parseLanguage,
-  turnErrorText,
-  type ValeLanguage,
-} from "@/lib/vale-language";
+import { turnErrorText, type ValeLanguage } from "@/lib/vale-language";
+import { VoiceControls } from "@/components/VoiceControls";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
@@ -98,14 +94,8 @@ export function TapToTalk() {
   const [level, setLevel] = useState(0);
   const [board, setBoard] = useState<Board | null>(null);
   const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
-  const [language, setLanguage] = useState<ValeLanguage>(() => {
-    if (typeof window === "undefined") return DEFAULT_LANGUAGE;
-    try {
-      return parseLanguage(window.localStorage.getItem("vale-language"));
-    } catch {
-      return DEFAULT_LANGUAGE;
-    }
-  });
+  // English only: the ES/EN switch is gone, the screen language is fixed.
+  const [language] = useState<ValeLanguage>("en");
   // Turn handlers close over the session; the ref keeps the live language.
   const languageRef = useRef<ValeLanguage>(language);
   // Stable per-browser id so slots, pending actions and chain lanes survive
@@ -1037,16 +1027,6 @@ export function TapToTalk() {
     setEngine(next);
   }, [engine]);
 
-  const selectLanguage = useCallback((next: ValeLanguage) => {
-    languageRef.current = next;
-    setLanguage(next);
-    try {
-      window.localStorage.setItem("vale-language", next);
-    } catch {
-      /* persistence is best-effort; the turn still uses the new language */
-    }
-  }, []);
-
   return (
     <section>
       <button
@@ -1077,32 +1057,7 @@ export function TapToTalk() {
       >
         <SpeakerIcon /> Voice: {engine === "seamless" ? "Seamless" : "browser"}
       </button>{" "}
-      <span role="group" aria-label="Language">
-        <button
-          type="button"
-          onClick={() => selectLanguage("es")}
-          aria-pressed={language === "es"}
-          style={
-            language === "es"
-              ? { fontWeight: "bold", textDecoration: "underline" }
-              : undefined
-          }
-        >
-          ES
-        </button>{" "}
-        <button
-          type="button"
-          onClick={() => selectLanguage("en")}
-          aria-pressed={language === "en"}
-          style={
-            language === "en"
-              ? { fontWeight: "bold", textDecoration: "underline" }
-              : undefined
-          }
-        >
-          EN
-        </button>
-      </span>
+      <VoiceControls />
 
       {status === "live" && <LevelMeter level={level} />}
 

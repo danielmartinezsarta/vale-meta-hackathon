@@ -184,7 +184,6 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
 
     // Switch to Spanish and tap again: the new session socket carries ES.
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -194,7 +193,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     });
     FakeWs.instances[1].open();
     expect(FakeWs.instances[1].sentStrings()).toContain(
-      JSON.stringify({ type: "language", language: "es" }),
+      JSON.stringify({ type: "language", language: "en" }),
     );
   });
 

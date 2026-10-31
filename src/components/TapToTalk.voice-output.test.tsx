@@ -109,7 +109,6 @@ describe("browser voice output", () => {
     speakAudibleRef.current = false;
 
     render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -138,13 +137,13 @@ describe("browser voice output", () => {
 
     // Deltas paint the screen and stream to the speaker at once. The reply is
     // still streaming: no reply, no done, the turn stays open.
-    ws.serverMessage({ type: "reply-delta", text: "Te anoto mañana " });
-    ws.serverMessage({ type: "reply-delta", text: "a las tres." });
+    ws.serverMessage({ type: "reply-delta", text: "Booking you " });
+    ws.serverMessage({ type: "reply-delta", text: "for tomorrow at three." });
     expect(mockSpeakStream).toHaveBeenCalledTimes(2);
-    expect(mockSpeakStream).toHaveBeenCalledWith("Te anoto mañana ", "es");
+    expect(mockSpeakStream).toHaveBeenCalledWith("Booking you ", "en");
     expect(mockSpeak).not.toHaveBeenCalled();
     await waitFor(() => {
-      expect(screen.getByText("Te anoto mañana a las tres.")).toBeDefined();
+      expect(screen.getByText("Booking you for tomorrow at three.")).toBeDefined();
     });
 
     // Her reply audible: speech without the name is transcribed, never cut,
@@ -166,9 +165,9 @@ describe("browser voice output", () => {
     ws.serverMessage({ type: "ignored" });
     ws.serverMessage({ type: "done" });
     expect(mockStopSpeaking).not.toHaveBeenCalled();
-    expect(screen.getByText("Te anoto mañana a las tres.")).toBeDefined();
+    expect(screen.getByText("Booking you for tomorrow at three.")).toBeDefined();
     await waitFor(() => {
-      expect(screen.getByText("ignorado (sin nombre)")).toBeDefined();
+      expect(screen.getByText("ignored (no name)")).toBeDefined();
     });
 
     // A named, dissimilar interrupt cuts her voice mid-sentence and dismisses
@@ -183,14 +182,14 @@ describe("browser voice output", () => {
     expect(mockStopSpeaking).toHaveBeenCalledTimes(1);
     expect(mockStopSpeaking).toHaveBeenCalledWith("barge-in");
     await waitFor(() => {
-      expect(screen.queryByText("Te anoto mañana a las tres.")).toBeNull();
+      expect(screen.queryByText("Booking you for tomorrow at three.")).toBeNull();
     });
     driver!.onSpeechEnd();
     expect(endStreams()).toBe(3);
-    ws.serverMessage({ type: "reply-delta", text: "Listo, " });
-    ws.serverMessage({ type: "reply", text: "Listo, te agendo." });
+    ws.serverMessage({ type: "reply-delta", text: "Done, " });
+    ws.serverMessage({ type: "reply", text: "Done, booking you in." });
     await waitFor(() => {
-      expect(screen.getByText("Listo, te agendo.")).toBeDefined();
+      expect(screen.getByText("Done, booking you in.")).toBeDefined();
     });
     ws.serverMessage({ type: "done" });
 
@@ -201,13 +200,13 @@ describe("browser voice output", () => {
     driver!.onSpeechStart();
     voice(8);
     expect(mockStopSpeaking).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("Listo, te agendo.")).toBeDefined();
+    expect(screen.getByText("Done, booking you in.")).toBeDefined();
     driver!.onSpeechEnd();
     expect(endStreams()).toBe(4);
     ws.serverMessage({ type: "ignored" });
     ws.serverMessage({ type: "done" });
     await waitFor(() => {
-      expect(screen.getByText("Listo, te agendo.")).toBeDefined();
+      expect(screen.getByText("Done, booking you in.")).toBeDefined();
     });
   });
 
@@ -228,7 +227,6 @@ describe("browser voice output", () => {
     speakAudibleRef.current = false;
 
     render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -337,9 +335,7 @@ describe("voice engine switch", () => {
     });
 
     render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -353,12 +349,12 @@ describe("voice engine switch", () => {
     const ws = FakeWs.instances[0];
     for (let i = 0; i < 8; i += 1) driver!.onFrame?.(new Int16Array(960).fill(4000));
     driver!.onSpeechEnd();
-    ws.serverMessage({ type: "reply", text: "Sesión abierta." });
+    ws.serverMessage({ type: "reply", text: "Session open." });
     await waitFor(() => {
       expect(played).toHaveLength(1);
     });
-    expect(mockSpeak).toHaveBeenCalledWith("Sesión abierta.", "es");
-    expect(mockSpeak).toHaveBeenCalledWith("Sesión abierta.", "es");
+    expect(mockSpeak).toHaveBeenCalledWith("Session open.", "en");
+    expect(mockSpeak).toHaveBeenCalledWith("Session open.", "en");
   });
 
   it("renders ignored turns dimmed with a label, never as dialogue", async () => {
@@ -376,7 +372,6 @@ describe("voice engine switch", () => {
     });
 
     render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -390,14 +385,14 @@ describe("voice engine switch", () => {
     const ws = FakeWs.instances[0];
     for (let i = 0; i < 8; i += 1) driver!.onFrame?.(new Int16Array(960).fill(4000));
     driver!.onSpeechEnd();
-    ws.serverMessage({ type: "transcript", transcript: "ruido", final: true });
+    ws.serverMessage({ type: "transcript", transcript: "noise", final: true });
     ws.serverMessage({ type: "ignored" });
     ws.serverMessage({ type: "done" });
 
     await waitFor(() => {
-      expect(screen.getByText("ignorado (sin nombre)")).toBeDefined();
+      expect(screen.getByText("ignored (no name)")).toBeDefined();
     });
-    const item = screen.getByText("ignorado (sin nombre)").closest("li");
+    const item = screen.getByText("ignored (no name)").closest("li");
     expect(item?.getAttribute("style")).toContain("opacity");
     expect(screen.queryByText("You:")).toBeNull();
   });
@@ -417,7 +412,6 @@ describe("voice engine switch", () => {
     });
 
     render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -431,15 +425,15 @@ describe("voice engine switch", () => {
     const ws = FakeWs.instances[0];
     for (let i = 0; i < 8; i += 1) driver!.onFrame?.(new Int16Array(960).fill(4000));
     driver!.onSpeechEnd();
-    ws.serverMessage({ type: "transcript", transcript: "vale, hola", final: true });
-    ws.serverMessage({ type: "reply", text: "Hola, soy Vale." });
+    ws.serverMessage({ type: "transcript", transcript: "vale, hi", final: true });
+    ws.serverMessage({ type: "reply", text: "Hi, I am Vale." });
     ws.serverMessage({
       type: "board",
       board: { session: null, card: null, list: [] },
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Hola, soy Vale.")).toBeDefined();
+      expect(screen.getByText("Hi, I am Vale.")).toBeDefined();
     });
     const turns = screen.getByRole("list", { name: "Conversation turns" });
     const board = screen.getByRole("heading", { name: "Lista de compras" });
@@ -469,9 +463,7 @@ describe("voice engine switch", () => {
     speakAudibleRef.current = false;
 
     render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -489,9 +481,9 @@ describe("voice engine switch", () => {
     driver!.onSpeechStart();
     voice(8);
     driver!.onSpeechEnd();
-    ws.serverMessage({ type: "reply", text: "Vale, te escucho." });
+    ws.serverMessage({ type: "reply", text: "Vale, I hear you." });
     await waitFor(() => {
-      expect(screen.getByText("Vale, te escucho.")).toBeDefined();
+      expect(screen.getByText("Vale, I hear you.")).toBeDefined();
     });
     ws.serverMessage({ type: "done" });
 
@@ -504,12 +496,12 @@ describe("voice engine switch", () => {
     const binaryBefore = ws.sentBinaryCount();
     driver!.onSpeechStart();
     expect(mockStopSpeaking).not.toHaveBeenCalled();
-    expect(screen.getByText("Vale, te escucho.")).toBeDefined();
+    expect(screen.getByText("Vale, I hear you.")).toBeDefined();
     voice(8);
     expect(ws.sentBinaryCount()).toBeGreaterThan(binaryBefore);
-    ws.serverMessage({ type: "transcript", transcript: "Vale, te" });
+    ws.serverMessage({ type: "transcript", transcript: "Vale, I" });
     expect(mockStopSpeaking).not.toHaveBeenCalled();
-    expect(screen.getByText("Vale, te escucho.")).toBeDefined();
+    expect(screen.getByText("Vale, I hear you.")).toBeDefined();
 
     // The echo ends with the reply still playing: transcribed and ignored
     // server-side, the original reply untouched, nothing new spoken.
@@ -524,7 +516,7 @@ describe("voice engine switch", () => {
     ws.serverMessage({ type: "done" });
     // No second socket, the original reply untouched, nothing new spoken.
     expect(FakeWs.instances).toHaveLength(1);
-    expect(screen.getByText("Vale, te escucho.")).toBeDefined();
+    expect(screen.getByText("Vale, I hear you.")).toBeDefined();
     expect(played).toHaveLength(playedBefore);
     expect(mockSpeak).not.toHaveBeenCalled();
     expect(mockStopSpeaking).not.toHaveBeenCalled();

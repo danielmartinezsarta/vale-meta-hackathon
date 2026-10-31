@@ -421,7 +421,7 @@ describe("Daniel's voice order (browser voice)", () => {
     });
     const utterance = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
     expect(utterance.rate).toBe(1.0);
-    expect("pitch" in utterance).toBe(false);
+    expect(utterance.pitch).toBe(1.0);
     expect(utterance.voice).toEqual(
       expect.objectContaining({ name: "Ava (Premium)" }),
     );

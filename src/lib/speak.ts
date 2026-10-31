@@ -49,6 +49,114 @@ export type VoiceEngine = "browser" | "seamless";
 
 let engine: VoiceEngine = "browser";
 
+/** Daniel's runtime voice controls: voice, speed, pitch. Persisted, no reload. */
+export interface VoicePrefs {
+  /** Exact voice name, or null for the automatic pick. */
+  voice: string | null;
+  /** 0.8 (slow) to 1.3 (fast). */
+  rate: number;
+  /** 0.8 (low) to 1.2 (high). */
+  pitch: number;
+}
+
+export const RATE_MIN = 0.8;
+export const RATE_MAX = 1.3;
+export const RATE_DEFAULT = 1.0;
+export const PITCH_MIN = 0.8;
+export const PITCH_MAX = 1.2;
+export const PITCH_DEFAULT = 1.0;
+const PREFS_KEY = "vale-voice";
+
+const clamp = (value: unknown, lo: number, hi: number, fallback: number): number =>
+  typeof value === "number" && Number.isFinite(value)
+    ? Math.min(hi, Math.max(lo, value))
+    : fallback;
+
+export function loadVoicePrefs(): VoicePrefs {
+  const fallback: VoicePrefs = { voice: null, rate: RATE_DEFAULT, pitch: PITCH_DEFAULT };
+  try {
+    if (typeof window === "undefined") return fallback;
+    const raw = window.localStorage.getItem(PREFS_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<VoicePrefs>;
+    return {
+      voice: typeof parsed.voice === "string" && parsed.voice !== "" ? parsed.voice : null,
+      rate: clamp(parsed.rate, RATE_MIN, RATE_MAX, RATE_DEFAULT),
+      pitch: clamp(parsed.pitch, PITCH_MIN, PITCH_MAX, PITCH_DEFAULT),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+let voicePrefs: VoicePrefs | null = null;
+
+/** Current prefs; the next spoken sentence picks them up without a reload. */
+export function getVoicePrefs(): VoicePrefs {
+  if (!voicePrefs) voicePrefs = loadVoicePrefs();
+  return { ...voicePrefs };
+}
+
+/** Merge, clamp, persist and log the new choice. */
+export function setVoicePrefs(patch: Partial<VoicePrefs>): VoicePrefs {
+  const current = getVoicePrefs();
+  voicePrefs = {
+    voice: patch.voice !== undefined ? patch.voice : current.voice,
+    rate: clamp(patch.rate ?? current.rate, RATE_MIN, RATE_MAX, RATE_DEFAULT),
+    pitch: clamp(patch.pitch ?? current.pitch, PITCH_MIN, PITCH_MAX, PITCH_DEFAULT),
+  };
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(PREFS_KEY, JSON.stringify(voicePrefs));
+    }
+  } catch {
+    /* persistence is best-effort; the turn still uses the new prefs */
+  }
+  logVoiceChoice();
+  return { ...voicePrefs };
+}
+
+/** English browser voices, jokes excluded, Daniel's order first. */
+export function availableVoices(
+  voices: readonly SpeechSynthesisVoice[],
+): { name: string; lang: string }[] {
+  const order = (name: string): number => {
+    const index = VOICE_NAME_ORDER.findIndex(
+      (ordered) => ordered.toLowerCase() === (name ?? "").toLowerCase(),
+    );
+    return index === -1 ? VOICE_NAME_ORDER.length : index;
+  };
+  return voices
+    .filter(
+      (voice) =>
+        (voice.lang ?? "").toLowerCase().startsWith("en") && !isJokeVoice(voice),
+    )
+    .map((voice) => ({ name: voice.name ?? "", lang: voice.lang ?? "" }))
+    .filter((voice) => voice.name !== "")
+    .sort(
+      (a, b) => order(a.name) - order(b.name) || a.name.localeCompare(b.name),
+    );
+}
+
+/** Voice list for the page selector; empty without the web APIs. */
+export function getBrowserVoices(): Promise<{ name: string; lang: string }[]> {
+  const s = synth();
+  if (!s) return Promise.resolve([]);
+  return ensureVoices(s).then((voices) => availableVoices(voices));
+}
+
+/** One-line field log of the voice in use, for the by-ear test. */
+function logVoiceChoice(): void {
+  const prefs = getVoicePrefs();
+  try {
+    console.log(
+      `[voice] using: ${prefs.voice ?? "automatic"} rate=${prefs.rate.toFixed(1)} pitch=${prefs.pitch.toFixed(1)}`,
+    );
+  } catch {
+    /* logging must never break speech */
+  }
+}
+
 /** Switch the output engine at runtime; switch back with "browser". */
 export function setVoiceEngine(next: VoiceEngine): void {
   engine = next;
@@ -66,7 +174,16 @@ function isJokeVoice(voice: SpeechSynthesisVoice): boolean {
 export function pickVoice(
   voices: readonly SpeechSynthesisVoice[],
   language: ValeLanguage = DEFAULT_LANGUAGE,
+  preferredName: string | null = null,
 ): SpeechSynthesisVoice | null {
+  if (preferredName !== null && preferredName !== "") {
+    const chosen = voices.find(
+      (voice) =>
+        (voice.name ?? "").toLowerCase() === preferredName.toLowerCase() &&
+        !isJokeVoice(voice),
+    );
+    if (chosen) return chosen;
+  }
   if (language === "en") {
     for (const name of VOICE_NAME_ORDER) {
       const found = voices.find(
@@ -317,7 +434,8 @@ function queueBrowserSentences(
   language: ValeLanguage,
 ): void {
   try {
-    const voice = pickVoice(voices, language);
+    const prefs = getVoicePrefs();
+    const voice = pickVoice(voices, language, prefs.voice);
     if (voice && !voiceLogged) {
       voiceLogged = true;
       try {
@@ -330,7 +448,8 @@ function queueBrowserSentences(
       const clean = cleanSpokenText(sentence);
       if (clean === "") continue;
       const utterance = new SpeechSynthesisUtterance(clean);
-      utterance.rate = 1.0;
+      utterance.rate = prefs.rate;
+      utterance.pitch = prefs.pitch;
       utterance.lang = voice?.lang ?? FALLBACK_LANG[language];
       if (voice) utterance.voice = voice;
       s.speak(utterance);
@@ -382,24 +501,18 @@ export function speak(
   language: ValeLanguage = DEFAULT_LANGUAGE,
 ): void {
   if (text.trim() === "") return;
-  const sentences = splitSentences(text);
-  if (sentences.length === 0) return;
   if (engine === "seamless") {
     // The demo speaker is fixed; the reply text itself stays in the
     // selected language, so Seamless never invents another one.
     playSeamless(text, language);
     return;
   }
-  const s = synth();
-  if (!s) return;
-  try {
-    s.cancel();
-  } catch {
-    /* voice output is best-effort; the text stays on screen */
-  }
-  void ensureVoices(s).then((late) =>
-    queueBrowserSentences(s, sentences, late, language),
-  );
+  sayBrowserFallback(text, language);
+}
+
+/** Page Test button: hear the picked voice at the picked speed and pitch. */
+export function previewVoice(): void {
+  sayBrowserFallback("Hi, I'm Vale. Tell me what you need.", "en");
 }
 
 export function stopSpeaking(reason: string): void {

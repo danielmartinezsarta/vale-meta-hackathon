@@ -53,12 +53,11 @@ describe("empty turns stay hidden (fix 1)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {
       expect(
-        screen.getByText("Tu micrófono está encendido. Adelante, te escucho."),
+        screen.getByText("Your microphone is on. Go ahead, I'm listening."),
       ).toBeTruthy();
     });
 
@@ -98,7 +97,6 @@ describe("empty turns stay hidden (fix 1)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {
@@ -106,7 +104,7 @@ describe("empty turns stay hidden (fix 1)", () => {
     });
     await waitFor(() => {
       expect(
-        screen.getByText("Tu micrófono está encendido. Adelante, te escucho."),
+        screen.getByText("Your microphone is on. Go ahead, I'm listening."),
       ).toBeTruthy();
     });
     expect(
