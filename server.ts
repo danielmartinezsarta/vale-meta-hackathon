@@ -7,11 +7,19 @@
 import { createServer } from "node:http";
 import next from "next";
 import { WebSocket, WebSocketServer } from "ws";
-import { attachVoiceBridge } from "./src/lib/voice-bridge";
+import {
+  attachVoiceBridge,
+  bridgeOptionsForUpgrade,
+} from "./src/lib/voice-bridge";
 
 const port = Number(process.env.PORT ?? process.env.VOICE_PORT ?? 3000);
 
 async function main(): Promise<void> {
+  // A missing key fails every turn as E-ASR downstream; fail here instead.
+  if (!process.env.META_API_KEY) {
+    console.error("[voice-server] META_API_KEY is not set; refusing to start.");
+    process.exit(1);
+  }
   const app = next({ dev: false, dir: "." });
   await app.prepare();
   const handler = app.getRequestHandler();
@@ -32,9 +40,11 @@ async function main(): Promise<void> {
           ._socket?.remoteAddress ?? "unknown";
       attachVoiceBridge({
         browser: browser as never,
-        key: peer,
-        clientId: peer,
-        conversation: true,
+        ...bridgeOptionsForUpgrade(
+          peer,
+          process.env.META_API_KEY as string,
+          process.env.META_ASR_URL || undefined,
+        ),
         createMetaSocket: (url: string) => new WebSocket(url),
       });
     });

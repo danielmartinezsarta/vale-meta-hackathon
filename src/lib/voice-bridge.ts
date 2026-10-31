@@ -41,6 +41,25 @@ export interface BridgeAgentResult {
   firstTokenMs: number | null;
 }
 
+/**
+ * Wiring for the single-process server: the Meta key authenticates upstream,
+ * the socket peer only names the conversation until the browser sends its
+ * stable client frame. Mixing them up authenticates Meta with an IP address
+ * and every turn dies as E-ASR (Daniel's "connection dropped" on tap).
+ */
+export function bridgeOptionsForUpgrade(
+  peer: string,
+  apiKey: string,
+  asrUrl?: string,
+): Pick<VoiceBridgeOptions, "key" | "clientId" | "conversation" | "metaUrl"> {
+  return {
+    key: apiKey,
+    clientId: peer,
+    conversation: true,
+    metaUrl: asrUrl,
+  };
+}
+
 export interface VoiceBridgeOptions {
   /** Browser side of the socket: one per turn, or one per conversation. */
   browser: WebSocket;
@@ -48,6 +67,10 @@ export interface VoiceBridgeOptions {
   conversation?: boolean;
   key: string;
   metaUrl?: string;
+  /** Redial backoff after a failed turn (conversation sockets only). */
+  retryBaseMs?: number;
+  retryMaxMs?: number;
+  maxConsecutiveFailures?: number;
   createMetaSocket?: (url: string) => WebSocket;
   runAgent?: (args: {
     key: string;
@@ -126,6 +149,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       1,
       Number(process.env.VOICE_TURN_TIMEOUT_MS) || BRIDGE_TURN_TIMEOUT_MS,
     ),
+    retryBaseMs = 1000,
+    retryMaxMs = 8000,
+    maxConsecutiveFailures = 5,
   } = options;
 
   let settled = false;
@@ -139,6 +165,18 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   let agentRan = false;
   /** Stale Meta sockets from earlier turns must not fail the current one. */
   let metaGen = 0;
+  /** Straight failed turns on this browser socket; a final resets it. */
+  let failedTurns = 0;
+  let lastCountedGen = -1;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A Meta dial is in flight: later audio just buffers behind it. */
+  let metaDialPending = false;
+  const clearRetry = () => {
+    if (retryTimer !== undefined) {
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
+    }
+  };
   /** Screen selector language; Spanish until the browser sends its frame. */
   let turnLanguage: ValeLanguage = DEFAULT_LANGUAGE;
   const err = (kind: VoiceErrorKind): string =>
@@ -165,9 +203,20 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     }
   };
 
-  // Next turn on the same socket: fresh flags, fresh Meta dial, same window.
+  // Meta dials on first voice, never idly: an open socket with no ingress
+  // dies fast upstream ("slower than real-time"), and a pre-dialed socket
+  // would loop failures on a silent user. Buffered audio replays on open.
+  const ensureMetaOpen = () => {
+    if (metaOpen || metaDialPending || settled || browserGone) return;
+    metaDialPending = true;
+    openMetaTurn();
+  };
+
+  // Next turn on the same socket: fresh flags, same window. No dial here:
+  // the next audio frames open it, so silence never holds a Meta socket.
   const beginNextTurn = () => {
     metaOpen = false;
+    metaDialPending = false;
     gotFinal = false;
     finalText = "";
     audioProcessedMs = null;
@@ -177,14 +226,50 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     agentRan = false;
     timerArmed = false;
     clearTimeout(timer);
-    openMetaTurn();
   };
 
   const failTurn = (message: string, code: string) => {
     if (settled) return;
     sendJson(browser, { type: "error", message, code });
     sendJson(browser, { type: "done" });
-    finish(1011, "turn-failed");
+    if (!conversation) {
+      finish(1011, "turn-failed");
+      return;
+    }
+    // One outage fires several Meta handlers; count the turn once.
+    if (lastCountedGen !== metaGen) {
+      lastCountedGen = metaGen;
+      failedTurns += 1;
+    }
+    clearTimeout(timer);
+    metaGen += 1;
+    try {
+      meta.close();
+    } catch {
+      /* already closed */
+    }
+    if (failedTurns >= maxConsecutiveFailures) {
+      // No silent redial loop: the browser sees the error above, then this.
+      settled = true;
+      try {
+        browser.close(1011, "meta-unavailable");
+      } catch {
+        /* already closed */
+      }
+      return;
+    }
+    if (retryTimer === undefined) {
+      const delay = Math.min(
+        retryBaseMs * 2 ** (failedTurns - 1),
+        retryMaxMs,
+      );
+      retryTimer = setTimeout(() => {
+        retryTimer = undefined;
+        if (!settled && !browserGone && browser.readyState === 1) {
+          beginNextTurn();
+        }
+      }, delay);
+    }
   };
 
   // The browser announces its stable id in a {type:"client"} frame (the
@@ -274,6 +359,43 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         /* socket died mid-flush; close handler reports it */
       }
     }
+  };
+
+  // Heard nothing: same gentle notice with or without a Meta round trip.
+  const finishEmptyTurn = (audioSeconds: number) => {
+    const at = now();
+    sendJson(browser, {
+      type: "transcript",
+      transcript: "",
+      final: true,
+      audioProcessedMs: null,
+    });
+    sendJson(browser, {
+      type: "notice",
+      message: err("vad-continue"),
+      code: "E-VAD",
+    });
+    logTurn({
+      ts: new Date(at).toISOString(),
+      transcript: "",
+      ttftMs: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      audioSeconds,
+      tool: null,
+      modelSkipped: true,
+      error: null,
+      ignored: false,
+      asrMs: null,
+      chain: "none",
+      key: clientId,
+      slots: null,
+      gate: null,
+      sinceReplyS: null,
+      totalMs: 0,
+    });
+    sendJson(browser, { type: "done" });
+    finish(1000, "turn-complete");
   };
 
   const answerTranscript = async (
@@ -409,6 +531,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     }
     if (message.sessionId && !message.type) {
       metaOpen = true;
+      metaDialPending = false;
       flushPending();
       return;
     }
@@ -416,6 +539,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       if (message.final) {
         if (gotFinal) return;
         gotFinal = true;
+        failedTurns = 0;
+        lastCountedGen = metaGen;
+        clearRetry();
         finalText = collapseEcho(message.transcript);
         audioProcessedMs =
           typeof message.audioProcessedMs === "number"
@@ -429,35 +555,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           audioProcessedMs,
         });
         if (finalText.trim() === "") {
-          sendJson(browser, {
-            type: "notice",
-            message: err("vad-continue"),
-            code: "E-VAD",
-          });
-          logTurn({
-            ts: new Date(speechEndAt).toISOString(),
-            transcript: "",
-            ttftMs: null,
-            inputTokens: 0,
-            outputTokens: 0,
-            audioSeconds:
-              audioProcessedMs !== null
-                ? audioProcessedMs / 1000
-                : bufferedBytes / 48000,
-            tool: null,
-            modelSkipped: true,
-            error: null,
-            ignored: false,
-            asrMs: null,
-            chain: "none",
-            key: clientId,
-            slots: null,
-            gate: null,
-            sinceReplyS: null,
-            totalMs: 0,
-          });
-          sendJson(browser, { type: "done" });
-          finish(1000, "turn-complete");
+          finishEmptyTurn(
+            audioProcessedMs !== null
+              ? audioProcessedMs / 1000
+              : bufferedBytes / 48000,
+          );
           return;
         }
         {
@@ -561,6 +663,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
 
     fresh.on("error", () => {
       if (current() && !settled && !metaOpen) {
+        metaDialPending = false;
         failTurn(err("lost"), "E-NET");
       }
     });
@@ -569,6 +672,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       if (!current()) return;
       if (settled) return;
       if (gotFinal) return; // Meta closes after the final; the reply is on its way.
+      metaDialPending = false;
       console.error("[voice-asr] connection closed before final transcript");
       failTurn(err("lost"), "E-ASR");
     });
@@ -593,6 +697,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         noteAttention(clientId);
         return;
       }
+      // Nothing ever voiced: answer locally instead of dialing Meta for it.
+      if (!metaOpen && bufferedBytes === 0 && pendingAudio.length === 0) {
+        finishEmptyTurn(0);
+        return;
+      }
       if (metaOpen) {
         try {
           meta.send(JSON.stringify({ type: "endStream" }));
@@ -602,6 +711,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       } else {
         pendingEnd = true;
       }
+      ensureMetaOpen();
       return;
     }
     if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) {
@@ -616,6 +726,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         failTurn(err("lost"), "E-NET");
         return;
       }
+      ensureMetaOpen();
       if (metaOpen) {
         try {
           meta.send(chunk);
@@ -634,6 +745,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     settled = true;
     browserGone = true;
     clearTimeout(timer);
+    clearRetry();
     try {
       meta.close();
     } catch {
@@ -645,6 +757,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
 
   timer = setTimeout(onTurnTimeout, turnTimeoutMs);
   timerArmed = true;
-  openMetaTurn();
+  // No Meta dial here: the first audio frames open it (dial-on-voice), so a
+  // tap with no speech never holds an upstream socket that idles out.
   sendJson(browser, { type: "bridge", state: "open" });
 }

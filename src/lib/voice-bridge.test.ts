@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   attachVoiceBridge,
+  bridgeOptionsForUpgrade,
   tryParseControl,
   type BridgeAgentResult,
 } from "./voice-bridge";
@@ -36,6 +37,8 @@ let holdFinal = false;
 let finalTranscript = "vale, live from the bridge";
 let receivedBinaryBytes = 0;
 let receivedEndStream = 0;
+/** First upstream text frame per connection: the auth handshake. */
+let receivedAuth: string[] = [];
 
 function fakeAgent(text = "All set, see you soon."): (
   args: unknown,
@@ -57,6 +60,7 @@ beforeAll(async () => {
 
   server.on("connection", (socket: WebSocket) => {
     let interimSent = false;
+    let authed = false;
     socket.on("message", (data, isBinary) => {
       if (isBinary) {
         receivedBinaryBytes += (data as Buffer).length;
@@ -75,6 +79,10 @@ beforeAll(async () => {
           );
         }
         return;
+      }
+      if (!authed) {
+        authed = true;
+        receivedAuth.push(data.toString());
       }
       let message: { type?: string };
       try {
@@ -115,10 +123,14 @@ type AgentFn = (args: {
   slotKey?: string;
 }) => Promise<BridgeAgentResult>;
 
-function attachForTest(browser: FakeBrowser, agent: AgentFn = fakeAgent()) {
+function attachForTest(
+  browser: FakeBrowser,
+  agent: AgentFn = fakeAgent(),
+  key = "test-key",
+) {
   attachVoiceBridge({
     browser: browser as unknown as WebSocket,
-    key: "test-key",
+    key,
     clientId: "test-client",
     metaUrl: url,
     runAgent: agent,
@@ -427,6 +439,208 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     } finally {
       finalTranscript = "vale, live from the bridge";
     }
+  });
+
+  it("authenticates Meta with the configured key, never the peer", async () => {
+    receivedAuth = [];
+    const browser = new FakeBrowser();
+    attachForTest(browser, fakeAgent(), "test-key-2");
+    browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+    await vi.waitFor(() => {
+      expect(receivedAuth.length).toBeGreaterThan(0);
+    });
+    const auth = JSON.parse(receivedAuth[0]) as {
+      authorization?: { accessToken?: string };
+    };
+    expect(auth.authorization?.accessToken).toBe("Bearer test-key-2");
+    browser.close(1000, "test done");
+  });
+
+  it("carries real voiced PCM byte-identical to Meta, then ends the turn", async () => {
+    receivedBinaryBytes = 0;
+    receivedEndStream = 0;
+    finalTranscript = "vale, live from the bridge";
+    const browser = new FakeBrowser();
+    attachForTest(browser);
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+    // Half a second of 24 kHz voiced sine: real samples with speech-like
+    // energy, never silence, never a JSON shortcut.
+    const pcm = new Int16Array(12000);
+    for (let i = 0; i < pcm.length; i += 1) {
+      pcm[i] = Math.round(10000 * Math.sin((2 * Math.PI * 440 * i) / 24000));
+    }
+    const bytes = Buffer.from(pcm.buffer);
+    const audioBefore = receivedBinaryBytes;
+    for (let offset = 0; offset < bytes.length; offset += 6000) {
+      browser.peerMessage(bytes.subarray(offset, offset + 6000));
+    }
+    await vi.waitFor(() => {
+      expect(receivedBinaryBytes - audioBefore).toBe(bytes.length);
+    });
+    browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+    await vi.waitFor(() => {
+      expect(receivedEndStream).toBe(1);
+    });
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some(
+          (frame) => frame.type === "transcript" && frame.final === true,
+        ),
+      ).toBe(true);
+    });
+    await vi.waitFor(() => {
+      expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+        true,
+      );
+    });
+    expect(
+      browser.frames().some((frame) => frame.type === "error"),
+    ).toBe(false);
+    browser.close(1000, "test done");
+  });
+
+  it("redials once after a drop and resets the count on success", async () => {
+    receivedAuth = [];
+    dropOnAudio = true;
+    try {
+      const browser = new FakeBrowser();
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: "conv-retry-ok",
+        metaUrl: url,
+        runAgent: fakeAgent(),
+        conversation: true,
+        retryBaseMs: 50,
+        retryMaxMs: 100,
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "error"),
+        ).toBe(true);
+      });
+      // No eager redial: the next voice opens it, after the backoff.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(receivedAuth.length).toBe(1);
+      dropOnAudio = false;
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      await vi.waitFor(() => {
+        expect(receivedAuth.length).toBe(2);
+      });
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "reply")).toBe(
+          true,
+        );
+      });
+      expect(
+        browser.frames().filter((frame) => frame.type === "error"),
+      ).toHaveLength(1);
+      expect(browser.closed).toBeNull();
+      browser.close(1000, "test done");
+    } finally {
+      dropOnAudio = false;
+    }
+  });
+
+  it("closes the socket with a clear reason after straight failures", async () => {
+    receivedAuth = [];
+    dropOnAudio = true;
+    try {
+      const browser = new FakeBrowser();
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: "conv-retry-cap",
+        metaUrl: url,
+        runAgent: fakeAgent(),
+        conversation: true,
+        retryBaseMs: 20,
+        retryMaxMs: 40,
+        maxConsecutiveFailures: 3,
+      });
+      for (let turn = 1; turn <= 3; turn += 1) {
+        browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+        await vi.waitFor(() => {
+          expect(
+            browser.frames().filter((frame) => frame.type === "error").length,
+          ).toBe(turn);
+        });
+      }
+      await vi.waitFor(() => {
+        expect(browser.closed?.code).toBe(1011);
+      });
+      expect(browser.closed?.reason).toBe("meta-unavailable");
+      expect(
+        browser.frames().filter((frame) => frame.type === "error").length,
+      ).toBeGreaterThan(0);
+      // Capped: no fourth dial even when audio keeps coming.
+      const dials = receivedAuth.length;
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(receivedAuth.length).toBe(dials);
+    } finally {
+      dropOnAudio = false;
+    }
+  });
+
+  it("holds an idle conversation socket quiet: no dial, no errors", async () => {
+    receivedAuth = [];
+    const browser = new FakeBrowser();
+    attachVoiceBridge({
+      browser: browser as unknown as WebSocket,
+      key: "test-key",
+      clientId: "conv-idle",
+      metaUrl: url,
+      runAgent: fakeAgent(),
+      conversation: true,
+    });
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+    // Two silent seconds: no Meta dial at all, nothing back, socket stays up.
+    // (The 60 s platform proof is probe 2 against real Meta: 65 s of ingress
+    // then audio still returns a final.)
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    expect(receivedAuth.length).toBe(0);
+    expect(
+      browser.frames().some((frame) => frame.type === "error"),
+    ).toBe(false);
+    expect(browser.closed).toBeNull();
+    // First voice opens the dial; buffered audio replays on open.
+    browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+    browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+    await vi.waitFor(() => {
+      expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+        true,
+      );
+    });
+    expect(receivedAuth.length).toBe(1);
+    browser.close(1000, "test done");
+  });
+});
+
+describe("bridgeOptionsForUpgrade (single-process wiring)", () => {
+  it("hands Meta the API key and names the conversation with the peer", () => {
+    expect(bridgeOptionsForUpgrade("::1", "test-key-2", undefined)).toEqual({
+      key: "test-key-2",
+      clientId: "::1",
+      conversation: true,
+      metaUrl: undefined,
+    });
+  });
+
+  it("forwards a custom ASR url when set", () => {
+    expect(
+      bridgeOptionsForUpgrade("1.2.3.4", "k", "wss://asr.example").metaUrl,
+    ).toBe("wss://asr.example");
   });
 });
 
