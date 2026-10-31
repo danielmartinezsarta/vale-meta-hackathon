@@ -5,6 +5,7 @@ import {
   buildPendingActions,
   clearPendingAction,
   isConfirmYes,
+  pendingConfirmTitle,
   runPendingActions,
   setPendingAction,
   takePendingAction,
@@ -164,5 +165,39 @@ describe("pending action", () => {
       .get() as { id: number } | undefined;
     expect(open).toBeUndefined();
     clearPendingAction("pend-partial");
+  });
+
+  it("titles the confirm card from the stored writes", () => {
+    expect(
+      pendingConfirmTitle(
+        [
+          { tool: "create_client", args: { name: "Ana" } },
+          {
+            tool: "open_session",
+            args: { client_name: "Ana", service_name: "Gel refill" },
+          },
+        ],
+        "en",
+      ),
+    ).toBe("Open session with Ana for Gel refill?");
+    expect(
+      pendingConfirmTitle(
+        [{ tool: "log_supply_use", args: { name: "Top coat" } }],
+        "en",
+      ),
+    ).toBe("Log Top coat?");
+    expect(
+      pendingConfirmTitle(
+        [
+          { tool: "create_client", args: { name: "Ana" } },
+          {
+            tool: "open_session",
+            args: { client_name: "Ana", service_name: "Gel refill" },
+          },
+        ],
+        "es",
+      ),
+    ).toBe("¿Abro sesión con Ana de Gel refill?");
+    expect(pendingConfirmTitle([], "en")).toBe("Should I save it?");
   });
 });

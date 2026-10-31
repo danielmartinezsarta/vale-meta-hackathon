@@ -777,7 +777,127 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     expect(receivedAuth.length).toBe(1);
     browser.close(1000, "test done");
   });
+
+  it("sends the tool-derived widget frame after a card reply", async () => {
+    finalTranscript = "vale, how is my goal";
+    const widgetAgent = async (): Promise<BridgeAgentResult> => ({
+      text: "Here is your goal.",
+      usage: { inputTokens: 100, outputTokens: 20 },
+      toolUsed: "goal_progress",
+      firstTokenMs: 50,
+      widget: { kind: "meta", title: "Month goal", lines: ["120.00 USD of 600.00 USD (20%)"] },
+    });
+    try {
+      const browser = new FakeBrowser();
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: "conv-widget",
+        metaUrl: url,
+        runAgent: widgetAgent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "widget"),
+        ).toBe(true);
+      });
+      const widget = browser.frames().find((frame) => frame.type === "widget") as {
+        widget?: { kind?: string };
+      };
+      expect(widget.widget?.kind).toBe("meta");
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
+
+  it("runs the stored writes on a yes vote with no model call", async () => {
+    const agent = vi.fn(fakeAgent());
+    const { setPendingAction } = await import("./pending-action");
+    setPendingAction("conv-vote-yes", [
+      { tool: "create_client", args: { name: "VoteVera" } },
+    ]);
+    const browser = new FakeBrowser();
+    attachVoiceBridge({
+      browser: browser as unknown as WebSocket,
+      key: "test-key",
+      clientId: "conv-vote-yes",
+      metaUrl: url,
+      runAgent: agent,
+      conversation: true,
+    });
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+    browser.peerMessage(
+      Buffer.from(JSON.stringify({ type: "vote", vote: "yes" })),
+    );
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some(
+          (frame) => frame.type === "reply" && String(frame.text ?? "").includes("VoteVera"),
+        ),
+      ).toBe(true);
+    });
+    expect(agent).not.toHaveBeenCalled();
+    expect(
+      browser.frames().some(
+        (frame) => frame.type === "widget" && frame.widget === null,
+      ),
+    ).toBe(true);
+    expect(
+      browser.frames().some((frame) => frame.type === "error"),
+    ).toBe(false);
+    browser.close(1000, "test done");
+  });
+
+  it("declines without writing on a no vote", async () => {
+    const agent = vi.fn(fakeAgent());
+    const { setPendingAction } = await import("./pending-action");
+    setPendingAction("conv-vote-no", [
+      { tool: "create_client", args: { name: "VoteNoa" } },
+    ]);
+    const browser = new FakeBrowser();
+    attachVoiceBridge({
+      browser: browser as unknown as WebSocket,
+      key: "test-key",
+      clientId: "conv-vote-no",
+      metaUrl: url,
+      runAgent: agent,
+      conversation: true,
+    });
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+    browser.peerMessage(
+      Buffer.from(JSON.stringify({ type: "vote", vote: "no" })),
+    );
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some(
+          (frame) => frame.type === "reply" && frame.text === "OK, I won't save it.",
+        ),
+      ).toBe(true);
+    });
+    expect(agent).not.toHaveBeenCalled();
+    const { takePendingAction } = await import("./pending-action");
+    expect(takePendingAction("conv-vote-no")).toBeUndefined();
+    browser.close(1000, "test done");
+  });
 });
+
 
 describe("bridgeOptionsForUpgrade (single-process wiring)", () => {
   it("hands Meta the API key and names the conversation with the peer", () => {
@@ -998,6 +1118,14 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
     ).toEqual({ type: "client-state", state: { visible: false } });
     expect(
       tryParseControl(JSON.stringify({ type: "client-state" })),
+    ).toBeNull();
+    expect(
+      tryParseControl(
+        Buffer.from(JSON.stringify({ type: "vote", vote: "yes" })),
+      ),
+    ).toEqual({ type: "vote", vote: "yes" });
+    expect(
+      tryParseControl(JSON.stringify({ type: "vote", vote: "maybe" })),
     ).toBeNull();
   });
 });

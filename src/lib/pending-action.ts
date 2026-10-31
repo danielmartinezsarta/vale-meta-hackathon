@@ -44,6 +44,49 @@ export function setPendingAction(
   pendingByKey.set(key, { actions, at });
 }
 
+/**
+ * Confirm title for the screen card, derived from the stored writes, never
+ * from reply text. The voice asks its own question; the card shows this.
+ */
+export function pendingConfirmTitle(
+  actions: PendingAction[],
+  language: ValeLanguage = "en",
+): string {
+  const en = language !== "es";
+  const find = (tool: string): Record<string, unknown> | null => {
+    const action = actions.find((entry) => entry.tool === tool);
+    return action ? action.args : null;
+  };
+  const open = find("open_session");
+  if (open) {
+    const client = clean(open.client_name);
+    const service = clean(open.service_name);
+    if (client !== undefined && service !== undefined) {
+      return en
+        ? `Open session with ${client} for ${service}?`
+        : `¿Abro sesión con ${client} de ${service}?`;
+    }
+    if (client !== undefined) {
+      return en ? `Open session with ${client}?` : `¿Abro sesión con ${client}?`;
+    }
+  }
+  const note = find("add_note");
+  if (note) {
+    const client = clean(note.client_name);
+    if (client !== undefined) {
+      return en ? `Save note for ${client}?` : `¿Guardo nota para ${client}?`;
+    }
+  }
+  const supply = find("log_supply_use");
+  if (supply) {
+    const name = clean(supply.name);
+    if (name !== undefined) {
+      return en ? `Log ${name}?` : `¿Registro ${name}?`;
+    }
+  }
+  return en ? "Should I save it?" : "¿Lo guardo?";
+}
+
 /** Take deletes: a yes consumes its proposal exactly once. */
 export function takePendingAction(
   key: string,

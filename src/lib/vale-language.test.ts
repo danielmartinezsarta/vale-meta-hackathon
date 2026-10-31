@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  declineText,
   DEFAULT_LANGUAGE,
   parseLanguage,
   turnErrorText,
@@ -36,5 +37,10 @@ describe("closed language set", () => {
 
   it("keeps English when the caller passes nothing", () => {
     expect(turnErrorText("lost")).toBe(turnErrorText("lost", "en"));
+  });
+
+  it("declines a confirm in the screen language", () => {
+    expect(declineText("en")).toBe("OK, I won't save it.");
+    expect(declineText("es")).toBe("Vale, no lo guardo.");
   });
 });

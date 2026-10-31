@@ -20,7 +20,9 @@ import {
   speakStream,
 } from "@/lib/speak";
 import { turnErrorText, type ValeLanguage } from "@/lib/vale-language";
+import type { Widget } from "@/lib/widget";
 import { VoiceControls } from "@/components/VoiceControls";
+import { WidgetCard } from "@/components/WidgetCard";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
@@ -94,6 +96,8 @@ export function TapToTalk() {
   const [, setAlertCode] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
   const [board, setBoard] = useState<Board | null>(null);
+  const [widget, setWidget] = useState<Widget | null>(null);
+  const castVoteRef = useRef<(vote: "yes" | "no") => void>(() => {});
   const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
   // Screen selector: EN default. It drives listening (ASR language),
   // prompt output, voice and UI; there is no auto-detection.
@@ -546,6 +550,16 @@ export function TapToTalk() {
             }
             break;
           }
+          case "widget": {
+            const incoming = (message as { widget?: unknown }).widget;
+            if (
+              incoming === null ||
+              (incoming && typeof incoming === "object")
+            ) {
+              setWidget((incoming ?? null) as Widget | null);
+            }
+            break;
+          }
           case "notice":
             if (typeof message.message !== "string") return;
             if (typeof message.code === "string" && message.code === "E-VAD") {
@@ -790,30 +804,12 @@ export function TapToTalk() {
         postTurn(id, pending.splice(0));
       };
 
-      const postTurn = (id: number, frames: Int16Array[]) => {
-        // One buffered body per turn: Safari iOS rejects streaming request bodies.
-        const total = frames.reduce((n, frame) => n + frame.length, 0);
-        const pcm = new Int16Array(total);
-        let offset = 0;
-        for (const frame of frames) {
-          pcm.set(frame, offset);
-          offset += frame.length;
-        }
-        const body = new Blob([pcm.buffer as ArrayBuffer], {
-          type: "audio/l16",
-        });
-        const controller = new AbortController();
-        controllersRef.current.add(controller);
-        setNotice(null);
-        setNoticeCode(null);
-        void fetch(
-          `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
-          {
-          method: "POST",
-          headers: { "content-type": "audio/l16" },
-          body,
-          signal: controller.signal,
-        })
+      const subscribePostTurn = (
+        id: number,
+        request: Promise<Response>,
+        controller: AbortController,
+      ) => {
+        request
           .then(async (response) => {
             if (!response.ok) {
               let message = turnErrorText("lost", languageRef.current);
@@ -865,6 +861,7 @@ export function TapToTalk() {
                 patchTurn(id, { reply: text });
               },
               onBoard: (next) => setBoard(next),
+              onWidget: (next) => setWidget(next),
               onIgnored: () => patchTurn(id, { ignored: true }),
               onNotice: (message, code) => {
                 // E-VAD notices pass the silence gate; anything else shows directly.
@@ -889,6 +886,85 @@ export function TapToTalk() {
             }
             failTurn(id, turnErrorText("lost", languageRef.current), "E-NET");
           });
+      };
+
+      const postTurn = (id: number, frames: Int16Array[]) => {
+        // One buffered body per turn: Safari iOS rejects streaming request bodies.
+        const total = frames.reduce((n, frame) => n + frame.length, 0);
+        const pcm = new Int16Array(total);
+        let offset = 0;
+        for (const frame of frames) {
+          pcm.set(frame, offset);
+          offset += frame.length;
+        }
+        const body = new Blob([pcm.buffer as ArrayBuffer], {
+          type: "audio/l16",
+        });
+        const controller = new AbortController();
+        controllersRef.current.add(controller);
+        setNotice(null);
+        setNoticeCode(null);
+        subscribePostTurn(
+          id,
+          fetch(
+            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+            {
+              method: "POST",
+              headers: { "content-type": "audio/l16" },
+              body,
+              signal: controller.signal,
+            },
+          ),
+          controller,
+        );
+      };
+
+      // Touch on a confirm card: rides the open socket like any control, or
+      // a JSON turn when no socket is open. Either way it equals a spoken vote.
+      const castVote = (vote: "yes" | "no") => {
+        if (!sessionRef.current) return;
+        const payload = JSON.stringify({ type: "vote", vote });
+        try {
+          if (
+            convOpen &&
+            convSocket &&
+            typeof WebSocket !== "undefined" &&
+            convSocket.readyState === WebSocket.OPEN
+          ) {
+            convSocket.send(payload);
+            return;
+          }
+          const socket = transports.get(currentId)?.socket;
+          if (
+            socket &&
+            typeof WebSocket !== "undefined" &&
+            socket.readyState === WebSocket.OPEN
+          ) {
+            socket.send(payload);
+            return;
+          }
+        } catch {
+          /* fall through to the JSON turn */
+        }
+        openTurn();
+        const id = currentId;
+        const controller = new AbortController();
+        controllersRef.current.add(controller);
+        setNotice(null);
+        setNoticeCode(null);
+        subscribePostTurn(
+          id,
+          fetch(
+            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ transcript: vote }),
+              signal: controller.signal,
+            },
+          ),
+          controller,
+        );
       };
 
       // End-of-turn pause, tunable without redeploying the default: slow
@@ -1085,7 +1161,8 @@ export function TapToTalk() {
         // Threshold 200 with 1 s pre-roll; the end silence comes from
         // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
         };
-        beginCapture();
+        castVoteRef.current = castVote;
+      beginCapture();
       // A stall resumes alone: no audio blocks for STALL_MS restarts
       // capture on the same stream instead of ending the session. The mic
       // stream itself dead is the only honest alert left.
@@ -1306,6 +1383,14 @@ export function TapToTalk() {
       </ol>
 
       <ValeBoard board={board} />
+
+      {widget && (
+        <WidgetCard
+          widget={widget}
+          language={language}
+          onVote={(vote) => castVoteRef.current(vote)}
+        />
+      )}
 
       {notice && <p role="status">{notice}</p>}
 

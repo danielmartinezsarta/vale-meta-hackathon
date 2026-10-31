@@ -60,6 +60,20 @@ describe("SSE parser", () => {
     expect(seen).toEqual([{ session: null, card: null, list: ["Esmalte rojo"] }]);
   });
 
+  it("dispatches widget cards and clears", async () => {
+    const seen: unknown[] = [];
+    const raw =
+      'event: widget\ndata: {"widget":{"kind":"meta","title":"Month goal","lines":["120.00 USD"]}}\n\n' +
+      'event: widget\ndata: {"widget":null}\n\n';
+    await parseSseStream(streamFromChunks([raw]), {
+      onWidget: (widget) => seen.push(widget),
+    });
+    expect(seen).toEqual([
+      { kind: "meta", title: "Month goal", lines: ["120.00 USD"] },
+      null,
+    ]);
+  });
+
   it("ignores unknown events and malformed data", async () => {
     const seen: string[] = [];
     const raw =

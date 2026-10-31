@@ -13,13 +13,16 @@ import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { isEchoOfReply } from "./echo";
 import { estimateCost, formatTurnLog } from "./turn-log";
 import {
+  clearPendingAction,
   isConfirmYes,
   runPendingActions,
   takePendingAction,
 } from "./pending-action";
 import { getSlots } from "./slot-memory";
 import { getOpenSession } from "./vale-tools";
+import type { Widget } from "./widget";
 import {
+  declineText,
   DEFAULT_LANGUAGE,
   parseLanguage,
   turnErrorText,
@@ -41,6 +44,8 @@ export interface BridgeAgentResult {
   usage: BridgeAgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
+  /** Screen card derived from the tool call, never from reply text. */
+  widget?: Widget | null;
 }
 
 /**
@@ -98,6 +103,7 @@ export function tryParseControl(
   | { type: "client"; client: string }
   | { type: "wake" }
   | { type: "client-state"; state: Record<string, unknown> }
+  | { type: "vote"; vote: "yes" | "no" }
   | null {
   let text: string | null = null;
   if (typeof data === "string") {
@@ -113,9 +119,16 @@ export function tryParseControl(
       language?: unknown;
       client?: unknown;
       state?: unknown;
+      vote?: unknown;
     };
     if (message.type === "endStream") return { type: "endStream" };
     if (message.type === "wake") return { type: "wake" };
+    if (
+      message.type === "vote" &&
+      (message.vote === "yes" || message.vote === "no")
+    ) {
+      return { type: "vote", vote: message.vote };
+    }
     if (
       message.type === "client-state" &&
       message.state !== null &&
@@ -446,6 +459,78 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     return null;
   };
 
+  // Touch on a confirm card: the exact equivalent of a spoken yes/no.
+  // No model, no ASR: yes runs the stored writes, no declines them.
+  const answerVote = async (vote: "yes" | "no"): Promise<void> => {
+    const at = now();
+    const ts = new Date(at).toISOString();
+    if (vote === "yes") {
+      const actions = takePendingAction(clientId);
+      if (actions) {
+        const executed = runPendingActions(getDb(), clientId, actions, turnLanguage);
+        recordTurn(getDb(), clientId, "user", "yes");
+        recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
+        sendJson(browser, { type: "reply", text: executed.text });
+        noteAttention(clientId);
+        sendJson(browser, { type: "board", board: getBoard(getDb()) });
+        // The proposal is decided: the card goes away.
+        sendJson(browser, { type: "widget", widget: null });
+        logTurn({
+          ts,
+          transcript: "yes",
+          ttftMs: Date.now() - at,
+          inputTokens: 0,
+          outputTokens: 0,
+          audioSeconds: 0,
+          tool: executed.toolUsed,
+          modelSkipped: true,
+          error: null,
+          ignored: false,
+          asrMs: null,
+          chain: "none",
+          key: clientId,
+          slots: slotSnapshot(),
+          gate: null,
+          sinceReplyS: null,
+          totalMs: Date.now() - at,
+        });
+        sendJson(browser, { type: "done" });
+        finish(1000, "turn-complete");
+        return;
+      }
+    }
+    // No proposal, or a no: nothing writes, the card goes away.
+    clearPendingAction(clientId);
+    const said = declineText(turnLanguage);
+    recordTurn(getDb(), clientId, "user", "no");
+    recordTurn(getDb(), clientId, "vale", said, null);
+    sendJson(browser, { type: "reply", text: said });
+    noteAttention(clientId);
+    sendJson(browser, { type: "board", board: getBoard(getDb()) });
+    sendJson(browser, { type: "widget", widget: null });
+    logTurn({
+      ts,
+      transcript: "no",
+      ttftMs: Date.now() - at,
+      inputTokens: 0,
+      outputTokens: 0,
+      audioSeconds: 0,
+      tool: null,
+      modelSkipped: true,
+      error: null,
+      ignored: false,
+      asrMs: null,
+      chain: "none",
+      key: clientId,
+      slots: slotSnapshot(),
+      gate: null,
+      sinceReplyS: null,
+      totalMs: Date.now() - at,
+    });
+    sendJson(browser, { type: "done" });
+    finish(1000, "turn-complete");
+  };
+
   const answerTranscript = async (
     transcript: string,
     speechEndAt: number,
@@ -512,6 +597,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       // Her reply restarts the window: the next turn counts from here.
       noteAttention(clientId);
       sendJson(browser, { type: "board", board: getBoard(getDb()) });
+      if (result.widget) {
+        sendJson(browser, { type: "widget", widget: result.widget });
+      }
       logTurn({
         ts,
         transcript,
@@ -791,6 +879,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         console.log(
           `[client-state] client=${clientId} ${JSON.stringify(control.state).slice(0, 500)}`,
         );
+        return;
+      }
+      // Touch on a confirm card: the exact equivalent of a spoken yes/no.
+      if (control.type === "vote") {
+        void answerVote(control.vote);
         return;
       }
       // Nothing ever voiced: answer locally instead of dialing Meta for it.

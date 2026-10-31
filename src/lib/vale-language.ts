@@ -59,3 +59,8 @@ export function turnErrorText(
 ): string {
   return ERROR_TEXT[kind][language];
 }
+
+/** Tapping No on a confirm card: the spoken equivalent of saying no. */
+export function declineText(language: ValeLanguage = DEFAULT_LANGUAGE): string {
+  return language === "es" ? "Vale, no lo guardo." : "OK, I won't save it.";
+}

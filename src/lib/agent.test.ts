@@ -704,4 +704,70 @@ describe("closed reply language", () => {
     expect(result.text).toContain(PRIVACY_LINE_EN);
     expect(result.text).not.toContain(PRIVACY_LINE);
   });
+
+  it("returns a screen card for goal and quote reads, never from text", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (bodies.length === 1) {
+          return sseResponse([
+            toolCall("resp_1", "goal_progress", {}, "call_g"),
+          ]);
+        }
+        return sseResponse([spoken("resp_2", "Here is your goal.")]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "vale, how is my goal",
+      language: "en",
+      db: freshTestDb(),
+    });
+
+    expect(result.widget?.kind).toBe("meta");
+    expect(result.widget?.lines).toHaveLength(1);
+    expect(result.text).toBe("Here is your goal.");
+  });
+
+  it("returns a confirm card for the doubt-turn proposal", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (bodies.length === 1) {
+          return sseResponse([
+            toolCall(
+              "resp_doubt",
+              "open_session",
+              { client_name: "Vera", service_name: "Gel removal" },
+              "call_d",
+            ),
+          ]);
+        }
+        return sseResponse([spoken("resp_d2", "Should I save it?")]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "vale abre sesión con Vera para retiro",
+      slotKey: "pend-agent-widget",
+      db: freshTestDb(),
+    });
+
+    expect(result.widget).toEqual({
+      kind: "confirm",
+      title: "Open session with Vera for Gel removal?",
+      lines: [],
+    });
+    clearPendingAction("pend-agent-widget");
+  });
 });

@@ -301,6 +301,9 @@ export async function POST(request: Request): Promise<Response> {
           // Her reply restarts the window: the next turn counts from here.
           noteAttention(clientKey);
           send("board", { board: getBoard(getDb()) });
+          if (result.widget) {
+            send("widget", { widget: result.widget });
+          }
           logTurn({
             ts,
             transcript,

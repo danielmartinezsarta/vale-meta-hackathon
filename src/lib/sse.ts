@@ -1,4 +1,5 @@
 import type { Board } from "./board";
+import type { Widget } from "./widget";
 
 export interface SseHandlers {
   onInterim?: (transcript: string) => void;
@@ -6,6 +7,7 @@ export interface SseHandlers {
   onReplyDelta?: (text: string) => void;
   onReply?: (text: string) => void;
   onBoard?: (board: Board) => void;
+  onWidget?: (widget: Widget | null) => void;
   onNotice?: (message: string, code?: string) => void;
   onErrorEvent?: (message: string, code?: string) => void;
   onIgnored?: () => void;
@@ -79,6 +81,14 @@ function dispatch(raw: string, handlers: SseHandlers): void {
     case "board":
       if (payload.board && typeof payload.board === "object") {
         handlers.onBoard?.(payload.board as Board);
+      }
+      break;
+    case "widget":
+      if (
+        payload.widget === null ||
+        (payload.widget && typeof payload.widget === "object")
+      ) {
+        handlers.onWidget?.((payload.widget ?? null) as Widget | null);
       }
       break;
     case "notice":

@@ -10,8 +10,10 @@ import { DEFAULT_LANGUAGE, type ValeLanguage } from "./vale-language";
 import {
   buildPendingActions,
   clearPendingAction,
+  pendingConfirmTitle,
   setPendingAction,
 } from "./pending-action";
+import { buildWidget, type Widget } from "./widget";
 import {
   slotContext,
   updateSlotsFromTool,
@@ -41,7 +43,8 @@ const SPOKEN_BASE = [
   "Keep every reply to about 25 words at most: direct, no filler, and never end with a question unless you are asking for confirmation or for missing information.",
   "You can: open sessions with a timer, save notes on the client card (health notes stay private), keep the shopping list, register clients and supplies, quote prices and keep the agenda.",
   "You have tools for sessions, client cards, notes, the shopping list, supplies, price quotes, the agenda and stock. Use them to act.",
-  "Never invent names, prices or addresses, and never claim a write happened without calling its tool. For a price always call quote_price and say every part of its breakdown. For the goal always call goal_progress and say its numbers.",
+  "Never invent names, prices or addresses, and never claim a write happened without calling its tool. For a price always call quote_price.",
+  "Some tools show a screen card: goal_progress, list_today, next_appointment, add_note, create_appointment and quote_price. When a screen card shows, say one short line pointing at it (for example Here's your goal on screen.) and never read its numbers aloud; earnings and goal amounts stay on the screen only. Otherwise say every part of the breakdown.",
   "Reads (find_client, read_shopping_list, quote_price, goal_progress, list_today, next_appointment, read_stock) run at once.",
   "Act right away when the request is direct and complete: if the user names a client and a service, call open_session right away; if they dictate a note or name an item, call that write right away. Say it is done only after the tool succeeds.",
   "Only ask first when in doubt: unknown or ambiguous names, unknown supplies. Then say what you would do in one sentence and ask the confirmation question (Should I save it?), and wait for the user to say yes before calling.",
@@ -91,6 +94,8 @@ export interface AgentResult {
   usage: AgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
+  /** Screen card derived from the tool call, never from reply text. */
+  widget: Widget | null;
 }
 
 /** Bogotá clock for the session facts; the salon runs on America/Bogota. */
@@ -442,6 +447,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   ];
   let text = "";
   let toolUsed: string | null = null;
+  let widget: Widget | null = null;
   // A pending proposal dies with the next real turn unless that turn stores
   // a new one: a later yes must never fire a stale proposal (eval C17).
   let storedThisTurn = false;
@@ -488,7 +494,21 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       if (proposal) {
         setPendingAction(slotKey, proposal);
         storedThisTurn = true;
+        widget = {
+          kind: "confirm",
+          title: pendingConfirmTitle(proposal, language),
+          lines: [],
+        };
       } else clearPendingAction(slotKey);
+    } else {
+      // The screen card mirrors the tool call, never the reply text.
+      const card = buildWidget(
+        call.name,
+        parsed,
+        (toolResult as { data?: unknown }).data ?? null,
+        language,
+      );
+      if (card) widget = card;
     }
     updateSlotsFromTool(
       slotKey,
@@ -530,5 +550,5 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     text = text === "" ? privacyLine : `${text} ${privacyLine}`;
   }
 
-  return { text, usage, toolUsed, firstTokenMs };
+  return { text, usage, toolUsed, firstTokenMs, widget };
 }
