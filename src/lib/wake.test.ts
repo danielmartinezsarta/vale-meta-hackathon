@@ -225,6 +225,12 @@ describe("wake word gate", () => {
 });
 
 describe("language gate (gate:idioma)", () => {
+  it("catches the ear-log case: Spanish aside inside the English window", () => {
+    expect(languageMismatch("¿Qué le digo?", "en")).toBe(true);
+    expect(
+      checkWake("¿Qué le digo?", "ip-ear", 1000, false, "en"),
+    ).toMatchObject({ execute: false, gate: "idioma" });
+  });
   it("discards Spanish content under EN without opening the window", () => {
     expect(languageMismatch("vale abre sesion con Ana", "en")).toBe(true);
     expect(

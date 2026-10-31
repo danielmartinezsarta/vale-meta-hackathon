@@ -2,8 +2,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_MODEL,
-  PRIVACY_LINE,
-  PRIVACY_LINE_EN,
   SPOKEN_SYSTEM_PROMPT,
   buildInstructions,
   runAgentTurn,
@@ -259,7 +257,7 @@ describe("agent turn with tools", () => {
     expect(deltas.join("")).not.toContain("Ana");
   });
 
-  it("appends the privacy line once per session for health notes", async () => {
+  it("confirms a health note with exactly the private-note line", async () => {
     const db = freshTestDb();
     runValeTool(db, "open_session", { client_name: "Ana", service_name: "Retiro de gel" });
     const stubHealthTurn = () => {
@@ -280,12 +278,11 @@ describe("agent turn with tools", () => {
 
     stubHealthTurn();
     const first = await runAgentTurn({ key: "test-key", transcript: "anota onicolisis", language: "es", db });
-    expect(first.text).toBe(`Nota privada guardada. ${PRIVACY_LINE}`);
+    expect(first.text).toBe("Nota privada guardada.");
 
     stubHealthTurn();
     const second = await runAgentTurn({ key: "test-key", transcript: "anota otra cosa de salud", language: "es", db });
     expect(second.text).toBe("Nota privada guardada.");
-    expect(second.text).not.toContain("infraestructura dedicada");
     db.close();
   });
 
@@ -671,7 +668,7 @@ describe("closed reply language", () => {
     );
   });
 
-  it("says the privacy line in English under the EN setting", async () => {
+  it("says exactly the private-note line in English under the EN setting", async () => {
     const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal(
       "fetch",
@@ -700,9 +697,7 @@ describe("closed reply language", () => {
       db: freshTestDb(),
     });
 
-    expect(result.text).toContain("Private note saved.");
-    expect(result.text).toContain(PRIVACY_LINE_EN);
-    expect(result.text).not.toContain(PRIVACY_LINE);
+    expect(result.text).toBe("Private note saved.");
   });
 
   it("returns a screen card for goal and quote reads, never from text", async () => {

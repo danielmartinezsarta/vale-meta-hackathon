@@ -364,7 +364,22 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
 ];
 
 export function openSession(db: ValeDb, args: { client_name?: unknown; service_name?: unknown }, language: ValeLanguage = "es"): ToolResult {
-  if (getOpenSession(db)) return { ok: false, message: "Ya hay una sesión abierta." };
+  const already = getOpenSession(db);
+  if (already) {
+    // A vague yes never reopens: the refusal names the open session and
+    // the next step, so the model asks instead of writing.
+    const service = db.prepare("SELECT name FROM services WHERE id = ?").get(already.service_id) as {
+      name: string;
+    } | undefined;
+    const who = `${clientLabel(db, already.client_id)}, ${service?.name ?? "unknown"}`;
+    return {
+      ok: false,
+      message:
+        language === "en"
+          ? `There is already an open session (${who}). Close it before opening another.`
+          : `Ya hay una sesión abierta (${who}). Ciérrala antes de abrir otra.`,
+    };
+  }
   const clientName = typeof args.client_name === "string" ? args.client_name : "";
   const serviceName = typeof args.service_name === "string" ? args.service_name : "";
   const client = matchOne(allClients(db), clientName);

@@ -92,6 +92,21 @@ describe("sessions", () => {
     expect(closeSession(db, {}).message).toBe("No hay sesión abierta.");
     db.close();
   });
+  it("names the open session and the next step instead of reopening", () => {
+    const db = freshTestDb();
+    openAna(db);
+    const refused = openSession(
+      db,
+      { client_name: "Maria", service_name: "Manicura" },
+      "en",
+    );
+    expect(refused.ok).toBe(false);
+    expect(refused.message).toContain("already an open session");
+    expect(refused.message).toContain("Ana");
+    expect(refused.message).toContain("Close it before opening another.");
+    db.close();
+  });
+
 
   it("reports unknown clients and services without inventing", () => {
     const db = freshTestDb();

@@ -22,14 +22,6 @@ import {
 export const AGENT_MODEL = "muse-spark-1.3";
 export const RESPONSES_URL = "https://api.meta.ai/v1/responses";
 
-/** Said once per session when a health note is saved. Appended server-side. */
-export const PRIVACY_LINE =
-  "Las notas de salud las procesa un modelo abierto en infraestructura dedicada y nunca van a la API general.";
-
-/** English twin of PRIVACY_LINE for the closed EN setting. */
-export const PRIVACY_LINE_EN =
-  "Health notes are processed by an open model on dedicated infrastructure and never reach the general API.";
-
 // Single prompt in English for both languages: acting rules, persona and
 // standing rules with no words the user ever hears. Only the output line
 // changes: it pins the reply language. There is no auto-detection; the
@@ -400,21 +392,6 @@ export interface AgentTurnOptions {
   userName?: string;
 }
 
-function privacyNoticeNeeded(db: ValeDb): boolean {
-  const open = getOpenSession(db);
-  if (!open) return true;
-  const row = db.prepare("SELECT privacy_notice_sent FROM sessions WHERE id = ?").get(open.id) as {
-    privacy_notice_sent: number;
-  };
-  return row.privacy_notice_sent !== 1;
-}
-
-function markPrivacyNoticeSent(db: ValeDb): void {
-  const open = getOpenSession(db);
-  if (!open) return;
-  db.prepare("UPDATE sessions SET privacy_notice_sent = 1 WHERE id = ?").run(open.id);
-}
-
 export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResult> {
   const url = options.url ?? RESPONSES_URL;
   const startedAt = options.startedAt ?? Date.now();
@@ -432,7 +409,6 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   const instructions = [staticInstructions, slotLine, sessionLine]
     .filter((line) => line !== "")
     .join(" ");
-  const privacyLine = language === "en" ? PRIVACY_LINE_EN : PRIVACY_LINE;
 
   // Explicit memory: the last turns travel in the input, oldest first.
   // No response chains, no retries: a failure surfaces as E-MODEL at once.
@@ -451,7 +427,6 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   // A pending proposal dies with the next real turn unless that turn stores
   // a new one: a later yes must never fire a stale proposal (eval C17).
   let storedThisTurn = false;
-  let healthSaved = false;
   const usage: AgentUsage = { inputTokens: 0, outputTokens: 0 };
   let firstTokenMs: number | null = null;
 
@@ -517,9 +492,6 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       toolResult.ok,
       (toolResult as { data?: unknown }).data,
     );
-    if (call.name === "add_note" && (toolResult.data as { private?: boolean } | undefined)?.private === true) {
-      healthSaved = true;
-    }
     if (toolResult.ok && WRITE_TOOLS.has(call.name)) {
       clearPendingAction(slotKey);
       // A successful write answers itself: no second model round.
@@ -543,11 +515,6 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       },
     ];
     text = toolResult.message;
-  }
-
-  if (healthSaved && privacyNoticeNeeded(db)) {
-    markPrivacyNoticeSent(db);
-    text = text === "" ? privacyLine : `${text} ${privacyLine}`;
   }
 
   return { text, usage, toolUsed, firstTokenMs, widget };
