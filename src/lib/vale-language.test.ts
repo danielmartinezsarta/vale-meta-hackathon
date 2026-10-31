@@ -6,15 +6,15 @@ import {
 } from "./vale-language";
 
 describe("closed language set", () => {
-  it("defaults to Spanish and keeps only es or en", () => {
-    expect(DEFAULT_LANGUAGE).toBe("es");
+  it("defaults to English and keeps only es or en", () => {
+    expect(DEFAULT_LANGUAGE).toBe("en");
     expect(parseLanguage("en")).toBe("en");
     expect(parseLanguage("es")).toBe("es");
-    expect(parseLanguage("it")).toBe("es");
-    expect(parseLanguage("")).toBe("es");
-    expect(parseLanguage(undefined)).toBe("es");
-    expect(parseLanguage(null)).toBe("es");
-    expect(parseLanguage(42)).toBe("es");
+    expect(parseLanguage("it")).toBe("en");
+    expect(parseLanguage("")).toBe("en");
+    expect(parseLanguage(undefined)).toBe("en");
+    expect(parseLanguage(null)).toBe("en");
+    expect(parseLanguage(42)).toBe("en");
   });
 
   it("names every turn error in both languages", () => {
@@ -32,7 +32,7 @@ describe("closed language set", () => {
     expect(turnErrorText("vad-continue", "en")).toContain("listening");
   });
 
-  it("keeps Spanish when the caller passes nothing", () => {
-    expect(turnErrorText("lost")).toBe(turnErrorText("lost", "es"));
+  it("keeps English when the caller passes nothing", () => {
+    expect(turnErrorText("lost")).toBe(turnErrorText("lost", "en"));
   });
 });

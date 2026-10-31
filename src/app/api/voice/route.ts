@@ -1,13 +1,8 @@
 import { connection } from "next/server";
 import { upgradeWebSocket } from "@vercel/functions";
 import { runAgentTurn } from "@/lib/agent";
-import { getDb } from "@/lib/db";
+import { getDb, recentTurns, recordTurn } from "@/lib/db";
 import { getBoard } from "@/lib/board";
-import {
-  chainFailed,
-  chainSucceeded,
-  nextPreviousResponseId,
-} from "@/lib/response-chain";
 import { getSlots } from "@/lib/slot-memory";
 import {
   isConfirmYes,
@@ -16,11 +11,9 @@ import {
 } from "@/lib/pending-action";
 import {
   checkWake,
-  clearQuestion,
   collapseEcho,
-  isGreetingOnly,
-  markQuestionAsked,
   requestClientId,
+  type WakeVerdict,
 } from "@/lib/wake";
 import { openAsrConnection } from "@/lib/asr";
 import { estimateCost, formatTurnLog } from "@/lib/turn-log";
@@ -166,7 +159,6 @@ export async function POST(request: Request): Promise<Response> {
         asr?.close();
         if (!settled) {
           settled = true;
-          chainFailed(clientKey);
           logTurn({
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: finalText || lastInterim,
@@ -183,6 +175,9 @@ export async function POST(request: Request): Promise<Response> {
             chain: "none",
             key: clientKey,
             slots: null,
+            gate: null,
+            sinceReplyS: null,
+            totalMs: null,
           });
         }
         finishError(turnErrorText("timeout", language), "E-NET");
@@ -190,7 +185,6 @@ export async function POST(request: Request): Promise<Response> {
 
       const abort = () => {
         aborted = true;
-        chainFailed(clientKey);
         clearTimeout(timeout);
         try {
           asr?.close();
@@ -217,6 +211,9 @@ export async function POST(request: Request): Promise<Response> {
         chain?: "hit" | "miss" | "none";
         key?: string;
         slots?: { client?: string; service?: string } | null;
+        gate?: WakeVerdict["gate"] | null;
+        sinceReplyS?: number | null;
+        totalMs?: number | null;
       }) => {
         console.log(
           formatTurnLog({
@@ -233,12 +230,13 @@ export async function POST(request: Request): Promise<Response> {
         transcript: string,
         audioSeconds: number,
         speechEndAt: number,
+        verdict: WakeVerdict,
       ): Promise<void> => {
         agentRan = true;
         const ts = new Date(speechEndAt || Date.now()).toISOString();
-        const chainedId = nextPreviousResponseId(clientKey);
-        const chainState: "hit" | "miss" =
-          chainedId === undefined ? "miss" : "hit";
+        // Explicit memory: history first, then record this user turn.
+        const history = recentTurns(getDb(), clientKey);
+        recordTurn(getDb(), clientKey, "user", transcript);
         const slotSnapshot = (): {
           client?: string;
           service?: string;
@@ -258,9 +256,8 @@ export async function POST(request: Request): Promise<Response> {
           if (isConfirmYes(transcript)) {
             const actions = takePendingAction(clientKey);
             if (actions) {
-              const executed = runPendingActions(getDb(), clientKey, actions);
-              chainFailed(clientKey);
-              clearQuestion(clientKey);
+              const executed = runPendingActions(getDb(), clientKey, actions, language);
+              recordTurn(getDb(), clientKey, "vale", executed.text, executed.toolUsed);
               send("reply", { text: executed.text });
               send("board", { board: getBoard(getDb()) });
               logTurn({
@@ -278,6 +275,9 @@ export async function POST(request: Request): Promise<Response> {
                 chain: "none",
                 key: clientKey,
                 slots: slotSnapshot(),
+                gate: verdict.gate,
+                sinceReplyS: verdict.sinceReplyS,
+                totalMs: Date.now() - speechEndAt,
               });
               return;
             }
@@ -285,21 +285,14 @@ export async function POST(request: Request): Promise<Response> {
           const result = await runAgentTurn({
             key,
             transcript,
-            previousResponseId: chainedId,
+            history,
             url: process.env.META_RESPONSES_URL || undefined,
             startedAt: speechEndAt,
             onDelta: (text) => send("reply-delta", { text }),
             language,
             slotKey: clientKey,
           });
-          if (!aborted) chainSucceeded(result.responseId, result.chainNext, clientKey);
-          // The reply decides the next nameless turn: a question keeps the
-          // window open for its answer, anything else retires it.
-          if (result.askedQuestion && !isGreetingOnly(transcript)) {
-            markQuestionAsked(clientKey, speechEndAt);
-          } else {
-            clearQuestion(clientKey);
-          }
+          if (!aborted) recordTurn(getDb(), clientKey, "vale", result.text, result.toolUsed);
           send("reply", { text: result.text });
           send("board", { board: getBoard(getDb()) });
           logTurn({
@@ -314,13 +307,15 @@ export async function POST(request: Request): Promise<Response> {
             error: null,
             ignored: false,
             asrMs: measuredAsrMs,
-            chain: chainState,
+            chain: "none",
             key: clientKey,
             slots: slotSnapshot(),
+            gate: verdict.gate,
+            sinceReplyS: verdict.sinceReplyS,
+            totalMs: Date.now() - speechEndAt,
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : "failed";
-          chainFailed(clientKey);
           logTurn({
             ts,
             transcript,
@@ -333,9 +328,12 @@ export async function POST(request: Request): Promise<Response> {
             error: message,
             ignored: false,
             asrMs: measuredAsrMs,
-            chain: chainState,
+            chain: "none",
             key: clientKey,
             slots: slotSnapshot(),
+            gate: verdict.gate,
+            sinceReplyS: verdict.sinceReplyS,
+            totalMs: Date.now() - speechEndAt,
           });
           send("error", {
             message: turnErrorText("model", language),
@@ -347,9 +345,10 @@ export async function POST(request: Request): Promise<Response> {
       try {
         if (cannedTranscript !== null) {
           send("final", { transcript: cannedTranscript });
-          // Name gate first: background chatter never reaches the model, the
-          // board or the response chain.
-          if (!checkWake(cannedTranscript, clientKey).execute) {
+          // Sliding gate first: background chatter never reaches the model,
+          // the board or the memory.
+          const verdict = checkWake(cannedTranscript, clientKey);
+          if (!verdict.execute) {
             const cannedSlots = getSlots(clientKey);
             logTurn({
               ts: new Date().toISOString(),
@@ -370,6 +369,9 @@ export async function POST(request: Request): Promise<Response> {
                 cannedSlots.service !== undefined
                   ? cannedSlots
                   : null,
+              gate: verdict.gate,
+              sinceReplyS: verdict.sinceReplyS,
+              totalMs: 0,
             });
             send("ignored", {});
             send("done", {});
@@ -377,7 +379,7 @@ export async function POST(request: Request): Promise<Response> {
             closeStream();
             return;
           }
-          await answerTranscript(cannedTranscript, 0, Date.now());
+          await answerTranscript(cannedTranscript, 0, Date.now(), verdict);
           send("done", {});
           clearTimeout(timeout);
           closeStream();
@@ -464,8 +466,18 @@ export async function POST(request: Request): Promise<Response> {
             chain: "none",
             key: clientKey,
             slots: null,
+            gate: null,
+            sinceReplyS: null,
+            totalMs: 0,
           });
-        } else if (!checkWake(finalText, clientKey).execute) {
+          settled = true;
+          send("done", {});
+          clearTimeout(timeout);
+          closeStream();
+          return;
+        }
+        const verdict = checkWake(finalText, clientKey);
+        if (!verdict.execute) {
           // Background chatter without the name: silent discard.
           const ignoredSlots = getSlots(clientKey);
           logTurn({
@@ -487,10 +499,13 @@ export async function POST(request: Request): Promise<Response> {
               ignoredSlots.service !== undefined
                 ? ignoredSlots
                 : null,
+            gate: verdict.gate,
+            sinceReplyS: verdict.sinceReplyS,
+            totalMs: Date.now() - finalAtMs,
           });
           send("ignored", {});
         } else {
-          await answerTranscript(finalText, audioSeconds, finalAtMs);
+          await answerTranscript(finalText, audioSeconds, finalAtMs, verdict);
         }
         settled = true;
         send("done", {});

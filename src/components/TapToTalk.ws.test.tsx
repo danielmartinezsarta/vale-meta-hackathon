@@ -92,7 +92,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
+describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
   it("streams frames live, shows CUMULATIVE partials, freezes the final and replies", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
@@ -108,14 +108,22 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
       expect(driver).not.toBeNull();
     });
 
-    driver!.onFrame(speechFrame());
-    driver!.onSpeechStart();
+    // Session start dials one conversation socket.
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     const ws = FakeWs.instances[0];
-    expect(ws.url).toContain("/api/voice");
+    expect(ws.url).toContain("/voice");
     ws.open();
+    expect(ws.sentStrings()).toContain(
+      JSON.stringify({ type: "language", language: "es" }),
+    );
+    expect(ws.sentStrings()).toContain(JSON.stringify({ type: "wake" }));
+
+    driver!.onFrame(speechFrame());
+    driver!.onSpeechStart();
+    // No per-turn socket while the conversation socket is up.
+    expect(FakeWs.instances).toHaveLength(1);
 
     driver!.onFrame(speechFrame());
     expect(ws.sentBinaryCount()).toBeGreaterThan(0);
@@ -166,8 +174,6 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
       expect(driver).not.toBeNull();
     });
 
-    driver!.onFrame(speechFrame());
-    driver!.onSpeechStart();
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
@@ -176,15 +182,13 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
       JSON.stringify({ type: "language", language: "es" }),
     );
 
-    // Switch to English and tap again: the new socket carries EN.
+    // Switch to English and tap again: the new session socket carries EN.
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     fireEvent.click(screen.getByRole("button", { name: "EN" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
     });
-    driver!.onFrame(speechFrame());
-    driver!.onSpeechStart();
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(2);
     });
@@ -194,12 +198,28 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
     );
   });
 
-  it("reopens once after a mid-turn drop and replays the buffered audio", async () => {
+  it("falls back to POST when the conversation socket drops mid-turn", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
     vi.stubGlobal("WebSocket", FakeWs);
-    const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
+    const raw =
+      `event: final\ndata: {"transcript":"fallback final","audioProcessedMs":800}\n\n` +
+      `event: reply\ndata: {"text":"fallback reply"}\n\n` +
+      "event: done\ndata: {}\n\n";
+    const bytes = new TextEncoder().encode(raw);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start: (controller) => {
+              controller.enqueue(bytes);
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        ),
+    );
     vi.stubGlobal("fetch", fetchMock);
     stubSessionOnce();
 
@@ -208,52 +228,25 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
     await waitFor(() => {
       expect(driver).not.toBeNull();
     });
-    driver!.onSpeechStart();
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     const first = FakeWs.instances[0];
+    expect(first.url).toContain("/voice");
     first.open();
+    driver!.onSpeechStart();
     driver!.onFrame(speechFrame());
+
+    // Drop before speech end: the turn falls back to POST, no alert.
+    first.drop();
     driver!.onSpeechEnd();
     await waitFor(() => {
-      expect(
-        first.sentStrings().some((raw) => raw.includes("endStream")),
-      ).toBe(true);
-    });
-
-    first.drop();
-    await waitFor(
-      () => {
-        expect(FakeWs.instances).toHaveLength(2);
-      },
-      { timeout: 3000 },
-    );
-    const second = FakeWs.instances[1];
-    second.open();
-    await waitFor(() => {
-      expect(second.sentBinaryCount()).toBeGreaterThan(0);
-    });
-    expect(
-      second.sentStrings().some((raw) => raw.includes("endStream")),
-    ).toBe(true);
-
-    second.serverMessage({
-      type: "transcript",
-      transcript: "hello refill",
-      final: true,
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
-      expect(screen.getByText("hello refill")).toBeTruthy();
+      expect(screen.getByText("fallback reply")).toBeTruthy();
     });
-    second.serverMessage({ type: "reply", text: "Booked in." });
-    await waitFor(() => {
-      expect(screen.getByText("Booked in.")).toBeTruthy();
-    });
-    second.serverMessage({ type: "done" });
-
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("shows the server error code on screen when the bridge fails", async () => {
@@ -269,14 +262,20 @@ describe("live bridge (TapToTalk over WebSocket, proposal A)", () => {
     await waitFor(() => {
       expect(driver).not.toBeNull();
     });
-    driver!.onSpeechStart();
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     const ws = FakeWs.instances[0];
+    expect(ws.url).toContain("/voice");
     ws.open();
+    driver!.onSpeechStart();
     driver!.onFrame(speechFrame());
     driver!.onSpeechEnd();
+    await waitFor(() => {
+      expect(
+        ws.sentStrings().some((raw) => raw.includes("endStream")),
+      ).toBe(true);
+    });
 
     ws.serverMessage({
       type: "error",

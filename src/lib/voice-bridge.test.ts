@@ -7,7 +7,6 @@ import {
   tryParseControl,
   type BridgeAgentResult,
 } from "./voice-bridge";
-import { chainFailed } from "./response-chain";
 
 class FakeBrowser extends EventEmitter {
   readonly OPEN = 1;
@@ -46,9 +45,6 @@ function fakeAgent(text = "All set, see you soon."): (
     usage: { inputTokens: 100, outputTokens: 20 },
     toolUsed: null,
     firstTokenMs: 120,
-    responseId: "resp_bridge",
-    chainNext: true,
-    askedQuestion: false,
   });
 }
 
@@ -112,9 +108,9 @@ afterAll(async () => {
 type AgentFn = (args: {
   key: string;
   transcript: string;
+  history: { role: string; text: string; tool: string | null }[];
   startedAt: number;
   onDelta: (text: string) => void;
-  previousResponseId?: string;
   language?: string;
   slotKey?: string;
 }) => Promise<BridgeAgentResult>;
@@ -269,13 +265,12 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     }
   });
 
-  it("threads the previous response across taps and drops it after a failure", async () => {
-    chainFailed("test-client");
+  it("hands prior turns as history and drops nothing after a failure", async () => {
     finalTranscript = "vale, si";
-    const seen: (string | undefined)[] = [];
+    const seen: { role: string; text: string }[][] = [];
     let calls = 0;
     const agent: AgentFn = async (args) => {
-      seen.push(args.previousResponseId);
+      seen.push(args.history);
       calls += 1;
       if (calls === 2) throw new Error("boom");
       return {
@@ -283,9 +278,6 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
         usage: { inputTokens: 100, outputTokens: 20 },
         toolUsed: null,
         firstTokenMs: 1,
-        responseId: `resp_b${calls}`,
-        chainNext: true,
-        askedQuestion: false,
       };
     };
     const runTap = async () => {
@@ -308,15 +300,102 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       await runTap();
       await runTap();
       await runTap();
-      expect(seen).toEqual([undefined, "resp_b1", undefined]);
+      expect(seen).toHaveLength(3);
+      for (const history of seen) {
+        expect(history.length).toBeGreaterThan(0);
+        for (const turn of history) {
+          expect(["user", "vale"]).toContain(turn.role);
+          expect(typeof turn.text).toBe("string");
+        }
+      }
+      // Tap 2 sees tap 1's user turn; tap 3 also sees tap 1's vale reply,
+      // even though tap 2 failed after its own user turn was stored.
+      expect(
+        seen[1].some((t) => t.role === "user" && t.text === "vale, si"),
+      ).toBe(true);
+      expect(seen[2].some((t) => t.role === "vale")).toBe(true);
     } finally {
       finalTranscript = "vale, live from the bridge";
-      chainFailed("test-client");
     }
   });
 
+  it("carries two turns on one socket in conversation mode", async () => {
+    receivedEndStream = 0;
+    const agent = vi.fn(fakeAgent());
+    finalTranscript = "vale, first turn";
+    const browser = new FakeBrowser();
+    attachVoiceBridge({
+      browser: browser as unknown as WebSocket,
+      key: "test-key",
+      clientId: "conv-two-turns",
+      metaUrl: url,
+      runAgent: agent,
+      conversation: true,
+    });
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+    const runVoiceTurn = async (transcript: string) => {
+      finalTranscript = transcript;
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(JSON.stringify({ type: "endStream" }));
+    };
+    await runVoiceTurn("vale, first turn");
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().filter((frame) => frame.type === "reply"),
+      ).toHaveLength(1);
+    });
+    // Nameless second turn rides the window the first turn opened.
+    await runVoiceTurn("and another thing");
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().filter((frame) => frame.type === "reply"),
+      ).toHaveLength(2);
+    });
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().filter((frame) => frame.type === "done"),
+      ).toHaveLength(2);
+    });
+    expect(browser.closed).toBeNull();
+    expect(receivedEndStream).toBe(2);
+    expect(agent).toHaveBeenCalledTimes(2);
+    browser.close(1000, "test done");
+  });
+
+  it("treats a tap wake frame like the name on a cold window", async () => {
+    const agent = vi.fn(fakeAgent());
+    finalTranscript = "close the session";
+    const browser = new FakeBrowser();
+    attachVoiceBridge({
+      browser: browser as unknown as WebSocket,
+      key: "test-key",
+      clientId: "conv-wake-tap",
+      metaUrl: url,
+      runAgent: agent,
+      conversation: true,
+    });
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+    browser.peerMessage(JSON.stringify({ type: "wake" }));
+    browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+    browser.peerMessage(JSON.stringify({ type: "endStream" }));
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "reply"),
+      ).toBe(true);
+    });
+    expect(agent).toHaveBeenCalledTimes(1);
+    browser.close(1000, "test done");
+  });
+
   it("keys the turn on the browser id announced in a client frame", async () => {
-    chainFailed("lane-9");
     finalTranscript = "vale, anunciar";
     let slotKey: string | undefined;
     const agent: AgentFn = async (args) => {
@@ -326,9 +405,6 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
         usage: { inputTokens: 10, outputTokens: 5 },
         toolUsed: null,
         firstTokenMs: 1,
-        responseId: "resp_lane",
-        chainNext: false,
-        askedQuestion: false,
       };
     };
     const browser = new FakeBrowser();
@@ -350,7 +426,6 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       expect(slotKey).toBe("lane-9");
     } finally {
       finalTranscript = "vale, live from the bridge";
-      chainFailed("lane-9");
     }
   });
 });
@@ -370,23 +445,22 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
 
   it("parses the screen language frame and closes the set on junk", () => {
     expect(
-      tryParseControl(JSON.stringify({ type: "language", language: "en" })),
-    ).toEqual({ type: "language", language: "en" });
+      tryParseControl(JSON.stringify({ type: "language", language: "es" })),
+    ).toEqual({ type: "language", language: "es" });
     expect(
       tryParseControl(
         Buffer.from(JSON.stringify({ type: "language", language: "it" })),
       ),
-    ).toEqual({ type: "language", language: "es" });
+    ).toEqual({ type: "language", language: "en" });
     expect(tryParseControl(JSON.stringify({ type: "language" }))).toEqual({
       type: "language",
-      language: "es",
+      language: "en",
     });
   });
 });
 
 describe("bridge language frame", () => {
   it("carries the selector language to the agent, never as audio", async () => {
-    chainFailed("test-client");
     finalTranscript = "vale, si";
     const seen: (string | undefined)[] = [];
     const agent: AgentFn = async (args) => {
@@ -396,9 +470,6 @@ describe("bridge language frame", () => {
         usage: { inputTokens: 100, outputTokens: 20 },
         toolUsed: null,
         firstTokenMs: 1,
-        responseId: "resp_lang",
-        chainNext: true,
-        askedQuestion: false,
       };
     };
     const browser = new FakeBrowser();
@@ -422,7 +493,6 @@ describe("bridge language frame", () => {
       expect(seen).toEqual(["en"]);
     } finally {
       finalTranscript = "vale, live from the bridge";
-      chainFailed("test-client");
     }
   });
 });

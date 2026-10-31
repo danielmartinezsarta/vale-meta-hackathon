@@ -194,6 +194,40 @@ export function seedDatabase(db: ValeDb): void {
   }
 }
 
+export interface HistoryTurn {
+  role: "user" | "vale";
+  text: string;
+  tool: string | null;
+}
+
+/** Last turns of one conversation, oldest first. */
+export const HISTORY_TURNS = 20;
+
+export function recordTurn(
+  db: ValeDb,
+  clientKey: string,
+  role: HistoryTurn["role"],
+  text: string,
+  tool: string | null = null,
+): void {
+  db.prepare("INSERT INTO turns (client_key, role, text, tool) VALUES (?, ?, ?, ?)").run(
+    clientKey,
+    role,
+    text,
+    tool,
+  );
+  db.prepare(
+    "DELETE FROM turns WHERE client_key = ? AND id NOT IN (SELECT id FROM turns WHERE client_key = ? ORDER BY id DESC LIMIT ?)",
+  ).run(clientKey, clientKey, HISTORY_TURNS * 2);
+}
+
+export function recentTurns(db: ValeDb, clientKey: string, limit: number = HISTORY_TURNS): HistoryTurn[] {
+  const rows = db
+    .prepare("SELECT role, text, tool FROM turns WHERE client_key = ? ORDER BY id DESC LIMIT ?")
+    .all(clientKey, limit) as unknown as HistoryTurn[];
+  return rows.reverse();
+}
+
 export function getCounts(db: ValeDb): TableCounts {
   const count = (table: string): number => {
     const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };

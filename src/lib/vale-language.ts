@@ -5,11 +5,11 @@
 
 export type ValeLanguage = "es" | "en";
 
-export const DEFAULT_LANGUAGE: ValeLanguage = "es";
+export const DEFAULT_LANGUAGE: ValeLanguage = "en";
 
-/** Unknown or missing values fall back to Spanish; the set stays closed. */
+/** Unknown or missing values fall back to English; the set stays closed. */
 export function parseLanguage(value: unknown): ValeLanguage {
-  return value === "en" ? "en" : "es";
+  return value === "es" ? "es" : "en";
 }
 
 export type VoiceErrorKind =

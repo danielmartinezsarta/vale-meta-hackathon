@@ -2,7 +2,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocketServer, WebSocket } from "ws";
 import { POST } from "./route";
-import { chainFailed } from "@/lib/response-chain";
 
 let server: WebSocketServer;
 let url = "";
@@ -228,7 +227,7 @@ describe("POST /api/voice", () => {
         }),
       ).then((response) => response.text());
     const esText = await sendTurn(
-      "http://localhost/api/voice",
+      "http://localhost/api/voice?language=es",
       "vale, apri una sessione con Ana",
     );
     expect(esText).toContain("event: reply");
@@ -319,7 +318,7 @@ describe("POST /api/voice", () => {
     dropOnAudio = true;
     vi.stubGlobal("fetch", stubAgent("unused"));
     const dropped = await POST(
-      new Request("http://localhost/api/voice", {
+      new Request("http://localhost/api/voice?language=es", {
         method: "POST",
         headers: { "content-type": "audio/l16" },
         body: pcmBody(4800),
@@ -436,8 +435,9 @@ describe("POST /api/voice", () => {
     delete process.env.VOICE_TURN_TIMEOUT_MS;
   });
 
-  it("threads previous_response_id across taps and drops it after a failure", async () => {
-    chainFailed();
+  it("sends prior turns as history and never a chained id", async () => {
+    // Real database: a unique key per run keeps earlier runs out of history.
+    const clientKey = `history-turns-${Date.now()}`;
     const bodies: Record<string, unknown>[] = [];
     let calls = 0;
     vi.stubGlobal(
@@ -448,29 +448,33 @@ describe("POST /api/voice", () => {
         bodies.push(
           JSON.parse((init as { body: string }).body) as Record<string, unknown>,
         );
-        return fakeAgentReply(
-          calls === 1 ? "¿lo guardo?" : "ok",
-          calls === 2 ? "resp_chain_2" : "resp_chain_1",
-        );
+        return fakeAgentReply(calls === 1 ? "Which service?" : "Done.");
       }),
     );
     const postTranscript = (transcript: string) =>
       POST(
         new Request("http://localhost/api/voice", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": clientKey,
+          },
           body: JSON.stringify({ transcript }),
         }),
       ).then((response) => response.text());
-    expect(await postTranscript("vale, abre una sesion")).toContain("event: reply");
-    // Nameless yes answers Vale's question through the pending window.
-    expect(await postTranscript("si")).toContain("event: reply");
+    expect(await postTranscript("vale, open a session")).toContain("event: reply");
+    expect(await postTranscript("gel polish")).toContain("event: reply");
+    // A failure surfaces at once: no retry, no chain to drop.
     expect(await postTranscript("vale, boom")).toContain("E-MODEL");
-    expect(await postTranscript("vale, hola de nuevo")).toContain("event: reply");
-    expect(bodies).toHaveLength(3);
-    expect(bodies[0].previous_response_id).toBeUndefined();
-    expect(bodies[1].previous_response_id).toBe("resp_chain_1");
-    expect(bodies[2].previous_response_id).toBeUndefined();
+    expect(await postTranscript("vale, hi again")).toContain("event: reply");
+    for (const body of bodies) {
+      expect(body.previous_response_id).toBeUndefined();
+      expect(Array.isArray(body.input)).toBe(true);
+    }
+    expect(bodies[0].input).toHaveLength(1);
+    expect(bodies[1].input).toHaveLength(3);
+    expect(JSON.stringify(bodies[1].input)).toContain("vale, open a session");
+    expect(JSON.stringify(bodies[1].input)).toContain("Which service?");
     vi.unstubAllGlobals();
   });
 
@@ -506,15 +510,14 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
   });
 
-  it("covers only continuations inside the same client window", async () => {
-    chainFailed();
+  it("accepts any request inside the same client window", async () => {
     let calls = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
         calls += 1;
         return fakeAgentReply(
-          calls === 1 ? "¿Qué servicio le hago a Ana?" : "Listo.",
+          calls === 1 ? "Which service for Ana?" : "Done.",
         );
       }),
     );
@@ -529,20 +532,16 @@ describe("POST /api/voice", () => {
           body: JSON.stringify({ transcript }),
         }),
       ).then((response) => response.text());
-    expect(await postTranscript("vale, algo para Ana")).toContain("event: reply");
+    expect(await postTranscript("vale, something for Ana")).toContain("event: reply");
     // Nameless completion of Vale's question executes.
-    expect(await postTranscript("esmaltado")).toContain("event: reply");
-    // Nameless fresh request stays ignored.
-    const ignored = await postTranscript("cuéntame un chiste");
-    expect(ignored).toContain("event: done");
-    expect(ignored).not.toContain("event: reply");
-    expect(calls).toBe(2);
-    chainFailed();
+    expect(await postTranscript("gel polish")).toContain("event: reply");
+    // A nameless fresh request executes too while the window is open.
+    expect(await postTranscript("tell me a joke")).toContain("event: reply");
+    expect(calls).toBe(3);
     vi.unstubAllGlobals();
   });
 
   it("undoes without the name inside the window", async () => {
-    chainFailed();
     const modelFetch = vi.fn(async () => fakeAgentReply("vale mismo"));
     vi.stubGlobal("fetch", modelFetch);
     const postTranscript = (transcript: string) =>
@@ -559,7 +558,6 @@ describe("POST /api/voice", () => {
     expect(await postTranscript("vale, abre una sesion")).toContain("event: reply");
     expect(await postTranscript("deshazlo")).toContain("event: reply");
     expect(modelFetch).toHaveBeenCalledTimes(2);
-    chainFailed();
     vi.unstubAllGlobals();
   });
 

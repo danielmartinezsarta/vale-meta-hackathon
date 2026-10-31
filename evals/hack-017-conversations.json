@@ -1,0 +1,130 @@
+{
+ "conversations": [
+  {
+   "id": "C1",
+   "goal": "greeting, open session, note, capabilities, close, client-directed line",
+   "turns": [
+    "Vale, hi, are you there?",
+    "Vale, open a session with Emma for gel refill",
+    "Vale, add a note for Emma: she likes short square nails",
+    "Vale, what can you do?",
+    "Thanks Vale, that is all for now",
+    "Emma, the red color looks great on you"
+   ]
+  },
+  {
+   "id": "C2",
+   "goal": "appointment then lone yes, recall, close",
+   "turns": [
+    "Vale, book an appointment for Liam tomorrow at 3pm for spa pedicure",
+    "yes",
+    "Vale, what did I just book?",
+    "Thanks Vale, bye"
+   ]
+  },
+  {
+   "id": "C3",
+   "goal": "nameless continuation in window, recall, shopping, close, client-directed close",
+   "turns": [
+    "Vale, open a session with Sofia for acrylic full set",
+    "add a note for Sofia: she is sensitive to strong primer smell",
+    "what service did I open for her?",
+    "Vale, add top coat to the shopping list",
+    "close the session",
+    "Sofia, see you next month"
+   ]
+  },
+  {
+   "id": "C4",
+   "goal": "client-directed chatter, background noise, write in window; hard distractor that sounds like a request",
+   "turns": [
+    "Vale, open a session with Nina for gel refill",
+    "Nina, let me get you some water",
+    "Vale, add a note for Nina: she prefers morning appointments",
+    "Let me add a bit more top coat",
+    "The television is very loud today",
+    "Vale, close the session"
+   ]
+  },
+  {
+   "id": "C5",
+   "goal": "real ASR wake-word spellings (audio p01/p09/p04/p13)",
+   "turns": [
+    "Vale, open a session with Emma.",
+    "Balle, repeat that please.",
+    "Vale? Yes, confirm it.",
+    "Thanks, Bali. That's all."
+   ]
+  },
+  {
+   "id": "C6",
+   "goal": "capabilities, read and write shopping list; hard distractor that sounds like a request",
+   "turns": [
+    "Vale, what can you do?",
+    "Vale, read the shopping list",
+    "Vale, add nail files to the shopping list",
+    "Let's book you again next month",
+    "Thanks Vale"
+   ]
+  },
+  {
+   "id": "C7",
+   "goal": "recall client, service and note across writes, nameless",
+   "turns": [
+    "Vale, find client Olivia",
+    "Vale, open a session with Olivia for gel refill",
+    "Vale, add a note for Olivia: her wedding is next Saturday",
+    "Which client did I just open a session for?",
+    "What did I note about her?",
+    "Thanks Vale, bye"
+   ]
+  },
+  {
+   "id": "C8",
+   "goal": "appointment flow, note, client-directed apology, close; hard distractor that sounds like a request",
+   "turns": [
+    "Vale, book an appointment for Mia on Friday at 4pm for gel refill",
+    "Vale, what appointments do I have?",
+    "Vale, add a note for Mia: she is running ten minutes late",
+    "I'll note your next appointment on my phone",
+    "Mia, sorry for the wait",
+    "Thanks Vale, bye"
+   ]
+  },
+  {
+   "id": "C9",
+   "goal": "greeting-only, new-client doubt then yes confirmation, nameless small talk, close",
+   "turns": [
+    "Hello?",
+    "Vale, open a session with Chloe for gel refill",
+    "yes",
+    "Vale, what time is it?",
+    "Okay thanks, bye Vale"
+   ]
+  },
+  {
+   "id": "C10",
+   "goal": "full session lifecycle with duration and earnings questions",
+   "turns": [
+    "Vale, open a session with Zoe for acrylic full set",
+    "Vale, add a note for Zoe: first acrylic set, keep it short",
+    "How long has the session been going?",
+    "Vale, close the session",
+    "How much did I earn?",
+    "Thanks Vale, goodbye"
+   ]
+  },
+  {
+   "id": "C11",
+   "goal": "negative control: no wake word, cold window, all must be ignored (n01/n03 contain Bale)",
+   "turns": [
+    "Bale nails are so trendy now.",
+    "debale brought my car around..",
+    "Bale broke a nail again.",
+    "Well, I think we are done here",
+    "Available slots are filling fast."
+   ]
+  }
+ ],
+ "note": "All names and facts are invented for the hackathon demo. No real client data."
+}

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
 import { startCapture } from "@/lib/capture";
-import { setVoiceEngine, speak, stopSpeaking, voiceEngine } from "@/lib/speak";
+import { finishStream, setVoiceEngine, speak, speakStream, stopSpeaking, voiceEngine } from "@/lib/speak";
 
 vi.mock("@/lib/capture", () => ({
   startCapture: vi.fn(),
@@ -15,6 +15,12 @@ vi.mock("@/lib/speak", async (importOriginal) => {
     speak: vi.fn((...args: Parameters<typeof actual.speak>) =>
       actual.speak(...args),
     ),
+    speakStream: vi.fn((...args: Parameters<typeof actual.speakStream>) =>
+      actual.speakStream(...args),
+    ),
+    finishStream: vi.fn((...args: Parameters<typeof actual.finishStream>) =>
+      actual.finishStream(...args),
+    ),
     stopSpeaking: vi.fn((...args: Parameters<typeof actual.stopSpeaking>) =>
       actual.stopSpeaking(...args),
     ),
@@ -23,6 +29,8 @@ vi.mock("@/lib/speak", async (importOriginal) => {
 
 const mockStartCapture = vi.mocked(startCapture);
 const mockSpeak = vi.mocked(speak);
+const mockSpeakStream = vi.mocked(speakStream);
+const mockFinishStream = vi.mocked(finishStream);
 const mockStopSpeaking = vi.mocked(stopSpeaking);
 
 class FakeWs {
@@ -92,17 +100,19 @@ describe("browser voice output", () => {
     ws.open();
     driver!.onSpeechEnd();
 
-    // Deltas paint the screen but stay silent.
+    // Deltas paint the screen and stream to the speaker at once.
     ws.serverMessage({ type: "reply-delta", text: "Te anoto mañana " });
     ws.serverMessage({ type: "reply-delta", text: "a las tres." });
+    expect(mockSpeakStream).toHaveBeenCalledTimes(2);
+    expect(mockSpeakStream).toHaveBeenCalledWith("Te anoto mañana ", "es");
     expect(mockSpeak).not.toHaveBeenCalled();
 
-    // The final reply speaks once, word for word.
+    // The final reply only flushes the streamed tail, never re-speaks.
     ws.serverMessage({ type: "reply", text: "Te anoto mañana a las tres." });
     await waitFor(() => {
-      expect(mockSpeak).toHaveBeenCalledTimes(1);
+      expect(mockFinishStream).toHaveBeenCalledTimes(1);
     });
-    expect(mockSpeak).toHaveBeenCalledWith("Te anoto mañana a las tres.", "es");
+    expect(mockSpeak).not.toHaveBeenCalled();
 
     // Daniel talks again: the audio cuts at once.
     driver!.onSpeechStart();

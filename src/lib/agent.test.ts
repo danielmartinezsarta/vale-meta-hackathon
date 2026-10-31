@@ -103,7 +103,7 @@ describe("agent prompt", () => {
       }),
     );
 
-    const result = await runAgentTurn({ key: "test-key", transcript: "hola", db: freshTestDb() });
+    const result = await runAgentTurn({ key: "test-key", transcript: "hola", language: "es", db: freshTestDb() });
 
     expect(result.text).toBe("Hola.");
     expect(result.toolUsed).toBeNull();
@@ -135,18 +135,46 @@ describe("agent turn with tools", () => {
       }),
     );
 
-    const result = await runAgentTurn({ key: "test-key", transcript: "anota que prefiere viernes", db });
+    const result = await runAgentTurn({ key: "test-key", transcript: "anota que prefiere viernes", language: "es", db });
 
     expect(result.toolUsed).toBe("add_note");
-    expect(result.text).toBe("Nota guardada en la ficha de Ana.");
-    expect(result.usage).toEqual({ inputTokens: 200, outputTokens: 40 });
-    const followUp = bodies[1];
-    expect(followUp.previous_response_id).toBe("resp_1");
-    const input = followUp.input as Record<string, unknown>[];
-    expect(input[0].type).toBe("function_call_output");
-    expect(JSON.parse(input[0].output as string).ok).toBe(true);
+    expect(result.text).toBe("Nota guardada en la ficha de Ana Beltran.");
+    expect(bodies).toHaveLength(1);
     const notes = db.prepare("SELECT COUNT(*) AS n FROM notes").get() as { n: number };
     expect(notes.n).toBe(1);
+    db.close();
+  });
+
+  it("answers a successful write without a second model round", async () => {
+    const db = freshTestDb();
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        return sseResponse([
+          toolCall(
+            "resp_1",
+            "open_session",
+            { client_name: "Ana", service_name: "Gel refill" },
+            "call_1",
+          ),
+        ]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "vale, open a session for Ana",
+      language: "es",
+      db,
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(result.toolUsed).toBe("open_session");
+    expect(result.text).toBe("Sesión abierta con Ana Beltran.");
     db.close();
   });
 
@@ -206,11 +234,11 @@ describe("agent turn with tools", () => {
     };
 
     stubHealthTurn();
-    const first = await runAgentTurn({ key: "test-key", transcript: "anota onicolisis", db });
+    const first = await runAgentTurn({ key: "test-key", transcript: "anota onicolisis", language: "es", db });
     expect(first.text).toBe(`Nota privada guardada. ${PRIVACY_LINE}`);
 
     stubHealthTurn();
-    const second = await runAgentTurn({ key: "test-key", transcript: "anota otra cosa de salud", db });
+    const second = await runAgentTurn({ key: "test-key", transcript: "anota otra cosa de salud", language: "es", db });
     expect(second.text).toBe("Nota privada guardada.");
     expect(second.text).not.toContain("infraestructura dedicada");
     db.close();
@@ -262,46 +290,13 @@ describe("agent narration buffering", () => {
   });
 });
 
-describe("agent clean retry", () => {
-  it("retries once without the chain after a 400 with no tool yet", async () => {
-    const bodies: Record<string, unknown>[] = [];
-    let calls = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: unknown, init: unknown) => {
-        calls += 1;
-        bodies.push(
-          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
-        );
-        if (calls === 1) return new Response("bad chain", { status: 400 });
-        return sseResponse([spoken("resp_2", "Listo.")]);
-      }),
-    );
-
-    const result = await runAgentTurn({
-      key: "test-key",
-      transcript: "hola",
-      previousResponseId: "resp_stale",
-      db: freshTestDb(),
-    });
-
-    expect(calls).toBe(2);
-    expect(bodies[0].previous_response_id).toBe("resp_stale");
-    expect(bodies[1].previous_response_id).toBeUndefined();
-    expect(result.responseId).toBe("resp_2");
-  });
-
-  it("does not retry when a write already completed before the 400", async () => {
+describe("agent single attempt", () => {
+  it("throws on a 400 without retrying", async () => {
     let calls = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
         calls += 1;
-        if (calls === 1) {
-          return sseResponse([
-            toolCall("resp_1", "create_client", { name: "Noa" }, "call_1"),
-          ]);
-        }
         return new Response("bad round", { status: 400 });
       }),
     );
@@ -309,45 +304,10 @@ describe("agent clean retry", () => {
     await expect(
       runAgentTurn({ key: "test-key", transcript: "hola", db: freshTestDb() }),
     ).rejects.toThrow(/model error: 400/);
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
   });
 
-  it("retries clean when only a read or a doubt ran before the 400", async () => {
-    const bodies: Record<string, unknown>[] = [];
-    let calls = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: unknown, init: unknown) => {
-        calls += 1;
-        bodies.push(
-          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
-        );
-        if (calls === 1) {
-          return sseResponse([
-            toolCall("resp_1", "find_client", { name: "Zzz" }, "call_1"),
-          ]);
-        }
-        if (calls === 2) {
-          return new Response("stale chain", { status: 400 });
-        }
-        return sseResponse([spoken("resp_3", "Ya quedó.")]);
-      }),
-    );
-
-    const result = await runAgentTurn({
-      key: "test-key",
-      transcript: "hola",
-      previousResponseId: "resp_stale",
-      db: freshTestDb(),
-    });
-
-    expect(calls).toBe(3);
-    expect(bodies[0].previous_response_id).toBe("resp_stale");
-    expect(bodies[2].previous_response_id).toBeUndefined();
-    expect(result.text).toBe("Ya quedó.");
-  });
-
-  it("does not retry non-chain errors", async () => {
+  it("throws on a 500 without retrying", async () => {
     let calls = 0;
     vi.stubGlobal(
       "fetch",
@@ -358,81 +318,61 @@ describe("agent clean retry", () => {
     );
 
     await expect(
-      runAgentTurn({
-        key: "test-key",
-        transcript: "hola",
-        previousResponseId: "resp_0",
-        db: freshTestDb(),
-      }),
+      runAgentTurn({ key: "test-key", transcript: "hola", db: freshTestDb() }),
     ).rejects.toThrow(/model error: 500/);
     expect(calls).toBe(1);
   });
 
-  it("retries clean when a failed event names a stale chain", async () => {
+  it("throws when a failed event names a failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([
+          {
+            type: "response.failed",
+            data: { error: "previous_response_id invalid: gone" },
+          },
+        ]),
+      ),
+    );
+
+    await expect(
+      runAgentTurn({ key: "test-key", transcript: "hola", db: freshTestDb() }),
+    ).rejects.toThrow(/model error/);
+  });
+
+  it("sends the conversation history in the input, never a chained id", async () => {
     const bodies: Record<string, unknown>[] = [];
-    let calls = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_url: unknown, init: unknown) => {
-        calls += 1;
         bodies.push(
           JSON.parse((init as { body: string }).body) as Record<string, unknown>,
         );
-        if (calls === 1) {
-          return sseResponse([
-            {
-              type: "response.failed",
-              data: {
-                error: "previous_response_id invalid: response not found",
-              },
-            },
-          ]);
-        }
-        return sseResponse([spoken("resp_2", "Hola de nuevo.")]);
+        return sseResponse([spoken("resp_9", "Claro, Emma.")]);
       }),
     );
 
     const result = await runAgentTurn({
       key: "test-key",
-      transcript: "hola",
-      previousResponseId: "resp_stale",
+      transcript: "and the note?",
+      history: [
+        { role: "user", text: "Vale, open a session for Emma", tool: null },
+        { role: "vale", text: "Which service for Emma?", tool: null },
+      ],
       db: freshTestDb(),
     });
 
-    expect(calls).toBe(2);
-    expect(bodies[1].previous_response_id).toBeUndefined();
-    expect(result.text).toBe("Hola de nuevo.");
-    expect(result.responseId).toBe("resp_2");
-  });
-
-  it("logs each failed attempt with its chain state for the next audit", async () => {
-    const errors: string[] = [];
-    const spy = vi
-      .spyOn(console, "error")
-      .mockImplementation((line: unknown) => {
-        errors.push(String(line));
-      });
-    try {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => new Response("nope", { status: 500 })),
-      );
-      await expect(
-        runAgentTurn({
-          key: "test-key",
-          transcript: "hola",
-          previousResponseId: "resp_0",
-          db: freshTestDb(),
-        }),
-      ).rejects.toThrow(/model error: 500/);
-      expect(
-        errors.some((line) =>
-          line.includes("[agent] attempt 0 (chained) failed"),
-        ),
-      ).toBe(true);
-    } finally {
-      spy.mockRestore();
-    }
+    expect(result.text).toBe("Claro, Emma.");
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].previous_response_id).toBeUndefined();
+    const input = bodies[0].input as unknown[];
+    expect(input).toHaveLength(3);
+    expect(input[0]).toMatchObject({ role: "user" });
+    expect(JSON.stringify(input[0])).toContain("Vale, open a session for Emma");
+    expect(input[1]).toMatchObject({ role: "assistant" });
+    expect(JSON.stringify(input[1])).toContain("Which service for Emma?");
+    expect(input[2]).toBe("and the note?");
   });
 
   it("injects the known slots into the next turn instead of re-asking", async () => {
@@ -463,11 +403,12 @@ describe("agent clean retry", () => {
     await runAgentTurn({
       key: "test-key",
       transcript: "vale abre sesión para esmaltado",
+      language: "es",
       slotKey: "mem-int",
       db: freshTestDb(),
     });
-    expect(bodies).toHaveLength(3);
-    expect(String(bodies[2].instructions)).toContain(
+    expect(bodies).toHaveLength(2);
+    expect(String(bodies[1].instructions)).toContain(
       "En curso: clienta Laura. No repreguntes lo dado.",
     );
     clearSlots("mem-int");
@@ -515,7 +456,7 @@ describe("agent clean retry", () => {
     clearPendingAction("pend-agent");
   });
 
-  it("marks the chain to continue after questions and doubt, not after writes", async () => {
+  it("reports the tool it used with no chain state", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => sseResponse([spoken("resp_1", "Hola, dime.")])),
@@ -525,89 +466,30 @@ describe("agent clean retry", () => {
       transcript: "hola",
       db: freshTestDb(),
     });
-    expect(ask.chainNext).toBe(true);
-  });
-});
-
-describe("agent response chaining", () => {
-  it("returns the last round id and sends a prior id on the first request", async () => {
-    const bodies: Record<string, unknown>[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: unknown, init: unknown) => {
-        bodies.push(
-          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
-        );
-        if (bodies.length === 1) {
-          return sseResponse([
-            toolCall("resp_1", "find_client", { name: "Ana" }, "call_1"),
-          ]);
-        }
-        return sseResponse([spoken("resp_2", "Esta es la ficha.")]);
-      }),
-    );
-
-    const result = await runAgentTurn({
-      key: "test-key",
-      transcript: "sí",
-      previousResponseId: "resp_0",
-      db: freshTestDb(),
-    });
-
-    expect(bodies[0].previous_response_id).toBe("resp_0");
-    expect(result.responseId).toBe("resp_2");
-    expect(result.toolUsed).toBe("find_client");
-    expect(result.chainNext).toBe(false);
-  });
-
-  it("keeps the chain when the tool reports doubt", async () => {
-    let calls = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        calls += 1;
-        if (calls === 1) {
-          return sseResponse([
-            toolCall("resp_1", "add_to_shopping_list", { item_name: "esmalte" }, "call_1"),
-          ]);
-        }
-        return sseResponse([spoken("resp_2", "¿Cuál?")]);
-      }),
-    );
-
-    const result = await runAgentTurn({
-      key: "test-key",
-      transcript: "agrega esmalte",
-      db: freshTestDb(),
-    });
-
-    expect(result.toolUsed).toBe("add_to_shopping_list");
-    expect(result.chainNext).toBe(true);
+    expect(ask.toolUsed).toBeNull();
+    expect(ask).not.toHaveProperty("chainNext");
   });
 });
 
 describe("closed reply language", () => {
-  it("keeps the historic Spanish prompt as the default", () => {
-    expect(buildInstructions()).toBe(SPOKEN_SYSTEM_PROMPT);
+  it("keeps the historic Spanish prompt available in Spanish", () => {
+    expect(buildInstructions()).toBe(buildInstructions("en"));
     expect(buildInstructions("es")).toBe(SPOKEN_SYSTEM_PROMPT);
   });
 
-  it("greets with variety and states capabilities, never rigid templates", () => {
+  it("keeps templates and tone examples out of the English prompt", () => {
     expect(buildInstructions("es")).toMatch(/Saluda variado/);
-    expect(buildInstructions("es")).toContain("sin preguntar datos");
-    expect(buildInstructions("es")).not.toContain("gets exactly Hola");
-    expect(buildInstructions("en")).toMatch(/variety/);
+    expect(buildInstructions("en")).not.toMatch(/variety/);
     expect(buildInstructions("en")).not.toContain("gets exactly Hi");
-    expect(buildInstructions("en")).toMatch(/No prices or appointments yet/);
-    expect(buildInstructions("es")).toMatch(/fuera de uñas/);
-    expect(buildInstructions("en")).toMatch(/outside nails/);
+    expect(buildInstructions("en")).not.toContain("Which service should I do for Ana?");
+    expect(buildInstructions("en")).not.toMatch(/outside nails/);
+    expect(buildInstructions("en")).not.toMatch(/what can you do/);
   });
 
   it("answers only in English under the EN setting, never in Spanish", () => {
     const instructions = buildInstructions("en");
     expect(instructions).toContain("only in English");
     expect(instructions).toContain("Should I save it?");
-    expect(instructions).toContain("Which service should I do for Ana?");
     expect(instructions).toContain("Private note saved.");
     expect(instructions).toContain("undo it");
     expect(instructions).not.toContain("¿lo guardo?");
@@ -655,6 +537,7 @@ describe("closed reply language", () => {
     await runAgentTurn({
       key: "test-key",
       transcript: "Vale, apri una sessione con Ana",
+      language: "es",
       db: freshTestDb(),
     });
 

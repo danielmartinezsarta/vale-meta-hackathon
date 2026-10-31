@@ -1,6 +1,14 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { PRIVATE_NOTE_LABEL, freshTestDb, getCounts, getPublicNotes, seedDatabase } from "./db";
+import {
+  PRIVATE_NOTE_LABEL,
+  freshTestDb,
+  getCounts,
+  getPublicNotes,
+  recentTurns,
+  recordTurn,
+  seedDatabase,
+} from "./db";
 
 describe("seeded database", () => {
   it("seeds 5 clients, 6 services and 23 supplies", () => {
@@ -60,6 +68,33 @@ describe("private health notes", () => {
     expect(general.masked).toBe(false);
     expect(general.text).toBe("prefiere cita los viernes");
     expect(PRIVATE_NOTE_LABEL.length).toBeGreaterThan(0);
+    db.close();
+  });
+});
+
+describe("conversation turns", () => {
+  it("returns the last turns in order for one client only", () => {
+    const db = freshTestDb();
+    recordTurn(db, "c1", "user", "Vale, open a session for Emma");
+    recordTurn(db, "c1", "vale", "Which service for Emma?", "find_client");
+    recordTurn(db, "c2", "user", "Vale, hi");
+    const turns = recentTurns(db, "c1", 20);
+    expect(turns).toEqual([
+      { role: "user", text: "Vale, open a session for Emma", tool: null },
+      { role: "vale", text: "Which service for Emma?", tool: "find_client" },
+    ]);
+    db.close();
+  });
+
+  it("keeps only the newest turns per client", () => {
+    const db = freshTestDb();
+    for (let i = 0; i < 25; i += 1) {
+      recordTurn(db, "c1", i % 2 === 0 ? "user" : "vale", `turn ${i}`);
+    }
+    const turns = recentTurns(db, "c1", 20);
+    expect(turns).toHaveLength(20);
+    expect(turns[0].text).toBe("turn 5");
+    expect(turns[19].text).toBe("turn 24");
     db.close();
   });
 });

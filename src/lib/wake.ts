@@ -4,7 +4,13 @@
 // otherwise it is silently discarded (no model, no board, ignored:true log).
 // Garbage never touches the previous_response_id chain.
 
-const DEFAULT_WAKE_WORDS = ["vale"];
+// Measured ASR spellings of "Vale", including Bale (Daniel's call, 30/10:
+// heard in negatives, position rule below carries the risk).
+const DEFAULT_WAKE_WORDS = ["vale", "balle", "bali", "bale", "veil", "vail"];
+
+// The name counts only first, or right after an opener: mid-sentence
+// mentions of a client ("Bale broke a nail") must not wake Vale.
+const OPENER_PREFIX = /^(?:hey|okay|ok|thanks)\b[\s,]*/;
 const DEFAULT_WINDOW_S = 45;
 
 export function normalizeWakeText(value: string): string {
@@ -34,10 +40,10 @@ export function windowMs(): number {
 }
 
 export function namesVale(transcript: string, words: string[] = wakeWords()): boolean {
-  const haystack = ` ${normalizeWakeText(transcript)} `;
+  const head = ` ${normalizeWakeText(transcript).replace(OPENER_PREFIX, "")} `;
   return words.some((word) => {
     const needle = normalizeWakeText(word);
-    return needle !== "" && haystack.includes(` ${needle} `);
+    return needle !== "" && head.startsWith(` ${needle} `);
   });
 }
 
@@ -67,23 +73,9 @@ export function requestClientId(request: Request): string {
 
 const attentionSince = new Map<string, number>();
 
-/**
- * Pending question per connection: Vale asked, so the answer may come
- * nameless. Set from the agent result, never from a transcript alone.
- */
-const pendingSince = new Map<string, number>();
-
-export function markQuestionAsked(clientId: string, now: number = Date.now()): void {
-  pendingSince.set(clientId, now);
-}
-
-export function clearQuestion(clientId: string): void {
-  pendingSince.delete(clientId);
-}
-
-function hasPendingQuestion(clientId: string, now: number): boolean {
-  const since = pendingSince.get(clientId);
-  return since !== undefined && now - since < windowMs();
+/** Tapping talk opens the window like naming Vale does. */
+export function noteAttention(clientId: string, now: number = Date.now()): void {
+  attentionSince.set(clientId, now);
 }
 
 /** Undo intent: deshazlo / undo it, with or without the name. */
@@ -136,34 +128,45 @@ export function isGreetingOnly(transcript: string): boolean {
   return GREETING_ONLY.test(words.join(" "));
 }
 
+export type WakeGate = "nombre" | "ventana" | "ignorado";
+
 export interface WakeVerdict {
   execute: boolean;
   namedVale: boolean;
+  gate: WakeGate;
+  /** Seconds since Vale's last reply (the previous executed turn). */
+  sinceReplyS: number | null;
 }
 
 /**
+ * Sliding attention window: naming Vale opens it, and every executed turn
+ * restarts it, so any request inside the window runs without the name.
  * Empty transcripts bypass the gate: the existing silence path handles them.
- * Ignored turns neither read nor write the response chain.
+ * Ignored turns neither read nor write the model or the chain.
  */
 export function checkWake(
   transcript: string,
   clientId: string,
   now: number = Date.now(),
 ): WakeVerdict {
-  if (transcript.trim() === "") return { execute: true, namedVale: false };
+  const since = attentionSince.get(clientId);
+  const inWindow = since !== undefined && now - since < windowMs();
+  const sinceReplyS = since === undefined ? null : (now - since) / 1000;
   if (namesVale(transcript)) {
     attentionSince.set(clientId, now);
-    return { execute: true, namedVale: true };
+    return { execute: true, namedVale: true, gate: "nombre", sinceReplyS };
   }
-  const since = attentionSince.get(clientId);
-  if (since !== undefined && now - since < windowMs()) {
-    // An open window covers continuations only: the answer to Vale's
-    // pending question, or an undo of the last write. A fresh request
-    // without the name stays ignored.
-    if (hasPendingQuestion(clientId, now) || isUndoIntent(transcript)) {
-      return { execute: true, namedVale: false };
-    }
-    return { execute: false, namedVale: false };
+  if (transcript.trim() === "") {
+    return {
+      execute: true,
+      namedVale: false,
+      gate: inWindow ? "ventana" : "ignorado",
+      sinceReplyS,
+    };
   }
-  return { execute: false, namedVale: false };
+  if (inWindow) {
+    attentionSince.set(clientId, now);
+    return { execute: true, namedVale: false, gate: "ventana", sinceReplyS };
+  }
+  return { execute: false, namedVale: false, gate: "ignorado", sinceReplyS };
 }

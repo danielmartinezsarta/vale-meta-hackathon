@@ -1,19 +1,13 @@
 import WebSocket from "ws";
 import { runAgentTurn } from "./agent";
-import { getDb } from "./db";
+import { getDb, recentTurns, recordTurn, type HistoryTurn } from "./db";
 import { getBoard } from "./board";
 import {
-  chainFailed,
-  chainSucceeded,
-  nextPreviousResponseId,
-} from "./response-chain";
-import {
   checkWake,
-  clearQuestion,
   collapseEcho,
-  isGreetingOnly,
-  markQuestionAsked,
+  noteAttention,
   sanitizeClientId,
+  type WakeVerdict,
 } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { estimateCost, formatTurnLog } from "./turn-log";
@@ -45,25 +39,22 @@ export interface BridgeAgentResult {
   usage: BridgeAgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
-  responseId: string;
-  /** False after a completed write: the next turn starts the chain fresh. */
-  chainNext: boolean;
-  /** Vale asked something: the answer may arrive without the name. */
-  askedQuestion: boolean;
 }
 
 export interface VoiceBridgeOptions {
-  /** Browser side of the upgraded Vercel socket, one per turn. */
+  /** Browser side of the socket: one per turn, or one per conversation. */
   browser: WebSocket;
+  /** One socket carries the whole conversation: turns reset, Meta redials. */
+  conversation?: boolean;
   key: string;
   metaUrl?: string;
   createMetaSocket?: (url: string) => WebSocket;
   runAgent?: (args: {
     key: string;
     transcript: string;
+    history: HistoryTurn[];
     startedAt: number;
     onDelta: (text: string) => void;
-    previousResponseId?: string;
     language?: ValeLanguage;
     slotKey?: string;
   }) => Promise<BridgeAgentResult>;
@@ -80,6 +71,7 @@ export function tryParseControl(
   | { type: "endStream" }
   | { type: "language"; language: ValeLanguage }
   | { type: "client"; client: string }
+  | { type: "wake" }
   | null {
   let text: string | null = null;
   if (typeof data === "string") {
@@ -96,6 +88,7 @@ export function tryParseControl(
       client?: unknown;
     };
     if (message.type === "endStream") return { type: "endStream" };
+    if (message.type === "wake") return { type: "wake" };
     if (message.type === "language") {
       return { type: "language", language: parseLanguage(message.language) };
     }
@@ -117,10 +110,13 @@ function sendJson(browser: WebSocket, payload: unknown): void {
   }
 }
 
-// One live turn: browser <--WS--> Vercel <--WS--> Meta (PUSH_TO_TALK); the client reconnects, Meta has no resume.
+// browser <--WS--> server <--WS--> Meta (PUSH_TO_TALK). One socket spans one
+// turn by default; in conversation mode it spans the whole conversation while
+// every turn still redials Meta, which has no resume.
 export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const {
     browser,
+    conversation = false,
     key,
     metaUrl = ASR_URL,
     createMetaSocket,
@@ -141,6 +137,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const pendingAudio: Buffer[] = [];
   let pendingEnd = false;
   let agentRan = false;
+  /** Stale Meta sockets from earlier turns must not fail the current one. */
+  let metaGen = 0;
   /** Screen selector language; Spanish until the browser sends its frame. */
   let turnLanguage: ValeLanguage = DEFAULT_LANGUAGE;
   const err = (kind: VoiceErrorKind): string =>
@@ -148,18 +146,38 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
 
   const finish = (code: number, reason: string) => {
     if (settled) return;
-    settled = true;
     clearTimeout(timer);
+    metaGen += 1;
     try {
       meta.close();
     } catch {
       /* already closed */
     }
+    if (conversation && !browserGone && browser.readyState === 1) {
+      beginNextTurn();
+      return;
+    }
+    settled = true;
     try {
       browser.close(code, reason);
     } catch {
       /* already closed */
     }
+  };
+
+  // Next turn on the same socket: fresh flags, fresh Meta dial, same window.
+  const beginNextTurn = () => {
+    metaOpen = false;
+    gotFinal = false;
+    finalText = "";
+    audioProcessedMs = null;
+    bufferedBytes = 0;
+    pendingAudio.length = 0;
+    pendingEnd = false;
+    agentRan = false;
+    timerArmed = false;
+    clearTimeout(timer);
+    openMetaTurn();
   };
 
   const failTurn = (message: string, code: string) => {
@@ -191,6 +209,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     chain?: "hit" | "miss" | "none";
     key?: string;
     slots?: { client?: string; service?: string } | null;
+    gate?: WakeVerdict["gate"] | null;
+    sinceReplyS?: number | null;
+    totalMs?: number | null;
   }) => {
     console.log(
       formatTurnLog({
@@ -210,10 +231,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   };
 
   let browserGone = false;
-  const timer = setTimeout(() => {
+  let timer: ReturnType<typeof setTimeout>;
+  /** Conversation sockets idle between turns: arm the timeout on audio. */
+  let timerArmed = false;
+  const onTurnTimeout = () => {
     if (settled) return;
-    settled = true;
-    chainFailed(clientId);
     logTurn({
       ts: new Date().toISOString(),
       transcript: finalText,
@@ -229,9 +251,12 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       chain: "none",
       key: clientId,
       slots: slotSnapshot(),
+      gate: null,
+      sinceReplyS: null,
+      totalMs: null,
     });
     failTurn(err("timeout"), "E-NET");
-  }, turnTimeoutMs);
+  };
 
   const flushPending = () => {
     for (const chunk of pendingAudio.splice(0)) {
@@ -251,20 +276,24 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     }
   };
 
-  const answerTranscript = async (transcript: string, speechEndAt: number) => {
+  const answerTranscript = async (
+    transcript: string,
+    speechEndAt: number,
+    verdict: WakeVerdict,
+  ) => {
     agentRan = true;
     const ts = new Date(speechEndAt || now()).toISOString();
-    const chainedId = nextPreviousResponseId(clientId);
-    const chainState = chainedId === undefined ? "miss" : "hit";
+    // Explicit memory: history first, then record this user turn.
+    const history = recentTurns(getDb(), clientId);
+    recordTurn(getDb(), clientId, "user", transcript);
     try {
       // A yes to Vale's pending proposal runs the stored writes at once:
       // no model, no questions, no chain needed.
       if (isConfirmYes(transcript)) {
         const actions = takePendingAction(clientId);
         if (actions) {
-          const executed = runPendingActions(getDb(), clientId, actions);
-          chainFailed(clientId);
-          clearQuestion(clientId);
+          const executed = runPendingActions(getDb(), clientId, actions, turnLanguage);
+          recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
           sendJson(browser, { type: "reply", text: executed.text });
           sendJson(browser, { type: "board", board: getBoard(getDb()) });
           logTurn({
@@ -285,6 +314,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             chain: "none",
             key: clientId,
             slots: slotSnapshot(),
+            gate: verdict.gate,
+            sinceReplyS: verdict.sinceReplyS,
+            totalMs: Date.now() - speechEndAt,
           });
           sendJson(browser, { type: "done" });
           finish(1000, "turn-complete");
@@ -295,19 +327,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         {
           key,
           transcript,
-          previousResponseId: chainedId,
+          history,
           startedAt: speechEndAt,
           onDelta: (text) => sendJson(browser, { type: "reply-delta", text }),
           language: turnLanguage,
           slotKey: clientId,
         },
       );
-      if (!browserGone) chainSucceeded(result.responseId, result.chainNext, clientId);
-      if (result.askedQuestion && !isGreetingOnly(transcript)) {
-        markQuestionAsked(clientId, speechEndAt);
-      } else {
-        clearQuestion(clientId);
-      }
+      if (!browserGone) recordTurn(getDb(), clientId, "vale", result.text, result.toolUsed);
       sendJson(browser, { type: "reply", text: result.text });
       sendJson(browser, { type: "board", board: getBoard(getDb()) });
       logTurn({
@@ -325,13 +352,15 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         error: null,
         ignored: false,
         asrMs: null,
-        chain: chainState,
+        chain: "none",
         key: clientId,
         slots: slotSnapshot(),
+        gate: verdict.gate,
+        sinceReplyS: verdict.sinceReplyS,
+        totalMs: Date.now() - speechEndAt,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed";
-      chainFailed(clientId);
       logTurn({
         ts,
         transcript,
@@ -347,9 +376,12 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         error: message,
         ignored: false,
         asrMs: null,
-        chain: chainState,
+        chain: "none",
         key: clientId,
         slots: slotSnapshot(),
+        gate: verdict.gate,
+        sinceReplyS: verdict.sinceReplyS,
+        totalMs: Date.now() - speechEndAt,
       });
       sendJson(browser, {
         type: "error",
@@ -420,35 +452,46 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             chain: "none",
             key: clientId,
             slots: null,
+            gate: null,
+            sinceReplyS: null,
+            totalMs: 0,
           });
           sendJson(browser, { type: "done" });
           finish(1000, "turn-complete");
-        } else if (!checkWake(finalText, clientId).execute) {
-          // Background chatter without the name: silent discard.
-          logTurn({
-            ts: new Date(speechEndAt).toISOString(),
-            transcript: finalText,
-            ttftMs: null,
-            inputTokens: 0,
-            outputTokens: 0,
-            audioSeconds:
-              audioProcessedMs !== null
-                ? audioProcessedMs / 1000
-                : bufferedBytes / 48000,
-            tool: null,
-            modelSkipped: true,
-            error: null,
-            ignored: true,
-            asrMs: null,
-            chain: "none",
-            key: clientId,
-            slots: slotSnapshot(),
-          });
-          sendJson(browser, { type: "ignored" });
-          sendJson(browser, { type: "done" });
-          finish(1000, "turn-complete");
-        } else {
-          void answerTranscript(finalText, speechEndAt);
+          return;
+        }
+        {
+          const verdict = checkWake(finalText, clientId);
+          if (!verdict.execute) {
+            // Background chatter without the name: silent discard.
+            logTurn({
+              ts: new Date(speechEndAt).toISOString(),
+              transcript: finalText,
+              ttftMs: null,
+              inputTokens: 0,
+              outputTokens: 0,
+              audioSeconds:
+                audioProcessedMs !== null
+                  ? audioProcessedMs / 1000
+                  : bufferedBytes / 48000,
+              tool: null,
+              modelSkipped: true,
+              error: null,
+              ignored: true,
+              asrMs: null,
+              chain: "none",
+              key: clientId,
+              slots: slotSnapshot(),
+              gate: verdict.gate,
+              sinceReplyS: verdict.sinceReplyS,
+              totalMs: Date.now() - speechEndAt,
+            });
+            sendJson(browser, { type: "ignored" });
+            sendJson(browser, { type: "done" });
+            finish(1000, "turn-complete");
+          } else {
+            void answerTranscript(finalText, speechEndAt, verdict);
+          }
         }
       } else {
         sendJson(browser, {
@@ -474,42 +517,62 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   };
 
   let meta: WebSocket;
-  try {
-    meta = createMetaSocket ? createMetaSocket(metaUrl) : new WebSocket(metaUrl);
-  } catch {
-    failTurn(err("lost"), "E-NET");
-    return;
-  }
 
-  meta.on("open", () => {
+  // Every turn redials Meta: a stale socket must never fail the next turn.
+  function openMetaTurn(): void {
+    metaGen += 1;
+    const gen = metaGen;
+    const current = () => gen === metaGen;
+    let fresh: WebSocket;
     try {
-      meta.send(
-        JSON.stringify({
-          authorization: { accessToken: `Bearer ${key}` },
-          audioEncoding: ASR_ENCODING,
-          model: ASR_MODEL,
-          mode: "PUSH_TO_TALK",
-        }),
-      );
+      fresh = createMetaSocket ? createMetaSocket(metaUrl) : new WebSocket(metaUrl);
     } catch {
       failTurn(err("lost"), "E-NET");
+      return;
     }
-  });
+    meta = fresh;
 
-  meta.on("message", (data: unknown) => handleMetaMessage(data));
+    fresh.on("open", () => {
+      if (!current()) {
+        try {
+          fresh.close();
+        } catch {
+          /* superseded */
+        }
+        return;
+      }
+      try {
+        fresh.send(
+          JSON.stringify({
+            authorization: { accessToken: `Bearer ${key}` },
+            audioEncoding: ASR_ENCODING,
+            model: ASR_MODEL,
+            mode: "PUSH_TO_TALK",
+          }),
+        );
+      } catch {
+        failTurn(err("lost"), "E-NET");
+      }
+    });
 
-  meta.on("error", () => {
-    if (!settled && !metaOpen) {
-      failTurn(err("lost"), "E-NET");
-    }
-  });
+    fresh.on("message", (data: unknown) => {
+      if (current()) handleMetaMessage(data);
+    });
 
-  meta.on("close", () => {
-    if (settled) return;
-    if (gotFinal) return; // Meta closes after the final; the reply is on its way.
-    console.error("[voice-asr] connection closed before final transcript");
-    failTurn(err("lost"), "E-ASR");
-  });
+    fresh.on("error", () => {
+      if (current() && !settled && !metaOpen) {
+        failTurn(err("lost"), "E-NET");
+      }
+    });
+
+    fresh.on("close", () => {
+      if (!current()) return;
+      if (settled) return;
+      if (gotFinal) return; // Meta closes after the final; the reply is on its way.
+      console.error("[voice-asr] connection closed before final transcript");
+      failTurn(err("lost"), "E-ASR");
+    });
+  }
 
   browser.on("message", (data: unknown) => {
     if (settled) return;
@@ -523,6 +586,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       // The stable browser id keys slots, pending actions and chain lanes.
       if (control.type === "client") {
         clientId = control.client;
+        return;
+      }
+      // Tapping talk opens the window like naming Vale does.
+      if (control.type === "wake") {
+        noteAttention(clientId);
         return;
       }
       if (metaOpen) {
@@ -539,6 +607,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) {
       const chunk = data as Buffer;
       bufferedBytes += chunk.length;
+      if (conversation && !timerArmed) {
+        timerArmed = true;
+        clearTimeout(timer);
+        timer = setTimeout(onTurnTimeout, turnTimeoutMs);
+      }
       if (bufferedBytes > MAX_BUFFERED_BYTES) {
         failTurn(err("lost"), "E-NET");
         return;
@@ -560,7 +633,6 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     if (settled) return;
     settled = true;
     browserGone = true;
-    chainFailed(clientId);
     clearTimeout(timer);
     try {
       meta.close();
@@ -571,5 +643,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   browser.on("close", onBrowserGone);
   browser.on("error", onBrowserGone);
 
+  timer = setTimeout(onTurnTimeout, turnTimeoutMs);
+  timerArmed = true;
+  openMetaTurn();
   sendJson(browser, { type: "bridge", state: "open" });
 }

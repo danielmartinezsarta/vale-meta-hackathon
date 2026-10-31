@@ -1,5 +1,5 @@
 import { VALE_TOOLS, getOpenSession, localDay, runValeTool } from "./vale-tools";
-import { getDb, type ValeDb } from "./db";
+import { getDb, type HistoryTurn, type ValeDb } from "./db";
 import { DEFAULT_LANGUAGE, type ValeLanguage } from "./vale-language";
 import {
   buildPendingActions,
@@ -49,15 +49,11 @@ const LANGUAGE_SUFFIX: Record<ValeLanguage, string> = {
     "Health topics (allergies, onicolisis and similar) always use add_note with kind health; confirm with Nota privada guardada. and never repeat the health text.",
   ].join(" "),
   en: [
-    "The user hears your reply read aloud, so reply only in English in exactly one or two short spoken sentences. Never answer in another language even if the transcript is in another.",
-    "You are Vale, a warm, direct voice nail tech: plain words, one or two short sentences.",
-    "Today you can: open timed sessions, save notes on client cards (health notes stay private), keep the shopping list, register new clients and supplies. No prices or appointments yet; say so plainly if asked.",
-    "Greet with variety and briefly when there is no request, never asking for data. When client or service is missing, ask naturally and briefly, naming what you already have.",
-    "Tone examples (not a script): client «hi» -> «Hi, how is it going?»; client «hey» -> «Hey, I'm here.»; client «what can you do?» -> «I open timed sessions, save notes on your card, keep the shopping list, and register new clients and supplies. No prices or appointments yet.»; client «open a session for Ana» -> «Which service should I do for Ana?»; client «yes» with pending doubt -> act and confirm «Done, all set.»",
-    "If they ask for anything outside nails (hair, makeup), say so plainly and steer back to nails: «That's hair and I only do nails; shall I open you a polish session?»",
-    "When in doubt ask in one sentence and the confirmation question is Should I save it?.",
+    "The user hears your reply read aloud, so reply only in English in exactly one or two short spoken sentences.",
+    "You are warm and direct, like a trusted colleague at the salon: brief, kind, never robotic.",
+    "Act right away on direct requests; only ask first when in doubt, saying what you would do in one sentence with the confirmation question Should I save it?, and wait for yes before calling.",
     "When the user says undo it, call undo_last_write at once.",
-    "Health topics (allergies, onycholysis and similar) always use add_note with kind health; confirm with Private note saved. and never repeat the health text.",
+    "Health topics always use add_note with kind health; confirm with Private note saved. and never repeat the health text.",
   ].join(" "),
 };
 
@@ -85,25 +81,24 @@ export interface AgentResult {
   usage: AgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
-  /** Last completed response id: chain it as previous_response_id next turn. */
-  responseId: string;
-  /** Keep chaining: no tool ran, or a tool reported doubt. Drop after writes. */
-  chainNext: boolean;
-  /** Vale asked something: the answer may arrive without the name. */
-  askedQuestion: boolean;
 }
 
-/** A 400 before any tool ran means the chained response went stale: retry clean. */
-export function isChainError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  return (
-    /^model error: 400\b/.test(error.message) ||
-    /previous_response/i.test(error.message) ||
-    /response[^,;.]{0,60}(expired|invalid|not found)/i.test(error.message)
-  );
+/** One history turn as a Responses input message. */
+function historyItem(turn: HistoryTurn): Record<string, unknown> {
+  return turn.role === "user"
+    ? {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: turn.text }],
+      }
+    : {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: turn.text }],
+      };
 }
 
-/** Tools that complete a write when they report ok (reads never block a retry). */
+/** Tools that complete a write when they report ok. */
 const WRITE_TOOLS = new Set([
   "open_session",
   "close_session",
@@ -112,6 +107,10 @@ const WRITE_TOOLS = new Set([
   "add_to_shopping_list",
   "log_supply_use",
   "undo_last_write",
+  "create_appointment",
+  "move_appointment",
+  "set_stock",
+  "add_stock",
 ]);
 
 /**
@@ -310,7 +309,8 @@ const MAX_TOOL_ROUNDS = 4;
 export interface AgentTurnOptions {
   key: string;
   transcript: string;
-  previousResponseId?: string;
+  /** Last conversation turns, oldest first; Vale remembers them, no chains. */
+  history?: HistoryTurn[];
   url?: string;
   onDelta?: (text: string) => void;
   startedAt?: number;
@@ -351,112 +351,80 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     : staticInstructions;
   const privacyLine = language === "en" ? PRIVACY_LINE_EN : PRIVACY_LINE;
 
-  let previousResponseId = options.previousResponseId;
-  let input: unknown = options.transcript;
+  // Explicit memory: the last turns travel in the input, oldest first.
+  // No response chains, no retries: a failure surfaces as E-MODEL at once.
+  let input: unknown = [
+    ...(options.history ?? []).map(historyItem),
+    options.transcript,
+  ];
   let text = "";
-  let responseId = "";
   let toolUsed: string | null = null;
-  let sawDoubt = false;
   let healthSaved = false;
   const usage: AgentUsage = { inputTokens: 0, outputTokens: 0 };
   let firstTokenMs: number | null = null;
 
-  // At most one clean retry: a 400 with no completed write means the
-  // chained response expired. Never replay a turn that already wrote.
-  let sawWrite = false;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) {
-      previousResponseId = undefined;
-      input = options.transcript;
-      text = "";
-      responseId = "";
-      toolUsed = null;
-      sawDoubt = false;
-      healthSaved = false;
-      sawWrite = false;
-    }
-    try {
-      for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-        const turn = await postResponses(
-          options.key,
-          url,
-          {
-            instructions,
-            ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
-            input,
-            tools: VALE_TOOLS,
-            // Cheapest reasoning mode; the latency budget depends on it.
-            reasoning: { effort: "minimal" },
-            stream: true,
-          },
-          onDelta,
-          startedAt,
-        );
-        usage.inputTokens += turn.usage.inputTokens;
-        usage.outputTokens += turn.usage.outputTokens;
-        firstTokenMs = firstTokenMs ?? turn.firstTokenMs;
-        previousResponseId = turn.id;
-        responseId = turn.id;
-        if (turn.calls.length === 0) {
-          text = turn.text;
-          break;
-        }
-        const call = turn.calls[0];
-        toolUsed = toolUsed ?? call.name;
-        let parsed: Record<string, unknown> = {};
-        try {
-          parsed = JSON.parse(call.args || "{}") as Record<string, unknown>;
-        } catch {
-          parsed = {};
-        }
-        const toolResult = runValeTool(db, call.name, parsed);
-        if (!toolResult.ok) {
-          sawDoubt = true;
-          // A complete proposal waits for the yes; anything else retires
-          // a stale one instead of confirming the wrong thing.
-          const proposal = buildPendingActions(db, call.name, parsed, toolResult);
-          if (proposal) setPendingAction(slotKey, proposal);
-          else clearPendingAction(slotKey);
-        }
-        if (toolResult.ok && WRITE_TOOLS.has(call.name)) {
-          sawWrite = true;
-          clearPendingAction(slotKey);
-        }
-        updateSlotsFromTool(
-          slotKey,
-          call.name,
-          parsed,
-          toolResult.ok,
-          (toolResult as { data?: unknown }).data,
-        );
-        if (call.name === "add_note" && (toolResult.data as { private?: boolean } | undefined)?.private === true) {
-          healthSaved = true;
-        }
-        input = [
-          {
-            type: "function_call_output",
-            call_id: call.callId,
-            output: JSON.stringify(toolResult),
-          },
-        ];
-        text = toolResult.message;
-      }
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+    const turn = await postResponses(
+      options.key,
+      url,
+      {
+        instructions,
+        input,
+        tools: VALE_TOOLS,
+        // Cheapest reasoning mode; the latency budget depends on it.
+        reasoning: { effort: "minimal" },
+        stream: true,
+      },
+      onDelta,
+      startedAt,
+    );
+    usage.inputTokens += turn.usage.inputTokens;
+    usage.outputTokens += turn.usage.outputTokens;
+    firstTokenMs = firstTokenMs ?? turn.firstTokenMs;
+    if (turn.calls.length === 0) {
+      text = turn.text;
       break;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // Attempt-level trace: the next stale-chain incident must show whether
-      // the clean retry fired, without guessing from token counts.
-      console.error(
-        `[agent] attempt ${attempt} (${previousResponseId ? "chained" : "clean"}) failed: ${message}`,
-      );
-      const cleanRetry =
-        attempt === 0 &&
-        options.previousResponseId !== undefined &&
-        !sawWrite &&
-        isChainError(error);
-      if (cleanRetry) console.error("[agent] retrying clean (chain dropped)");
-      else throw error;
     }
+    const call = turn.calls[0];
+    toolUsed = toolUsed ?? call.name;
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(call.args || "{}") as Record<string, unknown>;
+    } catch {
+      parsed = {};
+    }
+    const toolResult = runValeTool(db, call.name, parsed, language);
+    if (!toolResult.ok) {
+      // A complete proposal waits for the yes; anything else retires
+      // a stale one instead of confirming the wrong thing.
+      const proposal = buildPendingActions(db, call.name, parsed, toolResult);
+      if (proposal) setPendingAction(slotKey, proposal);
+      else clearPendingAction(slotKey);
+    }
+    updateSlotsFromTool(
+      slotKey,
+      call.name,
+      parsed,
+      toolResult.ok,
+      (toolResult as { data?: unknown }).data,
+    );
+    if (call.name === "add_note" && (toolResult.data as { private?: boolean } | undefined)?.private === true) {
+      healthSaved = true;
+    }
+    if (toolResult.ok && WRITE_TOOLS.has(call.name)) {
+      clearPendingAction(slotKey);
+      // A successful write answers itself: no second model round.
+      text = toolResult.message;
+      break;
+    }
+    input = [
+      {
+        type: "function_call_output",
+        call_id: call.callId,
+        output: JSON.stringify(toolResult),
+      },
+    ];
+    text = toolResult.message;
   }
 
   if (healthSaved && privacyNoticeNeeded(db)) {
@@ -464,9 +432,5 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     text = text === "" ? privacyLine : `${text} ${privacyLine}`;
   }
 
-  const chainNext = toolUsed === null || sawDoubt;
-  // A question keeps the window open for the nameless answer: a tool that
-  // reported doubt, or a tool-free reply ending in one.
-  const askedQuestion = toolUsed === null ? /\?\s*$/.test(text) : sawDoubt;
-  return { text, usage, toolUsed, firstTokenMs, responseId, chainNext, askedQuestion };
+  return { text, usage, toolUsed, firstTokenMs };
 }

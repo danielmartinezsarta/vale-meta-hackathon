@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  finishStream,
   isSpeaking,
   pickVoice,
   setVoiceEngine,
   speak,
+  speakStream,
   splitSentences,
   stopSpeaking,
 } from "./speak";
@@ -79,20 +81,21 @@ describe("speak with the browser voice", () => {
     const co = fakeVoice("es-CO");
     const mx = fakeVoice("es-MX");
     const us = fakeVoice("en-US");
-    expect(pickVoice([mx, us, co])).toBe(co);
-    expect(pickVoice([mx, us])).toBe(mx);
-    expect(pickVoice([fakeVoice("es-ES"), us])).toEqual(
+    expect(pickVoice([mx, us, co], "es")).toBe(co);
+    expect(pickVoice([mx, us], "es")).toBe(mx);
+    expect(pickVoice([fakeVoice("es-ES"), us], "es")).toEqual(
       expect.objectContaining({ lang: "es-ES" }),
     );
-    expect(pickVoice([us])).toBeNull();
+    expect(pickVoice([us], "es")).toBeNull();
   });
 
-  it("picks an English voice under the EN setting and keeps Spanish default", () => {
+  it("defaults to English voices and keeps Spanish opt-in", () => {
     const co = fakeVoice("es-CO");
     const us = fakeVoice("en-US");
     expect(pickVoice([co, us], "en")).toBe(us);
     expect(pickVoice([co], "en")).toBeNull();
-    expect(pickVoice([co, us])).toBe(co);
+    expect(pickVoice([co, us])).toBe(us);
+    expect(pickVoice([co, us], "es")).toBe(co);
   });
 
   it("sets the utterance language to English without a matching voice", () => {
@@ -104,7 +107,7 @@ describe("speak with the browser voice", () => {
 
   it("sets the utterance language to Spanish even without a matching voice", () => {
     const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
-    speak("Hola");
+    speak("Hola", "es");
     const utterance = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
     expect(utterance.lang).toBe("es-CO");
   });
@@ -138,7 +141,7 @@ describe("speak with the browser voice", () => {
         listeners.push(handler);
       },
     );
-    speak("Hola");
+    speak("Hola", "es");
     expect(synth.speak).not.toHaveBeenCalled();
     current = [fakeVoice("es-CO")];
     listeners.forEach((handler) => handler());
@@ -312,5 +315,32 @@ describe("seamless voice engine", () => {
     } finally {
       setVoiceEngine("browser");
     }
+  });
+});
+
+describe("streamed speech", () => {
+  it("speaks complete sentences as deltas arrive and the tail on finish", () => {
+    const { synth, utterances } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    speakStream("Hello there. How");
+    expect(synth.cancel).not.toHaveBeenCalled();
+    expect(utterances).toEqual(["Hello there."]);
+    speakStream(" are you?");
+    expect(utterances).toEqual(["Hello there."]);
+    finishStream();
+    expect(utterances).toEqual(["Hello there.", "How are you?"]);
+  });
+
+  it("holds a single incomplete sentence until the finish", () => {
+    const { utterances } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    speakStream("One thing");
+    expect(utterances).toEqual([]);
+    finishStream();
+    expect(utterances).toEqual(["One thing"]);
+  });
+
+  it("flushes nothing when the turn never streamed", () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    finishStream();
+    expect(synth.speak).not.toHaveBeenCalled();
   });
 });

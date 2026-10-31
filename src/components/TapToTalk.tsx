@@ -13,6 +13,8 @@ import {
   stopSpeaking,
   voiceEngine,
   type VoiceEngine,
+  finishStream,
+  speakStream,
 } from "@/lib/speak";
 import {
   DEFAULT_LANGUAGE,
@@ -102,6 +104,7 @@ export function TapToTalk() {
   const languageRef = useRef<ValeLanguage>(language);
   // Stable per-browser id so slots, pending actions and chain lanes survive
   // retaps even behind one shared IP; generated once, then reused.
+  const convSocketRef = useRef<WebSocket | null>(null);
   const [clientId] = useState<string>(() => {
     if (typeof window === "undefined") return "unknown";
     try {
@@ -163,6 +166,7 @@ export function TapToTalk() {
       }
     });
     socketsRef.current.clear();
+    convSocketRef.current = null;
     sessionEndRef.current?.();
     sessionEndRef.current = null;
     setStatus("idle");
@@ -215,6 +219,7 @@ export function TapToTalk() {
         }
       });
       socketsRef.current.clear();
+      convSocketRef.current = null;
       setAlert(message);
       setAlertCode(code);
       setStatus("idle");
@@ -237,9 +242,15 @@ export function TapToTalk() {
       const pending: Int16Array[] = [];
       let currentId = -1;
       let posted = false;
-      // One WebSocket per turn; frames stay buffered for replay or POST fallback.
+      // One conversation socket when /voice is up, else one bridge socket
+      // per turn; frames stay buffered for replay or POST fallback.
+      let convSocket: WebSocket | null = null;
+      let convOpen = false;
+      let pendingConvTurn: number | null = null;
       interface TurnTransport {
         socket: WebSocket | null;
+        /** This turn's audio rode the shared conversation socket. */
+        conv: boolean;
         frames: Int16Array[];
         opened: boolean;
         reconnected: boolean;
@@ -256,6 +267,71 @@ export function TapToTalk() {
         voiced: number;
       }
       const transports = new Map<number, TurnTransport>();
+
+      const openConvSocket = () => {
+        if (
+          convSocket ||
+          typeof WebSocket === "undefined" ||
+          typeof window === "undefined"
+        ) {
+          return;
+        }
+        let socket: WebSocket;
+        try {
+          socket = new WebSocket(
+            `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/voice`,
+          );
+        } catch {
+          return; // Per-turn sockets and POST stay as the fallback.
+        }
+        convSocket = socket;
+        convSocketRef.current = socket;
+        socketsRef.current.add(socket);
+        socket.binaryType = "arraybuffer";
+        socket.onopen = () => {
+          convOpen = true;
+          try {
+            socket.send(
+              JSON.stringify({
+                type: "language",
+                language: languageRef.current,
+              }),
+            );
+            socket.send(JSON.stringify({ type: "client", client: clientId }));
+            socket.send(JSON.stringify({ type: "wake" }));
+          } catch {
+            /* the close handler falls back to per-turn sockets */
+          }
+        };
+        socket.onmessage = (event: MessageEvent) => {
+          const id = pendingConvTurn ?? currentId;
+          if (!transports.has(id)) return;
+          handleBridgeMessage(id, event.data);
+          try {
+            const raw =
+              typeof event.data === "string"
+                ? event.data
+                : new TextDecoder().decode(event.data as ArrayBuffer);
+            if ((JSON.parse(raw) as { type?: unknown }).type === "done") {
+              if (pendingConvTurn === id) pendingConvTurn = null;
+            }
+          } catch {
+            /* not a JSON control frame */
+          }
+        };
+        const dropConv = () => {
+          convOpen = false;
+          if (convSocket === socket) convSocket = null;
+          if (convSocketRef.current === socket) convSocketRef.current = null;
+          socketsRef.current.delete(socket);
+        };
+        socket.onerror = () => {
+          // The close event follows; in-flight turns fall back below.
+        };
+        socket.onclose = () => {
+          dropConv();
+        };
+      };
 
       const showNotice = (message: string, code: string | null = null) => {
         setNotice(message);
@@ -294,6 +370,7 @@ export function TapToTalk() {
         pending.length = 0;
         transports.set(id, {
           socket: null,
+          conv: false,
           frames: [],
           opened: false,
           reconnected: false,
@@ -381,18 +458,21 @@ export function TapToTalk() {
             break;
           case "reply-delta":
             if (typeof message.text !== "string") return;
-            // Append fragments; the final "reply" paints the complete text.
+            // Append fragments and voice complete sentences at once.
             {
               const next = `${repliesRef.current.get(id) ?? ""}${message.text}`;
               repliesRef.current.set(id, next);
               patchTurn(id, { reply: next });
+              speakStream(message.text, languageRef.current);
             }
             break;
           case "reply":
             if (typeof message.text !== "string") return;
+            // Deltas already voiced this turn: only flush the tail.
+            if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
+            else speak(message.text, languageRef.current);
             repliesRef.current.set(id, message.text);
             patchTurn(id, { reply: message.text });
-            speak(message.text, languageRef.current);
             break;
           case "board": {
             const board = (message as { board?: unknown }).board;
@@ -578,9 +658,22 @@ export function TapToTalk() {
         };
       };
 
-      // Speech end: live endStream when the socket is up, else the POST.
+      // Speech end: conversation socket first, then the turn socket, then POST.
       const endTurnTransport = (id: number) => {
         const transport = transports.get(id);
+        if (
+          transport?.conv &&
+          convSocket &&
+          convSocket.readyState === WebSocket.OPEN
+        ) {
+          try {
+            convSocket.send(JSON.stringify({ type: "endStream" }));
+            pendingConvTurn = id;
+            return;
+          } catch {
+            /* fall through to the turn socket or POST */
+          }
+        }
         const socket = transport?.socket ?? null;
         // The turn is over: any (re)open must send endStream after replay.
         if (transport) {
@@ -692,15 +785,18 @@ export function TapToTalk() {
                 failTurn(id, message, code ?? "E-NET");
               },
               onReplyDelta: (text) => {
-                // Append fragments, same as the bridge path.
+                // Append fragments and voice complete sentences at once.
                 const next = `${repliesRef.current.get(id) ?? ""}${text}`;
                 repliesRef.current.set(id, next);
                 patchTurn(id, { reply: next });
+                speakStream(text, languageRef.current);
               },
               onReply: (text) => {
+                // Deltas already voiced this turn: only flush the tail.
+                if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
+                else speak(text, languageRef.current);
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
-                speak(text, languageRef.current);
               },
               onBoard: (next) => setBoard(next),
               onIgnored: () => patchTurn(id, { ignored: true }),
@@ -746,6 +842,19 @@ export function TapToTalk() {
             if (transport && !transport.failed) {
               if (countVoiced(frame)) transport.voiced += 1;
               transport.frames.push(frame.slice());
+              if (
+                convOpen &&
+                convSocket &&
+                convSocket.readyState === WebSocket.OPEN
+              ) {
+                try {
+                  sendFrameBytes(convSocket, frame);
+                  transport.conv = true;
+                } catch {
+                  /* endTurnTransport falls back to POST */
+                }
+                return;
+              }
               const socket = transport.socket;
               if (socket && socket.readyState === WebSocket.OPEN) {
                 try {
@@ -779,8 +888,9 @@ export function TapToTalk() {
             }
             // A new utterance after a posted turn opens the next turn on the same capture.
             if (posted) openTurn(false);
-            // Open the socket at speech start so the ~0.9 s handshake hides inside the utterance.
-            openTurnSocket(currentId);
+            // Without a conversation socket, open one per turn so the
+            // ~0.9 s handshake hides inside the utterance.
+            if (!convOpen) openTurnSocket(currentId);
           },
           onSpeechEnd: () => {
             if (!sessionRef.current || posted) return;
@@ -806,6 +916,7 @@ export function TapToTalk() {
       );
 
       captureRef.current = capture;
+      openConvSocket();
       openTurn();
       await ended;
     },

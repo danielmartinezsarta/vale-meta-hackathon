@@ -30,6 +30,10 @@ export interface TurnLogFields {
   chain?: "hit" | "miss" | "none";
   key?: string;
   slots?: { client?: string; service?: string } | null;
+  /** Sliding-gate verdict, seconds since Vale's last reply, turn wall time. */
+  gate?: "nombre" | "ventana" | "ignorado" | null;
+  sinceReplyS?: number | null;
+  totalMs?: number | null;
 }
 
 export function estimateCost(

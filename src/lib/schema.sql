@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS session_supplies (
   supply_id INTEGER NOT NULL REFERENCES supplies(id),
   PRIMARY KEY (session_id, supply_id)
 );
+CREATE TABLE IF NOT EXISTS turns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_key TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('user', 'vale')),
+  text TEXT NOT NULL,
+  tool TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS turns_client_key_id ON turns (client_key, id);
 CREATE TABLE IF NOT EXISTS write_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   action TEXT NOT NULL,

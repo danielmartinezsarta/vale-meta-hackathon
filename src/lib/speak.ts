@@ -222,6 +222,28 @@ function saySentencesWithBrowser(
 ): void {
   try {
     s.cancel();
+  } catch {
+    /* voice output is best-effort; the text stays on screen */
+  }
+  queueBrowserSentences(s, sentences, voices, language);
+}
+
+/**
+ * Streaming speech: reply fragments arrive before the full text, so each
+ * complete sentence speaks at once and the tail flushes on finish. The
+ * browser queue appends without cancelling; Seamless still needs the whole
+ * text, so it buffers and plays once.
+ */
+let streamPending = "";
+let streamLanguage: ValeLanguage = DEFAULT_LANGUAGE;
+
+function queueBrowserSentences(
+  s: SpeechSynthesis,
+  sentences: string[],
+  voices: readonly SpeechSynthesisVoice[],
+  language: ValeLanguage,
+): void {
+  try {
     for (const sentence of sentences) {
       const utterance = new SpeechSynthesisUtterance(sentence);
       utterance.rate = 0.9;
@@ -233,6 +255,53 @@ function saySentencesWithBrowser(
   } catch {
     /* voice output is best-effort; the text stays on screen */
   }
+}
+
+export function speakStream(
+  chunk: string,
+  language: ValeLanguage = DEFAULT_LANGUAGE,
+): void {
+  streamPending += chunk;
+  streamLanguage = language;
+  if (engine === "seamless") return;
+  const sentences = splitSentences(streamPending);
+  if (sentences.length <= 1) return;
+  const s = synth();
+  if (!s) return;
+  streamPending = sentences[sentences.length - 1];
+  const voices = s.getVoices();
+  if (voices.length > 0) {
+    queueBrowserSentences(s, sentences.slice(0, -1), voices, language);
+    return;
+  }
+  const ready = sentences.slice(0, -1);
+  void ensureVoices(s).then((late) =>
+    queueBrowserSentences(s, ready, late, language),
+  );
+}
+
+export function finishStream(): void {
+  const tail = streamPending;
+  const language = streamLanguage;
+  streamPending = "";
+  streamLanguage = DEFAULT_LANGUAGE;
+  if (tail.trim() === "") return;
+  if (engine === "seamless") {
+    playSeamless(tail, language);
+    return;
+  }
+  const s = synth();
+  if (!s) return;
+  const sentences = splitSentences(tail);
+  if (sentences.length === 0) return;
+  const voices = s.getVoices();
+  if (voices.length > 0) {
+    queueBrowserSentences(s, sentences, voices, language);
+    return;
+  }
+  void ensureVoices(s).then((late) =>
+    queueBrowserSentences(s, sentences, late, language),
+  );
 }
 
 export function speak(

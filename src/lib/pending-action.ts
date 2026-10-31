@@ -1,4 +1,5 @@
 import type { ValeDb } from "./db";
+import type { ValeLanguage } from "./vale-language";
 import { updateSlotsFromTool } from "./slot-memory";
 import {
   allClients,
@@ -149,11 +150,12 @@ export function runPendingActions(
   db: ValeDb,
   slotKey: string,
   actions: PendingAction[],
+  language: ValeLanguage = "es",
 ): PendingExecution {
   const said: string[] = [];
   let toolUsed: string | null = null;
   for (const action of actions) {
-    const result = runValeTool(db, action.tool, action.args);
+    const result = runValeTool(db, action.tool, action.args, language);
     toolUsed = action.tool;
     updateSlotsFromTool(slotKey, action.tool, action.args, result.ok, (result as { data?: unknown }).data);
     said.push(result.message);
