@@ -9,6 +9,7 @@ import {
   recentTurns,
   recordTurn,
   seedDatabase,
+  userName,
 } from "./db";
 
 describe("seeded database", () => {
@@ -111,6 +112,28 @@ describe("test-database guards", () => {
     expect(
       (db.prepare("SELECT COUNT(*) AS n FROM turns").get() as { n: number }).n,
     ).toBe(1);
+    db.close();
+  });
+
+  it("seeds Daniel as the user", () => {
+    const db = freshTestDb();
+    expect(userName(db)).toBe("Daniel");
+    db.close();
+  });
+
+  it("prefers VALE_USER_NAME over the seed and keeps a renamed profile", () => {
+    const saved = process.env.VALE_USER_NAME;
+    const db = freshTestDb();
+    try {
+      process.env.VALE_USER_NAME = "Maria";
+      expect(userName(db)).toBe("Maria");
+    } finally {
+      if (saved === undefined) delete process.env.VALE_USER_NAME;
+      else process.env.VALE_USER_NAME = saved;
+    }
+    db.prepare("UPDATE user_profile SET name = ? WHERE id = 1").run("Maria");
+    seedDatabase(db);
+    expect(userName(db)).toBe("Maria");
     db.close();
   });
 

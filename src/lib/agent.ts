@@ -1,5 +1,5 @@
 import { VALE_TOOLS, getOpenSession, localDay, runValeTool } from "./vale-tools";
-import { getDb, type HistoryTurn, type ValeDb } from "./db";
+import { DEFAULT_USER_NAME, getDb, userName, type HistoryTurn, type ValeDb } from "./db";
 import { DEFAULT_LANGUAGE, type ValeLanguage } from "./vale-language";
 import {
   buildPendingActions,
@@ -50,6 +50,8 @@ const LANGUAGE_SUFFIX: Record<ValeLanguage, string> = {
   ].join(" "),
   en: [
     "The user hears your reply read aloud, so reply only in English in exactly one or two short spoken sentences.",
+    "Keep every reply to about 25 words at most: direct, no filler, and never end with a question unless you are asking for confirmation or for missing information.",
+    "Never use terms of endearment, in any reply: love, darling, honey, dear, sweetie, babe, hun.",
     "You are warm and direct, like a trusted colleague at the salon: brief, kind, never robotic.",
     "Act right away on direct requests; only ask first when in doubt, saying what you would do in one sentence with the confirmation question Should I save it?, and wait for yes before calling.",
     "When the user says undo it, call undo_last_write at once.",
@@ -64,8 +66,13 @@ const LANGUAGE_SUFFIX: Record<ValeLanguage, string> = {
 export function buildInstructions(
   language: ValeLanguage = DEFAULT_LANGUAGE,
   today: string = localDay(),
+  name: string = DEFAULT_USER_NAME,
 ): string {
-  return `${SPOKEN_BASE} Today is ${today}. Use that date for hoy and resolve relative days from it. ${LANGUAGE_SUFFIX[language]}`;
+  return (
+    `${SPOKEN_BASE} Today is ${today}. ` +
+    `The user's name is ${name}: say it occasionally, never every turn, and never as an endearment. ` +
+    `Use that date for hoy and resolve relative days from it. ${LANGUAGE_SUFFIX[language]}`
+  );
 }
 
 // Spoken-style prompt: plain text, 1-2 short sentences, confirm before writing.
@@ -323,6 +330,8 @@ export interface AgentTurnOptions {
   language?: ValeLanguage;
   /** Slot-memory key (client IP on the server); tests use throwaway keys. */
   slotKey?: string;
+  /** Overrides the seeded user name in the prompt. */
+  userName?: string;
 }
 
 function privacyNoticeNeeded(db: ValeDb): boolean {
@@ -347,7 +356,11 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   const db = options.db ?? getDb();
   const language = options.language ?? DEFAULT_LANGUAGE;
   const slotKey = options.slotKey ?? "local";
-  const staticInstructions = buildInstructions(language);
+  const staticInstructions = buildInstructions(
+    language,
+    localDay(),
+    options.userName ?? userName(db),
+  );
   const slotLine = slotContext(slotKey, language);
   const instructions = slotLine
     ? `${staticInstructions} ${slotLine}`

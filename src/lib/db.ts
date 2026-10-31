@@ -123,6 +123,24 @@ function ensureColumn(db: ValeDb, table: string, column: string, definition: str
 }
 
 /** Create tables and insert the invented seed. Idempotent. */
+/** The user behind the voice: seeded, overridable with VALE_USER_NAME. */
+export const DEFAULT_USER_NAME = "Daniel";
+
+/** The user's name for the prompt: env wins, then the seeded profile. */
+export function userName(db: ValeDb): string {
+  const env = process.env.VALE_USER_NAME?.trim();
+  if (env) return env;
+  try {
+    const row = db
+      .prepare("SELECT name FROM user_profile WHERE id = 1")
+      .get() as { name: string } | undefined;
+    if (row?.name.trim()) return row.name.trim();
+  } catch {
+    /* old database without the table: fall through to the default */
+  }
+  return DEFAULT_USER_NAME;
+}
+
 export function seedDatabase(db: ValeDb): void {
   db.exec(schemaSql());
   ensureColumn(db, "services", "es", "TEXT NOT NULL DEFAULT ''");
@@ -139,6 +157,7 @@ export function seedDatabase(db: ValeDb): void {
   const seed = seedData as unknown as { clients: string[]; services: SeedService[]; supplies: SeedSupply[] };
   const addClient = db.prepare("INSERT OR IGNORE INTO clients (name) VALUES (?)");
   for (const name of seed.clients) addClient.run(name);
+  db.prepare("INSERT OR IGNORE INTO user_profile (id, name) VALUES (1, ?)").run(DEFAULT_USER_NAME);
 
   const upsertSupply = db.prepare(
     `INSERT INTO supplies (name, es, aliases, unit, content_per_product, stock_qty, min_qty, price_per_product_usd)

@@ -109,13 +109,18 @@ for (const conv of convs) {
     }
     const totalMs = Date.now() - started;
     const events = parseSse(raw);
+    const replyText = events.find((e) => e.type === "reply")?.data?.text ?? "";
+    const words = replyText.split(/\s+/).filter(Boolean);
+    const BANNED = ["love", "darling", "honey", "dear", "sweetie", "babe", "hun"];
     results.push({
       conv: conv.id,
       turn: n,
       client,
       transcript,
       events: events.map((e) => e.type),
-      reply: (events.find((e) => e.type === "reply")?.data?.text ?? "").slice(0, 300),
+      reply: replyText.slice(0, 300),
+      replyWords: words.length,
+      banned: BANNED.filter((w) => new RegExp(`\\b${w}\\b`, "i").test(replyText)),
       ignored: events.some((e) => e.type === "ignored"),
       errorEvent: events.some((e) => e.type === "error"),
       httpError,

@@ -545,6 +545,27 @@ describe("closed reply language", () => {
     expect(instructions).not.toContain("¿Para qué clienta es");
   });
 
+  it("caps length, bans endearments and names the user", () => {
+    const instructions = buildInstructions("en");
+    expect(instructions).toContain("25 words");
+    expect(instructions).toContain("Never use terms of endearment");
+    for (const word of [
+      "love",
+      "darling",
+      "honey",
+      "dear",
+      "sweetie",
+      "babe",
+      "hun",
+    ]) {
+      expect(instructions).toContain(word);
+    }
+    expect(instructions).toContain("The user's name is Daniel");
+    expect(
+      buildInstructions("en", "2026-10-31", "Maria"),
+    ).toContain("The user's name is Maria");
+  });
+
   it("sends the English instructions to the model when selected", async () => {
     const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal(
