@@ -170,7 +170,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "open_session",
-    description: "Open a nail session with a timer for a client and a service.",
+    description: "Open a nail session with a timer for a client and a service. Call it right away when the request names a client and a service; when a session is already open, close it first.",
     parameters: {
       type: "object",
       properties: {
@@ -205,7 +205,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "add_note",
-    description: "Save a note on the client card. Health notes stay private.",
+    description: "Save a note on the client card. Health notes stay private: use kind health for allergies, onicolisis and similar health topics.",
     parameters: {
       type: "object",
       properties: {
@@ -245,7 +245,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "log_supply_use",
-    description: "Record a supply used in the open session.",
+    description: "Record a supply used in the open session. When it is unknown, ask first and call again with confirm_create true only after a yes.",
     parameters: {
       type: "object",
       properties: {
@@ -258,7 +258,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "undo_last_write",
-    description: "Undo the most recent write.",
+    description: "Undo the most recent write. Call it when the user says undo it (or deshazlo).",
     parameters: noParams,
   },
   {
@@ -287,7 +287,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "create_appointment",
-    description: "Book an appointment for an existing client and service.",
+    description: "Book an appointment for an existing client and service. Confirm the date and time with the user; if you inferred them, say so.",
     parameters: {
       type: "object",
       properties: {
@@ -523,7 +523,14 @@ export function logSupplyUse(db: ValeDb, args: { name?: unknown; confirm_create?
     logWrite(db, "log_supply_use", "session_supplies", open.id, { supply_id: supplyId, auto_created: true });
     return { ok: true, message: language === "en" ? `${name} created and logged for the session.` : `${name} creado y anotado en la sesión.` };
   }
-  return { ok: false, message: `No encuentro "${name}". ¿lo creo y lo anoto en la sesión?`, pendingCreate: name };
+  return {
+    ok: false,
+    message:
+      language === "en"
+        ? `I can't find "${name}". Should I create it and log it? Call again with confirm_create true after a yes.`
+        : `No encuentro "${name}". ¿lo creo y lo anoto en la sesión? Llama de nuevo con confirm_create true después del sí.`,
+    pendingCreate: name,
+  };
 }
 
 const UNDO_LABELS: Record<ValeLanguage, Record<string, string>> = {
@@ -820,7 +827,10 @@ export function createAppointment(
   if (reasons.length > 0 && args.confirm_off_hours !== true) {
     return {
       ok: false,
-      message: `Ojo, ${reasons.join(" y ")}. ¿La guardo igual?`,
+      message:
+        language === "en"
+          ? `Careful, ${reasons.join(" and ")}. Still book it? Call again with confirm_off_hours true after a yes.`
+          : `Ojo, ${reasons.join(" y ")}. ¿La guardo igual? Llama de nuevo con confirm_off_hours true después del sí.`,
       pendingOffHours: true,
       data: { off_hours: true },
     };

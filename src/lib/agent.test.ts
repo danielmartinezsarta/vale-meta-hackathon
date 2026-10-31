@@ -66,17 +66,22 @@ afterEach(() => {
 });
 
 describe("agent prompt", () => {
-  it("states the confirm, undo and privacy rules", () => {
+  it("states the confirm and privacy rules; tool routing lives in the tools", () => {
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/plain text/i);
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/no markdown/i);
     expect(SPOKEN_SYSTEM_PROMPT).toContain("Should I save it?");
-    expect(SPOKEN_SYSTEM_PROMPT).toContain("deshazlo");
-    expect(SPOKEN_SYSTEM_PROMPT).toContain("undo_last_write");
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/never claim a write happened/i);
+    expect(SPOKEN_SYSTEM_PROMPT).toContain("Health notes: confirm briefly");
+    // How-to belongs to the tool, not the base: undo routing rides its description.
+    const undo = VALE_TOOLS.find((tool) => tool.name === "undo_last_write");
+    expect(undo?.description).toContain("deshazlo");
+    expect(undo?.description).toContain("undo it");
   });
 
   it("orders direct action without asking and asks only on doubt", () => {
-    expect(SPOKEN_SYSTEM_PROMPT).toMatch(/right away/i);
+    // Right-away dispatch rides the tool description, not the base.
+    const open = VALE_TOOLS.find((tool) => tool.name === "open_session");
+    expect(open?.description).toMatch(/right away/i);
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/in doubt/i);
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/ambiguous/i);
     expect(SPOKEN_SYSTEM_PROMPT).not.toMatch(/need a short confirmation first/);
@@ -567,8 +572,6 @@ describe("closed reply language", () => {
     const instructions = buildInstructions("en");
     expect(instructions).toContain("only in English");
     expect(instructions).toContain("Should I save it?");
-    expect(instructions).toContain("undo it");
-    expect(instructions).toContain("deshazlo");
     expect(instructions).not.toContain("Nunca respondas");
     expect(instructions).not.toContain("¿lo guardo?");
   });
