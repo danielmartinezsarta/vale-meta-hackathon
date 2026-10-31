@@ -18,7 +18,7 @@ import {
 } from "@/lib/wake";
 import { getOpenSession } from "@/lib/vale-tools";
 import { openAsrConnection } from "@/lib/asr";
-import { estimateCost, formatTurnLog } from "@/lib/turn-log";
+import { emitTurnLog, estimateCost } from "@/lib/turn-log";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
 import {
   DEFAULT_LANGUAGE,
@@ -218,19 +218,17 @@ export async function POST(request: Request): Promise<Response> {
         sinceReplyS?: number | null;
         totalMs?: number | null;
       }) => {
-        console.log(
-          formatTurnLog({
-            ...fields,
-            costUsd: estimateCost(
-              {
-                inputTokens: fields.inputTokens,
-                outputTokens: fields.outputTokens,
-                cachedInputTokens: fields.cachedInputTokens ?? 0,
-              },
-              fields.audioSeconds,
-            ),
-          }),
-        );
+        emitTurnLog({
+          ...fields,
+          costUsd: estimateCost(
+            {
+              inputTokens: fields.inputTokens,
+              outputTokens: fields.outputTokens,
+              cachedInputTokens: fields.cachedInputTokens ?? 0,
+            },
+            fields.audioSeconds,
+          ),
+        });
       };
 
       const answerTranscript = async (

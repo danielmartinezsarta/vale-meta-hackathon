@@ -11,7 +11,7 @@ import {
 } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { isEchoOfReply } from "./echo";
-import { estimateCost, formatTurnLog } from "./turn-log";
+import { emitTurnLog, estimateCost } from "./turn-log";
 import {
   clearPendingAction,
   isConfirmYes,
@@ -348,19 +348,17 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     sinceReplyS?: number | null;
     totalMs?: number | null;
   }) => {
-    console.log(
-      formatTurnLog({
-        ...fields,
-        costUsd: estimateCost(
-          {
-            inputTokens: fields.inputTokens,
-            outputTokens: fields.outputTokens,
-            cachedInputTokens: fields.cachedInputTokens ?? 0,
-          },
-          fields.audioSeconds,
-        ),
-      }),
-    );
+    emitTurnLog({
+      ...fields,
+      costUsd: estimateCost(
+        {
+          inputTokens: fields.inputTokens,
+          outputTokens: fields.outputTokens,
+          cachedInputTokens: fields.cachedInputTokens ?? 0,
+        },
+        fields.audioSeconds,
+      ),
+    });
   };
   const slotSnapshot = () => {
     const slots = getSlots(clientId);

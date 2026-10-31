@@ -1,3 +1,5 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { AgentUsage } from "./agent";
 
 // Public Model API list prices (Standard tier), per 1M tokens.
@@ -53,4 +55,33 @@ export function estimateCost(
 /** One JSON log line per turn. */
 export function formatTurnLog(fields: TurnLogFields): string {
   return `[voice-turn] ${JSON.stringify(fields)}`;
+}
+
+/**
+ * Persistent ear log: every [voice-turn] line lands in data/turns.jsonl,
+ * ignored turns with their gate included. VALE_TURNS_PATH overrides the file
+ * (evals point it elsewhere so test turns never mix into Daniel's log).
+ */
+export function turnsLogFile(): string {
+  const override = process.env.VALE_TURNS_PATH?.trim();
+  if (override) return override;
+  return join(process.cwd(), "data", "turns.jsonl");
+}
+
+/** Append one formatted line; logging never breaks a turn. */
+export function persistTurnLog(line: string): void {
+  try {
+    const file = turnsLogFile();
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${line}\n`);
+  } catch {
+    // The console line already went out; a full disk must not fail the turn.
+  }
+}
+
+/** Console plus persistent log in one call. */
+export function emitTurnLog(fields: TurnLogFields): void {
+  const line = formatTurnLog(fields);
+  console.log(line);
+  persistTurnLog(line);
 }
