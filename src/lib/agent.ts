@@ -45,7 +45,7 @@ const SPOKEN_BASE = [
   "Health notes: confirm briefly and never repeat the health text.",
   "If a date does not exist (November 31st), propose the nearest valid day at the same time, say the correction plainly, and ask for confirmation before writing.",
   "A yes only executes the proposal from your immediately previous reply; if that reply asked an open question with no concrete proposal, ask what to confirm instead of writing.",
-  "A refused write is never a license to do the opposite: if a session is already open, name it and ask before closing it.",
+  "A refused write is never a license to do the opposite: if a session is already open, call open_session anyway - its refusal tells you what to ask, and the yes runs the switch.",
 ].join(" ");
 
 /** Output line: the only part of the prompt that changes per language. */
