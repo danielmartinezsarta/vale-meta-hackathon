@@ -141,7 +141,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     burst(seen[0]);
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/perdió la conexión/i);
+    expect(alert.textContent).toMatch(/connection dropped/i);
     expect(alert.textContent).not.toMatch(/E-NET/);
   });
 

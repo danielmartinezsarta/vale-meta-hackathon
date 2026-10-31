@@ -1,0 +1,1165 @@
+{
+ "run": "eval-mvvm8z1s",
+ "results": [
+  {
+   "conv": "C1",
+   "turn": 1,
+   "client": "eval-mvvm8z1s-C1",
+   "transcript": "Vale, hi, are you there?",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Hi, how is it going?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 1622,
+   "totalClientMs": 1625
+  },
+  {
+   "conv": "C1",
+   "turn": 2,
+   "client": "eval-mvvm8z1s-C1",
+   "transcript": "Vale, open a session with Emma for gel refill",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I don't have Emma on file, I would register her and open the gel refill session. Should I save it?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 20868,
+   "totalClientMs": 20870
+  },
+  {
+   "conv": "C1",
+   "turn": 3,
+   "client": "eval-mvvm8z1s-C1",
+   "transcript": "Vale, add a note for Emma: she likes short square nails",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I would register Emma and save your note about short square nails. Should I save it?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 9433,
+   "totalClientMs": 9435
+  },
+  {
+   "conv": "C1",
+   "turn": 4,
+   "client": "eval-mvvm8z1s-C1",
+   "transcript": "Vale, what can you do?",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I open timed sessions, save notes on your card, keep the shopping list, and register new clients and supplies. No prices or appointments yet.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 3536,
+   "totalClientMs": 3538
+  },
+  {
+   "conv": "C1",
+   "turn": 5,
+   "client": "eval-mvvm8z1s-C1",
+   "transcript": "Thanks Vale, that is all for now",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "You're welcome. Talk soon.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 1598,
+   "totalClientMs": 1599
+  },
+  {
+   "conv": "C1",
+   "turn": 6,
+   "client": "eval-mvvm8z1s-C1",
+   "transcript": "Emma, the red color looks great on you",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 15
+  },
+  {
+   "conv": "C2",
+   "turn": 1,
+   "client": "eval-mvvm8z1s-C2",
+   "transcript": "Vale, book an appointment for Liam tomorrow at 3pm for spa pedicure",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I do not find Liam so I would register him and book spa pedicure tomorrow at 3. Should I save it?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 13303,
+   "totalClientMs": 13305
+  },
+  {
+   "conv": "C2",
+   "turn": 2,
+   "client": "eval-mvvm8z1s-C2",
+   "transcript": "yes",
+   "events": [
+    "final",
+    "error",
+    "done"
+   ],
+   "reply": "",
+   "ignored": false,
+   "errorEvent": true,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 10496
+  },
+  {
+   "conv": "C2",
+   "turn": 3,
+   "client": "eval-mvvm8z1s-C2",
+   "transcript": "Vale, what did I just book?",
+   "events": [
+    "final",
+    "error",
+    "done"
+   ],
+   "reply": "",
+   "ignored": false,
+   "errorEvent": true,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 4376
+  },
+  {
+   "conv": "C2",
+   "turn": 4,
+   "client": "eval-mvvm8z1s-C2",
+   "transcript": "Thanks Vale, bye",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Bye, take care.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 1595,
+   "totalClientMs": 1597
+  },
+  {
+   "conv": "C3",
+   "turn": 1,
+   "client": "eval-mvvm8z1s-C3",
+   "transcript": "Vale, open a session with Sofia for acrylic full set",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I don't find Sofia on your cards. Should I register her and open the acrylic session?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 10716,
+   "totalClientMs": 10717
+  },
+  {
+   "conv": "C3",
+   "turn": 2,
+   "client": "eval-mvvm8z1s-C3",
+   "transcript": "add a note for Sofia: she is sensitive to strong primer smell",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I'd register Sofia and save that as a private note. Should I save it?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 10061,
+   "totalClientMs": 10062
+  },
+  {
+   "conv": "C3",
+   "turn": 3,
+   "client": "eval-mvvm8z1s-C3",
+   "transcript": "what service did I open for her?",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "No session is open for Sofia yet since I did not find her card.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 8666,
+   "totalClientMs": 8668
+  },
+  {
+   "conv": "C3",
+   "turn": 4,
+   "client": "eval-mvvm8z1s-C3",
+   "transcript": "Vale, add top coat to the shopping list",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Done, top coat is on your list.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 11979,
+   "totalClientMs": 11980
+  },
+  {
+   "conv": "C3",
+   "turn": 5,
+   "client": "eval-mvvm8z1s-C3",
+   "transcript": "close the session",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 7
+  },
+  {
+   "conv": "C3",
+   "turn": 6,
+   "client": "eval-mvvm8z1s-C3",
+   "transcript": "Sofia, see you next month",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 3
+  },
+  {
+   "conv": "C4",
+   "turn": 1,
+   "client": "eval-mvvm8z1s-C4",
+   "transcript": "Vale, open a session with Nina for gel refill",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I don't find Nina on your cards, I would register her for a gel refill. Should I save it?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 10801,
+   "totalClientMs": 10802
+  },
+  {
+   "conv": "C4",
+   "turn": 2,
+   "client": "eval-mvvm8z1s-C4",
+   "transcript": "Nina, let me get you some water",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Hey, I'm here with you.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 8677,
+   "totalClientMs": 8678
+  },
+  {
+   "conv": "C4",
+   "turn": 3,
+   "client": "eval-mvvm8z1s-C4",
+   "transcript": "Vale, add a note for Nina: she prefers morning appointments",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I don't find Nina, I would create her card and save that morning note. Should I save it?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 21742,
+   "totalClientMs": 21743
+  },
+  {
+   "conv": "C4",
+   "turn": 4,
+   "client": "eval-mvvm8z1s-C4",
+   "transcript": "Let me add a bit more top coat",
+   "events": [
+    "final",
+    "error",
+    "done"
+   ],
+   "reply": "",
+   "ignored": false,
+   "errorEvent": true,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 3627
+  },
+  {
+   "conv": "C4",
+   "turn": 5,
+   "client": "eval-mvvm8z1s-C4",
+   "transcript": "The television is very loud today",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Hey, I am here.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 2109,
+   "totalClientMs": 2110
+  },
+  {
+   "conv": "C4",
+   "turn": 6,
+   "client": "eval-mvvm8z1s-C4",
+   "transcript": "Vale, close the session",
+   "events": [
+    "final",
+    "error",
+    "done"
+   ],
+   "reply": "",
+   "ignored": false,
+   "errorEvent": true,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 2186
+  },
+  {
+   "conv": "C5",
+   "turn": 1,
+   "client": "eval-mvvm8z1s-C5",
+   "transcript": "Vale, open a session with Emma.",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Which service should I do for Emma?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 2138,
+   "totalClientMs": 2138
+  },
+  {
+   "conv": "C5",
+   "turn": 2,
+   "client": "eval-mvvm8z1s-C5",
+   "transcript": "Balle, repeat that please.",
+   "events": [
+    "final",
+    "error",
+    "done"
+   ],
+   "reply": "",
+   "ignored": false,
+   "errorEvent": true,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 1506
+  },
+  {
+   "conv": "C5",
+   "turn": 3,
+   "client": "eval-mvvm8z1s-C5",
+   "transcript": "Vale? Yes, confirm it.",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Got it. What am I confirming for you?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 1805,
+   "totalClientMs": 1806
+  },
+  {
+   "conv": "C5",
+   "turn": 4,
+   "client": "eval-mvvm8z1s-C5",
+   "transcript": "Thanks, Bali. That's all.",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "You're welcome. Take care.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 8409,
+   "totalClientMs": 8411
+  },
+  {
+   "conv": "C6",
+   "turn": 1,
+   "client": "eval-mvvm8z1s-C6",
+   "transcript": "Vale, what can you do?",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I open timed sessions, save notes on your card, keep the shopping list, and register new clients and supplies. No prices or appointments yet.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 1313,
+   "totalClientMs": 1314
+  },
+  {
+   "conv": "C6",
+   "turn": 2,
+   "client": "eval-mvvm8z1s-C6",
+   "transcript": "Vale, read the shopping list",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "You have top coat on the shopping list.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 20425,
+   "totalClientMs": 20426
+  },
+  {
+   "conv": "C6",
+   "turn": 3,
+   "client": "eval-mvvm8z1s-C6",
+   "transcript": "Vale, add nail files to the shopping list",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I would add nail files to the shopping list. Should I save it?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 10339,
+   "totalClientMs": 10339
+  },
+  {
+   "conv": "C6",
+   "turn": 4,
+   "client": "eval-mvvm8z1s-C6",
+   "transcript": "Let's book you again next month",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I do not book appointments yet. Shall I open you a nail session instead",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 10079,
+   "totalClientMs": 10079
+  },
+  {
+   "conv": "C6",
+   "turn": 5,
+   "client": "eval-mvvm8z1s-C6",
+   "transcript": "Thanks Vale",
+   "events": [
+    "final",
+    "error",
+    "done"
+   ],
+   "reply": "",
+   "ignored": false,
+   "errorEvent": true,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 1488
+  },
+  {
+   "conv": "C7",
+   "turn": 1,
+   "client": "eval-mvvm8z1s-C7",
+   "transcript": "Vale, find client Olivia",
+   "events": [
+    "final",
+    "error",
+    "done"
+   ],
+   "reply": "",
+   "ignored": false,
+   "errorEvent": true,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 3338
+  },
+  {
+   "conv": "C7",
+   "turn": 2,
+   "client": "eval-mvvm8z1s-C7",
+   "transcript": "Vale, open a session with Olivia for gel refill",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I don't have Olivia yet, I would register her and open the gel refill. Should I save it?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 9586,
+   "totalClientMs": 9587
+  },
+  {
+   "conv": "C7",
+   "turn": 3,
+   "client": "eval-mvvm8z1s-C7",
+   "transcript": "Vale, add a note for Olivia: her wedding is next Saturday",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I don't find Olivia so I would create her card and save that note. Should I save it?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 12871,
+   "totalClientMs": 12872
+  },
+  {
+   "conv": "C7",
+   "turn": 4,
+   "client": "eval-mvvm8z1s-C7",
+   "transcript": "Which client did I just open a session for?",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I do not see a session open right now.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 3708,
+   "totalClientMs": 3709
+  },
+  {
+   "conv": "C7",
+   "turn": 5,
+   "client": "eval-mvvm8z1s-C7",
+   "transcript": "What did I note about her?",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 7
+  },
+  {
+   "conv": "C7",
+   "turn": 6,
+   "client": "eval-mvvm8z1s-C7",
+   "transcript": "Thanks Vale, bye",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Bye, take care.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 7898,
+   "totalClientMs": 7899
+  },
+  {
+   "conv": "C8",
+   "turn": 1,
+   "client": "eval-mvvm8z1s-C8",
+   "transcript": "Vale, book an appointment for Mia on Friday at 4pm for gel refill",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I don't have Mia on file yet. Should I register her and book the gel refill for Friday at 4?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 11832,
+   "totalClientMs": 11833
+  },
+  {
+   "conv": "C8",
+   "turn": 2,
+   "client": "eval-mvvm8z1s-C8",
+   "transcript": "Vale, what appointments do I have?",
+   "events": [
+    "final",
+    "error",
+    "done"
+   ],
+   "reply": "",
+   "ignored": false,
+   "errorEvent": true,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 5914
+  },
+  {
+   "conv": "C8",
+   "turn": 3,
+   "client": "eval-mvvm8z1s-C8",
+   "transcript": "Vale, add a note for Mia: she is running ten minutes late",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I would create Mia's card to save she is running ten minutes late. Should I save it?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 11461,
+   "totalClientMs": 11463
+  },
+  {
+   "conv": "C8",
+   "turn": 4,
+   "client": "eval-mvvm8z1s-C8",
+   "transcript": "I'll note your next appointment on my phone",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "There is no one else scheduled today.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 12538,
+   "totalClientMs": 12539
+  },
+  {
+   "conv": "C8",
+   "turn": 5,
+   "client": "eval-mvvm8z1s-C8",
+   "transcript": "Mia, sorry for the wait",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 2
+  },
+  {
+   "conv": "C8",
+   "turn": 6,
+   "client": "eval-mvvm8z1s-C8",
+   "transcript": "Thanks Vale, bye",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Bye, take care.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 1078,
+   "totalClientMs": 1079
+  },
+  {
+   "conv": "C9",
+   "turn": 1,
+   "client": "eval-mvvm8z1s-C9",
+   "transcript": "Hello?",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 5
+  },
+  {
+   "conv": "C9",
+   "turn": 2,
+   "client": "eval-mvvm8z1s-C9",
+   "transcript": "Vale, hi there",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Hi, how is it going?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 894,
+   "totalClientMs": 894
+  },
+  {
+   "conv": "C9",
+   "turn": 3,
+   "client": "eval-mvvm8z1s-C9",
+   "transcript": "Is anyone there?",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Hey, I'm here.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 9129,
+   "totalClientMs": 9130
+  },
+  {
+   "conv": "C9",
+   "turn": 4,
+   "client": "eval-mvvm8z1s-C9",
+   "transcript": "Vale, what time is it?",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Hi, how is it going?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 3416,
+   "totalClientMs": 3417
+  },
+  {
+   "conv": "C9",
+   "turn": 5,
+   "client": "eval-mvvm8z1s-C9",
+   "transcript": "Okay thanks, bye Vale",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Bye, take care.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 8627,
+   "totalClientMs": 8628
+  },
+  {
+   "conv": "C10",
+   "turn": 1,
+   "client": "eval-mvvm8z1s-C10",
+   "transcript": "Vale, open a session with Zoe for acrylic full set",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "I don't find Zoe. I would register her and open the acrylic set, should I save it?",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 9470,
+   "totalClientMs": 9471
+  },
+  {
+   "conv": "C10",
+   "turn": 2,
+   "client": "eval-mvvm8z1s-C10",
+   "transcript": "Vale, add a note for Zoe: first acrylic set, keep it short",
+   "events": [
+    "final",
+    "error",
+    "done"
+   ],
+   "reply": "",
+   "ignored": false,
+   "errorEvent": true,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 5108
+  },
+  {
+   "conv": "C10",
+   "turn": 3,
+   "client": "eval-mvvm8z1s-C10",
+   "transcript": "How long has the session been going?",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Sorry, I can't see the timer from here.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 1401,
+   "totalClientMs": 1403
+  },
+  {
+   "conv": "C10",
+   "turn": 4,
+   "client": "eval-mvvm8z1s-C10",
+   "transcript": "Vale, close the session",
+   "events": [
+    "final",
+    "error",
+    "done"
+   ],
+   "reply": "",
+   "ignored": false,
+   "errorEvent": true,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 14625
+  },
+  {
+   "conv": "C10",
+   "turn": 5,
+   "client": "eval-mvvm8z1s-C10",
+   "transcript": "How much did I earn?",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 8
+  },
+  {
+   "conv": "C10",
+   "turn": 6,
+   "client": "eval-mvvm8z1s-C10",
+   "transcript": "Thanks Vale, goodbye",
+   "events": [
+    "final",
+    "reply-delta",
+    "reply-delta",
+    "reply",
+    "board",
+    "done"
+   ],
+   "reply": "Bye, see you soon.",
+   "ignored": false,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": 867,
+   "totalClientMs": 869
+  },
+  {
+   "conv": "C11",
+   "turn": 1,
+   "client": "eval-mvvm8z1s-C11",
+   "transcript": "Bale nails are so trendy now.",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 7
+  },
+  {
+   "conv": "C11",
+   "turn": 2,
+   "client": "eval-mvvm8z1s-C11",
+   "transcript": "debale brought my car around..",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 10
+  },
+  {
+   "conv": "C11",
+   "turn": 3,
+   "client": "eval-mvvm8z1s-C11",
+   "transcript": "Bale broke a nail again.",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 5
+  },
+  {
+   "conv": "C11",
+   "turn": 4,
+   "client": "eval-mvvm8z1s-C11",
+   "transcript": "Well, I think we are done here",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 3
+  },
+  {
+   "conv": "C11",
+   "turn": 5,
+   "client": "eval-mvvm8z1s-C11",
+   "transcript": "Available slots are filling fast.",
+   "events": [
+    "final",
+    "ignored",
+    "done"
+   ],
+   "reply": "",
+   "ignored": true,
+   "errorEvent": false,
+   "httpError": null,
+   "ttftClientMs": null,
+   "totalClientMs": 4
+  }
+ ]
+}

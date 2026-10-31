@@ -53,6 +53,7 @@ describe("empty turns stay hidden (fix 1)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {
@@ -97,6 +98,7 @@ describe("empty turns stay hidden (fix 1)", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {

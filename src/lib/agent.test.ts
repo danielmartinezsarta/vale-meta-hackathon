@@ -145,6 +145,46 @@ describe("agent turn with tools", () => {
     db.close();
   });
 
+  it("resends the call with its output on the second round, chainless", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(
+          JSON.parse((init as { body: string }).body) as Record<string, unknown>,
+        );
+        if (bodies.length === 1) {
+          return sseResponse([
+            toolCall("resp_1", "read_shopping_list", {}, "call_9"),
+          ]);
+        }
+        return sseResponse([spoken("resp_2", "You have top coat.")]);
+      }),
+    );
+
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "vale, read the shopping list",
+      language: "en",
+      db: freshTestDb(),
+    });
+
+    expect(result.text).toBe("You have top coat.");
+    expect(bodies).toHaveLength(2);
+    const second = bodies[1].input as Record<string, unknown>[];
+    // The prefix resends so the API resolves the call_id without a chain.
+    expect(second[0]).toMatchObject({ type: "message", role: "user" });
+    expect(second[second.length - 2]).toMatchObject({
+      type: "function_call",
+      call_id: "call_9",
+      name: "read_shopping_list",
+    });
+    expect(second[second.length - 1]).toMatchObject({
+      type: "function_call_output",
+      call_id: "call_9",
+    });
+  });
+
   it("answers a successful write without a second model round", async () => {
     const db = freshTestDb();
     const bodies: Record<string, unknown>[] = [];
@@ -372,7 +412,15 @@ describe("agent single attempt", () => {
     expect(JSON.stringify(input[0])).toContain("Vale, open a session for Emma");
     expect(input[1]).toMatchObject({ role: "assistant" });
     expect(JSON.stringify(input[1])).toContain("Which service for Emma?");
-    expect(input[2]).toBe("and the note?");
+    expect(input[2]).toMatchObject({ role: "user" });
+    expect(JSON.stringify(input[2])).toContain("and the note?");
+    // No bare strings: user turns ride input_text, assistant turns output_text.
+    for (const item of input) {
+      expect(typeof item).toBe("object");
+    }
+    expect(JSON.stringify(input[0])).toContain("input_text");
+    expect(JSON.stringify(input[1])).toContain("output_text");
+    expect(JSON.stringify(input[2])).toContain("input_text");
   });
 
   it("injects the known slots into the next turn instead of re-asking", async () => {

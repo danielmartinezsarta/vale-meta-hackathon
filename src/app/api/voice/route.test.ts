@@ -361,7 +361,7 @@ describe("POST /api/voice", () => {
     const text = await POST(request).then((response) => response.text());
     expect(text).toContain("event: final");
     expect(text).toContain("hello, book a gel refill");
-    expect(text).toContain("Perdón, tuve un problema.");
+    expect(text).toContain("Sorry, I had a problem.");
     expect(text).toContain('"code":"E-MODEL"');
     const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
     expect(turns).toHaveLength(1);
@@ -369,6 +369,25 @@ describe("POST /api/voice", () => {
       /model error: 500/,
     );
     spy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("answers the model error in Spanish when language=es", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("nope", { status: 500 })),
+    );
+    const request = new Request(
+      "http://localhost/api/voice?language=es",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ transcript: "vale, hola" }),
+      },
+    );
+    const text = await POST(request).then((response) => response.text());
+    expect(text).toContain("Perdón, tuve un problema.");
+    expect(text).toContain('"code":"E-MODEL"');
     vi.unstubAllGlobals();
   });
 
@@ -382,7 +401,7 @@ describe("POST /api/voice", () => {
     const response = await POST(request);
     expect(response.status).toBe(503);
     const body = (await response.json()) as { error: string };
-    expect(body.error).toMatch(/configurada/i);
+    expect(body.error).toMatch(/set up/i);
     expect(JSON.stringify(body)).not.toMatch(/\n\s*at\s/);
     vi.stubEnv("META_API_KEY", "test-key");
   });
@@ -423,7 +442,7 @@ describe("POST /api/voice", () => {
         duplex: "half",
       }),
     ).then((response) => response.text());
-    expect(text).toContain("agotó");
+    expect(text).toContain("ran out");
     const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
     expect(turns).toHaveLength(1);
     expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({

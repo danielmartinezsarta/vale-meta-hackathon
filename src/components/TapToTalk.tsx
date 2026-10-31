@@ -265,6 +265,8 @@ export function TapToTalk() {
         endFrames: Int16Array[] | null;
         /** Frames with real voice (energy above the VAD threshold). */
         voiced: number;
+        /** Speech started while our reply was audible: buffer until speech end. */
+        echoSuspect: boolean;
       }
       const transports = new Map<number, TurnTransport>();
 
@@ -381,6 +383,7 @@ export function TapToTalk() {
           postRetried: false,
           endFrames: null,
           voiced: 0,
+          echoSuspect: false,
         });
         setTurns((prev) => [
           ...prev,
@@ -842,6 +845,8 @@ export function TapToTalk() {
             if (transport && !transport.failed) {
               if (countVoiced(frame)) transport.voiced += 1;
               transport.frames.push(frame.slice());
+              // Possible echo: hold it back so a dropped turn sends nothing.
+              if (transport.echoSuspect) return;
               if (
                 convOpen &&
                 convSocket &&
@@ -888,6 +893,9 @@ export function TapToTalk() {
             }
             // A new utterance after a posted turn opens the next turn on the same capture.
             if (posted) openTurn(false);
+            // Speech over our own reply is echo until speech end proves otherwise.
+            const suspect = transports.get(currentId);
+            if (suspect) suspect.echoSuspect = echo;
             // Without a conversation socket, open one per turn so the
             // ~0.9 s handshake hides inside the utterance.
             if (!convOpen) openTurnSocket(currentId);
@@ -899,6 +907,35 @@ export function TapToTalk() {
             if (isSpeaking()) {
               dropEchoTurn(currentId);
               return;
+            }
+            // The reply ended mid-utterance: the user barged in, so flush
+            // what the echo guard held back, then end the turn as usual.
+            const held = transports.get(currentId);
+            if (held && held.echoSuspect) {
+              held.echoSuspect = false;
+              if (
+                convOpen &&
+                convSocket &&
+                convSocket.readyState === WebSocket.OPEN
+              ) {
+                try {
+                  for (const frame of held.frames)
+                    sendFrameBytes(convSocket, frame);
+                  held.conv = true;
+                } catch {
+                  /* endTurnTransport falls back to POST */
+                }
+              } else {
+                const socket = held.socket;
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                  try {
+                    for (const frame of held.frames)
+                      sendFrameBytes(socket, frame);
+                  } catch {
+                    /* endTurnTransport falls back to POST */
+                  }
+                }
+              }
             }
             endTurnTransport(currentId);
           },

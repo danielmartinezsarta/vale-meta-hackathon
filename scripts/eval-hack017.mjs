@@ -20,30 +20,41 @@ if (!server || !convFile) {
 const convs = JSON.parse(readFileSync(convFile, "utf8")).conversations;
 
 // Fresh database with the minimum invented catalog a session needs.
-rmSync(join(root, "data", "vale.db"), { force: true });
-{
-  const { mkdirSync } = await import("node:fs");
-  mkdirSync(join(root, "data"), { recursive: true });
+// --no-reset skips this when the server under test already holds the file:
+// deleting it under a live server orphans its handle and every write fails.
+const noReset = process.argv.includes("--no-reset");
+if (!noReset) {
+  rmSync(join(root, "data", "vale.db"), { force: true });
+  {
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(root, "data"), { recursive: true });
+  }
 }
 const db = new DatabaseSync(join(root, "data", "vale.db"));
-db.exec(readFileSync(join(root, "src", "lib", "schema.sql"), "utf8"));
+if (!noReset) {
+  db.exec(readFileSync(join(root, "src", "lib", "schema.sql"), "utf8"));
+}
 const addService = db.prepare(
   "INSERT INTO services (name, es, aliases, price_cents, duration_min) VALUES (?, '', '[]', ?, ?)",
 );
-addService.run("Gel refill", 4500, 75);
-addService.run("Spa pedicure", 6000, 60);
-addService.run("Acrylic full set", 8500, 120);
+if (!noReset) {
+  addService.run("Gel refill", 4500, 75);
+  addService.run("Spa pedicure", 6000, 60);
+  addService.run("Acrylic full set", 8500, 120);
+}
 const addSupply = db.prepare(
   "INSERT INTO supplies (name, es, aliases, unit, content_per_product, stock_qty, min_qty, price_per_product_usd) VALUES (?, '', '[]', 'pcs', 1, 10, 2, 5)",
 );
-addSupply.run("Top coat");
-addSupply.run("Nail file");
-addSupply.run("Acetone");
-// English clients the conversations book for, so writes really happen.
-// One conversation (C9, Chloe) keeps a new client to measure doubt->confirm.
-const addClient = db.prepare("INSERT INTO clients (name) VALUES (?)");
-for (const name of ["Emma", "Liam", "Sofia", "Nina", "Ava", "Olivia", "Mia", "Zoe"]) {
-  addClient.run(name);
+if (!noReset) {
+  addSupply.run("Top coat");
+  addSupply.run("Nail file");
+  addSupply.run("Acetone");
+  // English clients the conversations book for, so writes really happen.
+  // One conversation (C9, Chloe) keeps a new client to measure doubt->confirm.
+  const addClient = db.prepare("INSERT INTO clients (name) VALUES (?)");
+  for (const name of ["Emma", "Liam", "Sofia", "Nina", "Ava", "Olivia", "Mia", "Zoe"]) {
+    addClient.run(name);
+  }
 }
 db.close();
 

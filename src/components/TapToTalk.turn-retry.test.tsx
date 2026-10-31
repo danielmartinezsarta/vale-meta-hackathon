@@ -124,12 +124,18 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
       expect(driver).not.toBeNull();
     });
 
-    driver!.onFrame(speechFrame());
-    driver!.onSpeechStart();
+    // /voice is down: the turns fall back to one bridge socket per turn.
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
-    const first = FakeWs.instances[0];
+    FakeWs.instances[0].drop();
+
+    driver!.onFrame(speechFrame());
+    driver!.onSpeechStart();
+    await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(2);
+    });
+    const first = FakeWs.instances[1];
     first.open();
     driver!.onFrame(speechFrame());
     driver!.onSpeechEnd();
@@ -147,9 +153,9 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
     driver!.onFrame(speechFrame());
     driver!.onSpeechStart();
     await waitFor(() => {
-      expect(FakeWs.instances).toHaveLength(2);
+      expect(FakeWs.instances).toHaveLength(3);
     });
-    const second = FakeWs.instances[1];
+    const second = FakeWs.instances[2];
     second.open();
     driver!.onFrame(speechFrame());
     driver!.onSpeechEnd();
@@ -162,11 +168,11 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
     second.drop();
     await waitFor(
       () => {
-        expect(FakeWs.instances).toHaveLength(3);
+        expect(FakeWs.instances).toHaveLength(4);
       },
       { timeout: 3000 },
     );
-    const third = FakeWs.instances[2];
+    const third = FakeWs.instances[3];
     third.open();
     third.drop();
 

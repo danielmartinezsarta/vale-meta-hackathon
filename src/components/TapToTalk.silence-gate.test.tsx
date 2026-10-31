@@ -91,6 +91,7 @@ describe("silence-aware E-VAD banner (fix 3)", () => {
     stubSessionOnce();
 
     render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();

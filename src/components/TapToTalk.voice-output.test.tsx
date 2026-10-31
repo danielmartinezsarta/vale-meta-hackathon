@@ -40,10 +40,21 @@ class FakeWs {
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: (() => void) | null = null;
-  constructor() {
+  sent: unknown[] = [];
+  url: string;
+  constructor(url = "") {
+    this.url = url;
     FakeWs.instances.push(this);
   }
-  send(): void {}
+  send(data: unknown): void {
+    this.sent.push(data);
+  }
+  sentStrings(): string[] {
+    return this.sent.filter((item) => typeof item === "string") as string[];
+  }
+  sentBinaryCount(): number {
+    return this.sent.filter((item) => item instanceof ArrayBuffer).length;
+  }
   close(): void {
     this.readyState = 3;
     this.onclose?.();
@@ -88,16 +99,18 @@ describe("browser voice output", () => {
     });
 
     render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
     });
-    driver!.onSpeechStart();
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
+    // The conversation socket is up before speech: no per-turn socket.
+    FakeWs.instances[0].open();
+    driver!.onSpeechStart();
     const ws = FakeWs.instances[0];
-    ws.open();
     driver!.onSpeechEnd();
 
     // Deltas paint the screen and stream to the speaker at once.
@@ -194,17 +207,20 @@ describe("voice engine switch", () => {
     });
 
     render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
     });
-    driver!.onSpeechStart();
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
+    // The conversation socket is up before speech: no per-turn socket.
+    FakeWs.instances[0].open();
+    driver!.onSpeechStart();
     const ws = FakeWs.instances[0];
-    ws.open();
     driver!.onSpeechEnd();
     ws.serverMessage({ type: "reply", text: "Sesión abierta." });
     await waitFor(() => {
@@ -228,16 +244,18 @@ describe("voice engine switch", () => {
     });
 
     render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
     });
-    driver!.onSpeechStart();
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
+    // The conversation socket is up before speech: no per-turn socket.
+    FakeWs.instances[0].open();
+    driver!.onSpeechStart();
     const ws = FakeWs.instances[0];
-    ws.open();
     driver!.onSpeechEnd();
     ws.serverMessage({ type: "transcript", transcript: "ruido", final: true });
     ws.serverMessage({ type: "ignored" });
@@ -265,16 +283,18 @@ describe("voice engine switch", () => {
     });
 
     render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
     });
-    driver!.onSpeechStart();
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
+    // The conversation socket is up before speech: no per-turn socket.
+    FakeWs.instances[0].open();
+    driver!.onSpeechStart();
     const ws = FakeWs.instances[0];
-    ws.open();
     driver!.onSpeechEnd();
     ws.serverMessage({ type: "transcript", transcript: "vale, hola", final: true });
     ws.serverMessage({ type: "reply", text: "Hola, soy Vale." });
@@ -312,17 +332,20 @@ describe("voice engine switch", () => {
     });
 
     render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
     });
-    driver!.onSpeechStart();
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
+    // The conversation socket is up before speech: no per-turn socket.
+    FakeWs.instances[0].open();
+    driver!.onSpeechStart();
     const ws = FakeWs.instances[0];
-    ws.open();
     driver!.onSpeechEnd();
     ws.serverMessage({ type: "reply", text: "Te escucho." });
     await waitFor(() => {
@@ -338,10 +361,20 @@ describe("voice engine switch", () => {
 
     // The echo ends with the reply still playing: echo turn dropped silently,
     // the original reply untouched, nothing new spoken.
+    const endStreamsBefore = ws
+      .sentStrings()
+      .filter((raw) => raw.includes("endStream")).length;
+    const binaryBefore = ws.sentBinaryCount();
     driver!.onSpeechEnd();
     await waitFor(() => {
-      expect(FakeWs.instances[1].readyState).toBe(3);
+      expect(screen.getByText("Te escucho.")).toBeDefined();
     });
+    // No second socket, and the held-back echo never reached the wire.
+    expect(FakeWs.instances).toHaveLength(1);
+    expect(
+      ws.sentStrings().filter((raw) => raw.includes("endStream")),
+    ).toHaveLength(endStreamsBefore);
+    expect(ws.sentBinaryCount()).toBe(binaryBefore);
     expect(screen.getByText("Te escucho.")).toBeDefined();
     expect(mockSpeak).not.toHaveBeenCalled();
     expect(mockStopSpeaking).not.toHaveBeenCalled();

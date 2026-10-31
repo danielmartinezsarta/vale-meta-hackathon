@@ -27,6 +27,7 @@ describe("microphone permission", () => {
     render(<TapToTalk />);
     expect(getUserMedia).not.toHaveBeenCalled();
 
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {

@@ -511,7 +511,12 @@ export async function POST(request: Request): Promise<Response> {
         send("done", {});
         clearTimeout(timeout);
         closeStream();
-      } catch {
+      } catch (error) {
+        // The client only sees E-NET; the cause stays in the server log.
+        console.error(
+          "[voice] turn failed:",
+          error instanceof Error ? (error.stack ?? error.message) : error,
+        );
         if (!settled) finishError(turnErrorText("lost", language), "E-NET");
       } finally {
         clearTimeout(timeout);

@@ -35,16 +35,16 @@ describe("TapToTalk smoke", () => {
 
     const es = screen.getByRole("button", { name: "ES" });
     const en = screen.getByRole("button", { name: "EN" });
-    expect(es.getAttribute("aria-pressed")).toBe("true");
-    expect(es.style.fontWeight).toBe("bold");
-    expect(en.getAttribute("aria-pressed")).toBe("false");
-    expect(en.style.fontWeight).not.toBe("bold");
-
-    fireEvent.click(en);
     expect(en.getAttribute("aria-pressed")).toBe("true");
     expect(en.style.fontWeight).toBe("bold");
     expect(es.getAttribute("aria-pressed")).toBe("false");
     expect(es.style.fontWeight).not.toBe("bold");
+
+    fireEvent.click(es);
+    expect(es.getAttribute("aria-pressed")).toBe("true");
+    expect(es.style.fontWeight).toBe("bold");
+    expect(en.getAttribute("aria-pressed")).toBe("false");
+    expect(en.style.fontWeight).not.toBe("bold");
 
     vi.unstubAllGlobals();
   });

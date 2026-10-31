@@ -116,7 +116,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     expect(ws.url).toContain("/voice");
     ws.open();
     expect(ws.sentStrings()).toContain(
-      JSON.stringify({ type: "language", language: "es" }),
+      JSON.stringify({ type: "language", language: "en" }),
     );
     expect(ws.sentStrings()).toContain(JSON.stringify({ type: "wake" }));
 
@@ -160,7 +160,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("sends the selector language when the socket opens, ES by default", async () => {
+  it("sends the selector language when the socket opens, EN by default", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
@@ -179,12 +179,12 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     });
     FakeWs.instances[0].open();
     expect(FakeWs.instances[0].sentStrings()).toContain(
-      JSON.stringify({ type: "language", language: "es" }),
+      JSON.stringify({ type: "language", language: "en" }),
     );
 
-    // Switch to English and tap again: the new session socket carries EN.
+    // Switch to Spanish and tap again: the new session socket carries ES.
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-    fireEvent.click(screen.getByRole("button", { name: "EN" }));
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -194,7 +194,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     });
     FakeWs.instances[1].open();
     expect(FakeWs.instances[1].sentStrings()).toContain(
-      JSON.stringify({ type: "language", language: "en" }),
+      JSON.stringify({ type: "language", language: "es" }),
     );
   });
 

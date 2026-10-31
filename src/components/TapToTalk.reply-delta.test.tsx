@@ -91,13 +91,14 @@ describe("reply streaming (transient output fix)", () => {
     await waitFor(() => {
       expect(driver).not.toBeNull();
     });
-    driver!.onFrame(speechFrame());
-    driver!.onSpeechStart();
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
+    // The conversation socket is up before speech: no per-turn socket.
+    FakeWs.instances[0].open();
     const ws = FakeWs.instances[0];
-    ws.open();
+    driver!.onFrame(speechFrame());
+    driver!.onSpeechStart();
     driver!.onSpeechEnd();
 
     ws.serverMessage({ type: "transcript", transcript: "five november", final: true });

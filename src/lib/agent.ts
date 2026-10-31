@@ -85,6 +85,9 @@ export interface AgentResult {
 
 /** One history turn as a Responses input message. */
 function historyItem(turn: HistoryTurn): Record<string, unknown> {
+  // The API takes input_text on user messages and output_text on assistant
+  // ones (probed 2026-10-31: input_text on assistant is a 400); the role
+  // tells them apart either way.
   return turn.role === "user"
     ? {
         type: "message",
@@ -353,9 +356,14 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
 
   // Explicit memory: the last turns travel in the input, oldest first.
   // No response chains, no retries: a failure surfaces as E-MODEL at once.
+  // Every item is an object: a bare string is only valid as the whole input.
   let input: unknown = [
     ...(options.history ?? []).map(historyItem),
-    options.transcript,
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: options.transcript }],
+    },
   ];
   let text = "";
   let toolUsed: string | null = null;
@@ -417,7 +425,16 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       text = toolResult.message;
       break;
     }
+    // Chainless second round: resend the full prefix so the API can
+    // resolve the call_id (a lone function_call_output is a 400).
     input = [
+      ...(input as unknown[]),
+      {
+        type: "function_call",
+        call_id: call.callId,
+        name: call.name,
+        arguments: call.args,
+      },
       {
         type: "function_call_output",
         call_id: call.callId,
