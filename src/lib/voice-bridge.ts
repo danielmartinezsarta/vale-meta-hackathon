@@ -22,6 +22,7 @@ import { getSlots } from "./slot-memory";
 import { getOpenSession } from "./vale-tools";
 import type { Widget } from "./widget";
 import {
+  clarifyText,
   declineText,
   DEFAULT_LANGUAGE,
   parseLanguage,
@@ -466,75 +467,80 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   };
 
   // Touch on a confirm card: the exact equivalent of a spoken yes/no.
-  // No model, no ASR: yes runs the stored writes, no declines them.
+  // No model, no ASR: yes runs the stored writes, no declines them, and a
+  // yes with nothing stored clarifies (never repeats the last write).
   const answerVote = async (vote: "yes" | "no"): Promise<void> => {
     const at = now();
     const ts = new Date(at).toISOString();
+    const answerCanned = (transcript: string, said: string) => {
+      recordTurn(getDb(), clientId, "user", transcript);
+      recordTurn(getDb(), clientId, "vale", said, null);
+      sendJson(browser, { type: "reply", text: said });
+      noteAttention(clientId);
+      sendJson(browser, { type: "board", board: getBoard(getDb()) });
+      sendJson(browser, { type: "widget", widget: null });
+      logTurn({
+        ts,
+        transcript,
+        ttftMs: Date.now() - at,
+        inputTokens: 0,
+        outputTokens: 0,
+        audioSeconds: 0,
+        tool: null,
+        modelSkipped: true,
+        error: null,
+        ignored: false,
+        asrMs: null,
+        chain: "none",
+        key: clientId,
+        slots: slotSnapshot(),
+        gate: null,
+        sinceReplyS: null,
+        totalMs: Date.now() - at,
+      });
+      sendJson(browser, { type: "done" });
+      finish(1000, "turn-complete");
+    };
     if (vote === "yes") {
       const actions = takePendingAction(clientId);
-      if (actions) {
-        const executed = runPendingActions(getDb(), clientId, actions, turnLanguage);
-        recordTurn(getDb(), clientId, "user", "yes");
-        recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
-        sendJson(browser, { type: "reply", text: executed.text });
-        noteAttention(clientId);
-        sendJson(browser, { type: "board", board: getBoard(getDb()) });
-        // The proposal is decided: the card goes away.
-        sendJson(browser, { type: "widget", widget: null });
-        logTurn({
-          ts,
-          transcript: "yes",
-          ttftMs: Date.now() - at,
-          inputTokens: 0,
-          outputTokens: 0,
-          audioSeconds: 0,
-          tool: executed.toolUsed,
-          modelSkipped: true,
-          error: null,
-          ignored: false,
-          asrMs: null,
-          chain: "none",
-          key: clientId,
-          slots: slotSnapshot(),
-          gate: null,
-          sinceReplyS: null,
-          totalMs: Date.now() - at,
-        });
-        sendJson(browser, { type: "done" });
-        finish(1000, "turn-complete");
+      if (!actions) {
+        await answerCanned("yes", clarifyText(turnLanguage));
         return;
       }
+      const executed = runPendingActions(getDb(), clientId, actions, turnLanguage);
+      recordTurn(getDb(), clientId, "user", "yes");
+      recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
+      sendJson(browser, { type: "reply", text: executed.text });
+      noteAttention(clientId);
+      sendJson(browser, { type: "board", board: getBoard(getDb()) });
+      // The proposal is decided: the card goes away.
+      sendJson(browser, { type: "widget", widget: null });
+      logTurn({
+        ts,
+        transcript: "yes",
+        ttftMs: Date.now() - at,
+        inputTokens: 0,
+        outputTokens: 0,
+        audioSeconds: 0,
+        tool: executed.toolUsed,
+        modelSkipped: true,
+        error: null,
+        ignored: false,
+        asrMs: null,
+        chain: "none",
+        key: clientId,
+        slots: slotSnapshot(),
+        gate: null,
+        sinceReplyS: null,
+        totalMs: Date.now() - at,
+      });
+      sendJson(browser, { type: "done" });
+      finish(1000, "turn-complete");
+      return;
     }
-    // No proposal, or a no: nothing writes, the card goes away.
+    // A no: nothing writes, the card goes away.
     clearPendingAction(clientId);
-    const said = declineText(turnLanguage);
-    recordTurn(getDb(), clientId, "user", "no");
-    recordTurn(getDb(), clientId, "vale", said, null);
-    sendJson(browser, { type: "reply", text: said });
-    noteAttention(clientId);
-    sendJson(browser, { type: "board", board: getBoard(getDb()) });
-    sendJson(browser, { type: "widget", widget: null });
-    logTurn({
-      ts,
-      transcript: "no",
-      ttftMs: Date.now() - at,
-      inputTokens: 0,
-      outputTokens: 0,
-      audioSeconds: 0,
-      tool: null,
-      modelSkipped: true,
-      error: null,
-      ignored: false,
-      asrMs: null,
-      chain: "none",
-      key: clientId,
-      slots: slotSnapshot(),
-      gate: null,
-      sinceReplyS: null,
-      totalMs: Date.now() - at,
-    });
-    sendJson(browser, { type: "done" });
-    finish(1000, "turn-complete");
+    await answerCanned("no", declineText(turnLanguage));
   };
 
   const answerTranscript = async (

@@ -861,6 +861,36 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     browser.close(1000, "test done");
   });
 
+  it("clarifies a touch yes with nothing pending instead of writing", async () => {
+    const agent = vi.fn(fakeAgent());
+    const browser = new FakeBrowser();
+    attachVoiceBridge({
+      browser: browser as unknown as WebSocket,
+      key: "test-key",
+      clientId: "conv-vote-bare",
+      metaUrl: url,
+      runAgent: agent,
+      conversation: true,
+    });
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+    browser.peerMessage(
+      Buffer.from(JSON.stringify({ type: "vote", vote: "yes" })),
+    );
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some(
+          (frame) => frame.type === "reply" && frame.text === "What would you like me to confirm?",
+        ),
+      ).toBe(true);
+    });
+    expect(agent).not.toHaveBeenCalled();
+    browser.close(1000, "test done");
+  });
+
   it("declines without writing on a no vote", async () => {
     const agent = vi.fn(fakeAgent());
     const { setPendingAction } = await import("./pending-action");

@@ -6,10 +6,12 @@ import {
   runValeTool,
 } from "./vale-tools";
 import { DEFAULT_USER_NAME, getDb, userName, type HistoryTurn, type ValeDb } from "./db";
-import { DEFAULT_LANGUAGE, type ValeLanguage } from "./vale-language";
+import { DEFAULT_LANGUAGE, clarifyText, type ValeLanguage } from "./vale-language";
 import {
   buildPendingActions,
   clearPendingAction,
+  isConfirmYes,
+  peekPendingAction,
   pendingConfirmTitle,
   setPendingAction,
 } from "./pending-action";
@@ -417,6 +419,17 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   const db = options.db ?? getDb();
   const language = options.language ?? DEFAULT_LANGUAGE;
   const slotKey = options.slotKey ?? "local";
+  // A yes with nothing stored never reaches the model: it can only confirm
+  // a proposal, and repeating the last write is the E5 duplicate-note bug.
+  if (isConfirmYes(options.transcript) && !peekPendingAction(slotKey)) {
+    return {
+      text: clarifyText(language),
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+      toolUsed: null,
+      firstTokenMs: null,
+      widget: null,
+    };
+  }
   // Stable base first, volatile facts last: Meta's prefix cache holds the
   // base across turns while the date, name, slots and session ride at the end.
   const instructions = [

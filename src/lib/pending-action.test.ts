@@ -7,6 +7,7 @@ import {
   isConfirmYes,
   pendingConfirmTitle,
   runPendingActions,
+  peekPendingAction,
   setPendingAction,
   takePendingAction,
 } from "./pending-action";
@@ -199,5 +200,15 @@ describe("pending action", () => {
       ),
     ).toBe("¿Abro sesión con Ana de Gel refill?");
     expect(pendingConfirmTitle([], "en")).toBe("Should I save it?");
+  });
+
+  it("peeks without consuming and forgets stale proposals", () => {
+    setPendingAction("pend-peek", [{ tool: "create_client", args: { name: "Noa" } }], 1000);
+    expect(peekPendingAction("pend-peek", 2000)).toBe(true);
+    expect(takePendingAction("pend-peek", 2000)).toHaveLength(1);
+    expect(peekPendingAction("pend-peek", 2000)).toBe(false);
+    setPendingAction("pend-peek-stale", [{ tool: "create_client", args: { name: "Noa" } }], 1000);
+    expect(peekPendingAction("pend-peek-stale", 1000 + 60_000)).toBe(false);
+    expect(takePendingAction("pend-peek-stale", 1000 + 60_000)).toBeUndefined();
   });
 });

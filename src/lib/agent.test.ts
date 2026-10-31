@@ -781,4 +781,21 @@ describe("closed reply language", () => {
     });
     clearPendingAction("pend-agent-widget");
   });
+
+  it("clarifies a bare yes with nothing pending instead of rewriting", async () => {
+    const modelFetch = vi.fn(async () => sseResponse([spoken("resp_x", "Done.")]));
+    vi.stubGlobal("fetch", modelFetch);
+    const db = freshTestDb();
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "sí",
+      language: "es",
+      slotKey: "pend-bare-yes",
+      db,
+    });
+    expect(result.text).toBe("¿Qué quieres que confirme?");
+    expect(result.toolUsed).toBeNull();
+    expect(modelFetch).not.toHaveBeenCalled();
+    db.close();
+  });
 });

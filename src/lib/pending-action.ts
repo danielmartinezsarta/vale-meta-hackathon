@@ -87,6 +87,20 @@ export function pendingConfirmTitle(
   return en ? "Should I save it?" : "¿Lo guardo?";
 }
 
+/** Peek without consuming: a bare yes with nothing stored clarifies instead of calling the model. */
+export function peekPendingAction(
+  key: string,
+  now: number = Date.now(),
+): boolean {
+  const entry = pendingByKey.get(key);
+  if (!entry) return false;
+  if (now - entry.at >= windowMs()) {
+    pendingByKey.delete(key);
+    return false;
+  }
+  return true;
+}
+
 /** Take deletes: a yes consumes its proposal exactly once. */
 export function takePendingAction(
   key: string,

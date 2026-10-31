@@ -64,3 +64,10 @@ export function turnErrorText(
 export function declineText(language: ValeLanguage = DEFAULT_LANGUAGE): string {
   return language === "es" ? "Vale, no lo guardo." : "OK, I won't save it.";
 }
+
+/** A yes with nothing pending: ask what to confirm instead of writing. */
+export function clarifyText(language: ValeLanguage = DEFAULT_LANGUAGE): string {
+  return language === "es"
+    ? "¿Qué quieres que confirme?"
+    : "What would you like me to confirm?";
+}
