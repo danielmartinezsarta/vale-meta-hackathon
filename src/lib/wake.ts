@@ -128,7 +128,7 @@ export function isGreetingOnly(transcript: string): boolean {
   return GREETING_ONLY.test(words.join(" "));
 }
 
-export type WakeGate = "nombre" | "ventana" | "ignorado";
+export type WakeGate = "nombre" | "ventana" | "ignorado" | "eco";
 
 export interface WakeVerdict {
   execute: boolean;

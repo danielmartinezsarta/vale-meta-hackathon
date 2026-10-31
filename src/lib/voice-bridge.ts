@@ -171,6 +171,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   /** A Meta dial is in flight: later audio just buffers behind it. */
   let metaDialPending = false;
+  /** When this turn's voice ended: final minus this is the real ASR time. */
+  let endStreamAt: number | null = null;
   const clearRetry = () => {
     if (retryTimer !== undefined) {
       clearTimeout(retryTimer);
@@ -217,6 +219,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const beginNextTurn = () => {
     metaOpen = false;
     metaDialPending = false;
+    endStreamAt = null;
     gotFinal = false;
     finalText = "";
     audioProcessedMs = null;
@@ -362,7 +365,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   };
 
   // Heard nothing: same gentle notice with or without a Meta round trip.
-  const finishEmptyTurn = (audioSeconds: number) => {
+  const finishEmptyTurn = (audioSeconds: number, asrMs: number | null = null) => {
     const at = now();
     sendJson(browser, {
       type: "transcript",
@@ -386,7 +389,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       modelSkipped: true,
       error: null,
       ignored: false,
-      asrMs: null,
+      asrMs,
       chain: "none",
       key: clientId,
       slots: null,
@@ -398,10 +401,54 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     finish(1000, "turn-complete");
   };
 
+  /** Latest thing Vale said to this client: the echo test compares against it. */
+  const lastValeReply = (): string | null => {
+    try {
+      const turns = recentTurns(getDb(), clientId);
+      for (let i = turns.length - 1; i >= 0; i--) {
+        if (turns[i].role === "vale" && turns[i].text.trim() !== "")
+          return turns[i].text;
+      }
+    } catch {
+      /* a DB hiccup must never execute a turn: no echo without proof */
+    }
+    return null;
+  };
+
+  const echoNorm = (text: string): string =>
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9áéíóúñü ]/gi, " ")
+      .split(" ")
+      .filter((word) => word !== "")
+      .join(" ");
+
+  /**
+   * Her own reply coming back through the mic: same words, no Spark call.
+   * Exact match at any length, or a long transcript mostly inside the reply.
+   * Short talk ("yes", "confirm it") never counts: it stays a real turn.
+   */
+  const ECHO_MIN_TOKENS = 5;
+  const ECHO_OVERLAP = 0.8;
+  const isEchoOfReply = (
+    transcript: string,
+    reply: string | null,
+  ): boolean => {
+    if (!reply) return false;
+    if (echoNorm(transcript) === echoNorm(reply)) return true;
+    const heard = echoNorm(transcript).split(" ");
+    if (heard.length < ECHO_MIN_TOKENS) return false;
+    const said = new Set(echoNorm(reply).split(" "));
+    if (said.size === 0) return false;
+    const hit = heard.filter((word) => said.has(word)).length;
+    return hit / heard.length >= ECHO_OVERLAP;
+  };
+
   const answerTranscript = async (
     transcript: string,
     speechEndAt: number,
     verdict: WakeVerdict,
+    asrMs: number | null,
   ) => {
     agentRan = true;
     const ts = new Date(speechEndAt || now()).toISOString();
@@ -432,7 +479,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             modelSkipped: true,
             error: null,
             ignored: false,
-            asrMs: null,
+            asrMs,
             chain: "none",
             key: clientId,
             slots: slotSnapshot(),
@@ -473,7 +520,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         modelSkipped: false,
         error: null,
         ignored: false,
-        asrMs: null,
+        asrMs,
         chain: "none",
         key: clientId,
         slots: slotSnapshot(),
@@ -497,7 +544,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         modelSkipped: false,
         error: message,
         ignored: false,
-        asrMs: null,
+        asrMs,
         chain: "none",
         key: clientId,
         slots: slotSnapshot(),
@@ -554,12 +601,44 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           final: true,
           audioProcessedMs,
         });
+        const asrMs = endStreamAt === null ? null : speechEndAt - endStreamAt;
         if (finalText.trim() === "") {
           finishEmptyTurn(
             audioProcessedMs !== null
               ? audioProcessedMs / 1000
               : bufferedBytes / 48000,
+            asrMs,
           );
+          return;
+        }
+        if (isEchoOfReply(finalText, lastValeReply())) {
+          // Her own reply through the mic: no Spark call, no writes,
+          // no window move. Logged so the field test can count echoes.
+          logTurn({
+            ts: new Date(speechEndAt).toISOString(),
+            transcript: finalText,
+            ttftMs: null,
+            inputTokens: 0,
+            outputTokens: 0,
+            audioSeconds:
+              audioProcessedMs !== null
+                ? audioProcessedMs / 1000
+                : bufferedBytes / 48000,
+            tool: null,
+            modelSkipped: true,
+            error: null,
+            ignored: true,
+            asrMs,
+            chain: "none",
+            key: clientId,
+            slots: slotSnapshot(),
+            gate: "eco",
+            sinceReplyS: null,
+            totalMs: Date.now() - speechEndAt,
+          });
+          sendJson(browser, { type: "ignored" });
+          sendJson(browser, { type: "done" });
+          finish(1000, "turn-complete");
           return;
         }
         {
@@ -580,7 +659,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
               modelSkipped: true,
               error: null,
               ignored: true,
-              asrMs: null,
+              asrMs,
               chain: "none",
               key: clientId,
               slots: slotSnapshot(),
@@ -592,7 +671,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             sendJson(browser, { type: "done" });
             finish(1000, "turn-complete");
           } else {
-            void answerTranscript(finalText, speechEndAt, verdict);
+            void answerTranscript(finalText, speechEndAt, verdict, asrMs);
           }
         }
       } else {
@@ -702,6 +781,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         finishEmptyTurn(0);
         return;
       }
+      // Voice ended here: the final arriving later sets the real ASR time.
+      endStreamAt = now();
       if (metaOpen) {
         try {
           meta.send(JSON.stringify({ type: "endStream" }));

@@ -644,6 +644,118 @@ describe("bridgeOptionsForUpgrade (single-process wiring)", () => {
   });
 });
 
+describe("echo guard (her own reply back through the mic)", () => {
+  it("drops her own reply coming back as the next transcript: gate eco, no model call", async () => {
+    receivedEndStream = 0;
+    const agent = vi.fn(fakeAgent("Emma is booked for gel refill"));
+    finalTranscript = "vale, book Emma for gel refill";
+    const lines: string[] = [];
+    const logSpy = vi
+      .spyOn(console, "log")
+      .mockImplementation((line: string) => {
+        lines.push(String(line));
+      });
+    try {
+      const browser = new FakeBrowser();
+      const client = `conv-eco-${Date.now()}`;
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: client,
+        metaUrl: url,
+        runAgent: agent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      // Turn 1: a real request with a real reply.
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "reply"),
+        ).toBe(true);
+      });
+      expect(agent).toHaveBeenCalledTimes(1);
+      const doneAfterFirst = browser.frames().filter(
+        (frame) => frame.type === "done",
+      ).length;
+      // Turn 2: her own reply echoing back through the mic.
+      finalTranscript = "Emma is booked for gel refill";
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().filter((frame) => frame.type === "done").length,
+        ).toBe(doneAfterFirst + 1);
+      });
+      // Discarded: no second model call, no second reply, ignored on screen.
+      expect(agent).toHaveBeenCalledTimes(1);
+      expect(
+        browser.frames().filter((frame) => frame.type === "reply"),
+      ).toHaveLength(1);
+      expect(
+        browser.frames().some((frame) => frame.type === "ignored"),
+      ).toBe(true);
+      const eco = lines.filter((line) => line.includes('"gate":"eco"'));
+      expect(eco).toHaveLength(1);
+      expect(eco[0]).toContain("Emma is booked for gel refill");
+      // The served turn carries a real measured ASR time.
+      const served = lines
+        .filter((line) => line.startsWith("[voice-turn] "))
+        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
+      const first = served.find(
+        (entry) => entry.transcript === "vale, book Emma for gel refill",
+      );
+      expect(typeof first.asrMs).toBe("number");
+    } finally {
+      logSpy.mockRestore();
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
+
+  it("executes a short user turn even when it repeats reply words", async () => {
+    receivedEndStream = 0;
+    const agent = vi.fn(fakeAgent("Done."));
+    finalTranscript = "vale, confirm it";
+    const browser = new FakeBrowser();
+    attachVoiceBridge({
+      browser: browser as unknown as WebSocket,
+      key: "test-key",
+      clientId: `conv-noeco-${Date.now()}`,
+      metaUrl: url,
+      runAgent: agent,
+      conversation: true,
+    });
+    await vi.waitFor(() => {
+      expect(browser.frames().some((frame) => frame.type === "bridge")).toBe(
+        true,
+      );
+    });
+    browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+    browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+    await vi.waitFor(() => {
+      expect(browser.frames().some((frame) => frame.type === "reply")).toBe(
+        true,
+      );
+    });
+    // Short overlap with the reply is the user confirming, not echo.
+    finalTranscript = "yes, confirm it";
+    browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+    browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().filter((frame) => frame.type === "reply").length,
+      ).toBe(2);
+    });
+    expect(agent).toHaveBeenCalledTimes(2);
+    browser.close(1000, "test done");
+  });
+});
+
 describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
   it("parses string and Buffer endStream controls, ignores binary audio", () => {
     expect(tryParseControl(JSON.stringify({ type: "endStream" }))).toEqual({
