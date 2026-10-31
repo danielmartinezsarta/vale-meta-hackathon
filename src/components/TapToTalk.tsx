@@ -6,6 +6,8 @@ import { LevelMeter } from "@/components/LevelMeter";
 import { ValeBoard } from "@/components/ValeBoard";
 import type { Board } from "@/lib/board";
 import { parseSseStream } from "@/lib/sse";
+import { resemblesReply } from "@/lib/echo";
+import { namesVale } from "@/lib/wake";
 import {
   isSpeaking,
   setVoiceEngine,
@@ -247,6 +249,12 @@ export function TapToTalk() {
       let convSocket: WebSocket | null = null;
       let convOpen = false;
       let pendingConvTurn: number | null = null;
+      // Voice-first: speech that starts while Vale is audible, or within
+      // AUDIBLE_TAIL_MS after her last audible frame, is transcribed like any
+      // other. It only interrupts her when it starts with the name and does
+      // not resemble what she says; the rest is her echo (gate:eco).
+      const AUDIBLE_TAIL_MS = 500;
+      let lastValeAudibleAt = 0;
       interface TurnTransport {
         socket: WebSocket | null;
         /** This turn's audio rode the shared conversation socket. */
@@ -265,8 +273,10 @@ export function TapToTalk() {
         endFrames: Int16Array[] | null;
         /** Frames with real voice (energy above the VAD threshold). */
         voiced: number;
-        /** Speech started while our reply was audible: buffer until speech end. */
-        echoSuspect: boolean;
+        /** Speech started while Vale was audible (or within her tail). */
+        heardVale: boolean;
+        /** A named, dissimilar interrupt already cut her voice. */
+        interrupted: boolean;
       }
       const transports = new Map<number, TurnTransport>();
 
@@ -383,7 +393,8 @@ export function TapToTalk() {
           postRetried: false,
           endFrames: null,
           voiced: 0,
-          echoSuspect: false,
+          heardVale: false,
+          interrupted: false,
         });
         setTurns((prev) => [
           ...prev,
@@ -398,22 +409,43 @@ export function TapToTalk() {
         endSessionWithAlert(message, code);
       };
 
-      // The mic heard our own reply, not the user: close its socket and erase
-      // the turn before any audio leaves the device.
-      const dropEchoTurn = (id: number) => {
-        const transport = transports.get(id);
-        const socket = transport?.socket ?? null;
-        if (transport) transport.failed = true;
-        if (socket) {
-          socketsRef.current.delete(socket);
-          try {
-            socket.close();
-          } catch {
-            /* already closed */
-          }
+      // New speech only dismisses the still-open turn's reply when it really
+      // interrupts Vale: her voice silent, or a named dissimilar barge-in.
+      const dismissOpenReply = () => {
+        const dismissed: number[] = [];
+        setTurns((prev) =>
+          prev.map((turn) =>
+            turn.reply && !settledTurnsRef.current.has(turn.id)
+              ? (dismissed.push(turn.id), { ...turn, reply: null })
+              : turn,
+          ),
+        );
+        for (const turnId of dismissed) {
+          repliesRef.current.delete(turnId);
         }
-        transports.delete(id);
-        removeTurn(id);
+      };
+
+      // Latest reply Vale voiced: the echo test compares against it.
+      const lastReplyText = (): string | null => {
+        let last: string | null = null;
+        repliesRef.current.forEach((reply) => {
+          last = reply;
+        });
+        return last;
+      };
+
+      // A transcript for a turn that started while she was audible cuts her
+      // voice only when it starts with the name and does not resemble what
+      // she says. Anything else is her echo: keep transcribing, no cut, no
+      // dismiss; the server discards it (gate:eco, no Spark call).
+      const maybeInterrupt = (id: number, text: string) => {
+        const transport = transports.get(id);
+        if (!transport || transport.interrupted || !transport.heardVale) return;
+        if (!namesVale(text)) return;
+        if (resemblesReply(text, lastReplyText())) return;
+        transport.interrupted = true;
+        stopSpeaking("barge-in");
+        dismissOpenReply();
       };
 
       const sendFrameBytes = (socket: WebSocket, frame: Int16Array) => {
@@ -455,8 +487,10 @@ export function TapToTalk() {
               finalReceivedRef.current.add(id);
               if (message.transcript.trim() !== "") silentStreakRef.current = 0;
               patchTurn(id, { final: message.transcript, interim: "" });
+              maybeInterrupt(id, message.transcript);
             } else {
               patchTurn(id, { interim: message.transcript });
+              maybeInterrupt(id, message.transcript);
             }
             break;
           case "reply-delta":
@@ -782,6 +816,7 @@ export function TapToTalk() {
                 finalReceivedRef.current.add(id);
                 if (transcript.trim() !== "") silentStreakRef.current = 0;
                 patchTurn(id, { final: transcript, interim: "" });
+                maybeInterrupt(id, transcript);
               },
               onErrorEvent: (message, code) => {
                 controllersRef.current.delete(controller);
@@ -839,14 +874,15 @@ export function TapToTalk() {
         {
           onFrame: (frame) => {
             if (!sessionRef.current) return;
+            // Track her audibility every frame: the 500 ms tail below hangs
+            // on this, not on a single check at speech start.
+            if (isSpeaking()) lastValeAudibleAt = Date.now();
             pending.push(frame.slice());
             // Stream each frame live and keep it buffered for replay or POST fallback.
             const transport = transports.get(currentId);
             if (transport && !transport.failed) {
               if (countVoiced(frame)) transport.voiced += 1;
               transport.frames.push(frame.slice());
-              // Possible echo: hold it back so a dropped turn sends nothing.
-              if (transport.echoSuspect) return;
               if (
                 convOpen &&
                 convSocket &&
@@ -872,30 +908,23 @@ export function TapToTalk() {
           },
           onSpeechStart: () => {
             if (!sessionRef.current) return;
-            // Our own reply still audible: this is echo, not the user.
-            // Never cut it and never dismiss its text.
-            const echo = isSpeaking();
-            if (!echo) stopSpeaking("speech-start");
+            // Voice-first: speech that starts while she is audible, or within
+            // 500 ms after her last audible frame, is transcribed like any
+            // other. It only cuts her (and dismisses her text) when a later
+            // transcript starts with the name and is dissimilar; the rest is
+            // her echo, discarded server-side (gate:eco, no Spark call).
+            const audible =
+              isSpeaking() || Date.now() - lastValeAudibleAt < AUDIBLE_TAIL_MS;
+            if (!audible) stopSpeaking("speech-start");
             window.clearTimeout(quietTimerRef.current);
-            if (!echo) {
-              // New speech dismisses only the still-open turn's reply.
-              const dismissed: number[] = [];
-              setTurns((prev) =>
-                prev.map((turn) =>
-                  turn.reply && !settledTurnsRef.current.has(turn.id)
-                    ? (dismissed.push(turn.id), { ...turn, reply: null })
-                    : turn,
-                ),
-              );
-              for (const turnId of dismissed) {
-                repliesRef.current.delete(turnId);
-              }
-            }
+            if (!audible) dismissOpenReply();
             // A new utterance after a posted turn opens the next turn on the same capture.
             if (posted) openTurn(false);
-            // Speech over our own reply is echo until speech end proves otherwise.
-            const suspect = transports.get(currentId);
-            if (suspect) suspect.echoSuspect = echo;
+            const fresh = transports.get(currentId);
+            if (fresh) {
+              fresh.heardVale = audible;
+              fresh.interrupted = false;
+            }
             // Without a conversation socket, open one per turn so the
             // ~0.9 s handshake hides inside the utterance.
             if (!convOpen) openTurnSocket(currentId);
@@ -903,40 +932,8 @@ export function TapToTalk() {
           onSpeechEnd: () => {
             if (!sessionRef.current || posted) return;
             posted = true;
-            // Reply still audible at speech end: the mic heard us, drop it.
-            if (isSpeaking()) {
-              dropEchoTurn(currentId);
-              return;
-            }
-            // The reply ended mid-utterance: the user barged in, so flush
-            // what the echo guard held back, then end the turn as usual.
-            const held = transports.get(currentId);
-            if (held && held.echoSuspect) {
-              held.echoSuspect = false;
-              if (
-                convOpen &&
-                convSocket &&
-                convSocket.readyState === WebSocket.OPEN
-              ) {
-                try {
-                  for (const frame of held.frames)
-                    sendFrameBytes(convSocket, frame);
-                  held.conv = true;
-                } catch {
-                  /* endTurnTransport falls back to POST */
-                }
-              } else {
-                const socket = held.socket;
-                if (socket && socket.readyState === WebSocket.OPEN) {
-                  try {
-                    for (const frame of held.frames)
-                      sendFrameBytes(socket, frame);
-                  } catch {
-                    /* endTurnTransport falls back to POST */
-                  }
-                }
-              }
-            }
+            // Every utterance is transcribed; the server tells echo
+            // (gate:eco, ignored) apart from a real turn (reply).
             endTurnTransport(currentId);
           },
           // Same samples as the VAD, throttled to ~10 Hz.
