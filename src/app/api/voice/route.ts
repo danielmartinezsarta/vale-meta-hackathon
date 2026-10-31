@@ -5,7 +5,10 @@ import { getDb, recentTurns, recordTurn } from "@/lib/db";
 import { getBoard } from "@/lib/board";
 import { getSlots } from "@/lib/slot-memory";
 import {
+  clearPendingAction,
   isConfirmYes,
+  isRefusalNo,
+  peekPendingAction,
   runPendingActions,
   takePendingAction,
 } from "@/lib/pending-action";
@@ -22,6 +25,7 @@ import { emitTurnLog, estimateCost } from "@/lib/turn-log";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
 import {
   DEFAULT_LANGUAGE,
+  declineText,
   parseLanguage,
   turnErrorText,
 } from "@/lib/vale-language";
@@ -288,6 +292,38 @@ export async function POST(request: Request): Promise<Response> {
               });
               return;
             }
+          }
+          // A no to Vale's pending proposal discards it at once: the card
+          // goes away with a short decline, no model, no second question.
+          if (isRefusalNo(transcript) && peekPendingAction(clientKey)) {
+            clearPendingAction(clientKey);
+            const declined = declineText(language);
+            recordTurn(getDb(), clientKey, "vale", declined, null);
+            send("reply", { text: declined });
+            noteAttention(clientKey);
+            send("board", { board: getBoard(getDb()) });
+            send("widget", { widget: null });
+            logTurn({
+              ts,
+              transcript,
+              ttftMs: Date.now() - speechEndAt,
+              inputTokens: 0,
+              outputTokens: 0,
+              audioSeconds,
+              tool: null,
+              modelSkipped: true,
+              error: null,
+              ignored: false,
+              asrMs: measuredAsrMs,
+              chain: "none",
+              key: clientKey,
+              slots: slotSnapshot(),
+              gate: verdict.gate,
+              sinceReplyS: verdict.sinceReplyS,
+              totalMs: Date.now() - speechEndAt,
+            });
+            send("done", {});
+            return;
           }
           const result = await runAgentTurn({
             key,

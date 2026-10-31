@@ -5,6 +5,7 @@ import {
   buildPendingActions,
   clearPendingAction,
   isConfirmYes,
+  isRefusalNo,
   pendingConfirmTitle,
   runPendingActions,
   peekPendingAction,
@@ -44,6 +45,24 @@ describe("pending action", () => {
       "qué puedes hacer",
     ]) {
       expect(isConfirmYes(no)).toBe(false);
+    }
+  });
+
+  it("hears a bare no addressed to the proposal, nothing else", () => {
+    for (const no of ["no", "No", "nope", "no, vale", "vale, no"]) {
+      expect(isRefusalNo(no)).toBe(true);
+    }
+    for (const other of [
+      "",
+      "vale",
+      "sí",
+      "yes",
+      "no quiero",
+      "no, gracias",
+      "deshazlo",
+      "qué puedes hacer",
+    ]) {
+      expect(isRefusalNo(other)).toBe(false);
     }
   });
 

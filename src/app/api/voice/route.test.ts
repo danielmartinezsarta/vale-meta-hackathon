@@ -207,6 +207,32 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
   });
 
+  it("discards a stored proposal on no without calling the model", async () => {
+    const modelFetch = vi.fn(async () => fakeAgentReply("should not happen"));
+    vi.stubGlobal("fetch", modelFetch);
+    const { peekPendingAction, setPendingAction } = await import(
+      "@/lib/pending-action"
+    );
+    setPendingAction("pend-no-1", [
+      { tool: "find_client", args: { name: "Ana" } },
+    ]);
+    const text = await POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "pend-no-1",
+        },
+        body: JSON.stringify({ transcript: "vale, no" }),
+      }),
+    ).then((response) => response.text());
+    expect(text).toContain("event: reply");
+    expect(text).toContain("OK, I won't save it.");
+    expect(modelFetch).not.toHaveBeenCalled();
+    expect(peekPendingAction("pend-no-1")).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
   it("holds the selected language even when the transcript is Italian", async () => {
     const bodies: Record<string, unknown>[] = [];
     vi.stubGlobal(

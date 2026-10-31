@@ -228,6 +228,15 @@ export function isConfirmYes(transcript: string): boolean {
   );
 }
 
+/** A no addressed to Vale's proposal: bare, in either language. */
+export function isRefusalNo(transcript: string): boolean {
+  const words = normalizeWakeText(transcript)
+    .split(" ")
+    .filter((word) => word !== "" && word !== "vale");
+  if (words.length === 0) return false;
+  return /^(no|nope)$/.test(words.join(" "));
+}
+
 export interface PendingExecution {
   text: string;
   toolUsed: string | null;

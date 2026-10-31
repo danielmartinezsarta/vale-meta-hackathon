@@ -85,7 +85,9 @@ function parseSse(text) {
 
 const results = [];
 for (const conv of convs) {
-  const client = `${run}-${conv.id}`;
+  // The server lowercases browser client ids: match it here so per-turn
+  // server gates attach to the right results.
+  const client = `${run}-${conv.id}`.toLowerCase();
   let n = 0;
   for (const transcript of conv.turns) {
     n += 1;

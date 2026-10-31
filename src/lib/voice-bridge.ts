@@ -15,6 +15,8 @@ import { emitTurnLog, estimateCost } from "./turn-log";
 import {
   clearPendingAction,
   isConfirmYes,
+  isRefusalNo,
+  peekPendingAction,
   runPendingActions,
   takePendingAction,
 } from "./pending-action";
@@ -590,6 +592,42 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           finish(1000, "turn-complete");
           return;
         }
+      }
+      // A no to Vale's pending proposal discards it at once: the card goes
+      // away with a short decline, no model, no second question.
+      if (isRefusalNo(transcript) && peekPendingAction(clientId)) {
+        clearPendingAction(clientId);
+        const declined = declineText(turnLanguage);
+        recordTurn(getDb(), clientId, "vale", declined, null);
+        sendJson(browser, { type: "reply", text: declined });
+        noteAttention(clientId);
+        sendJson(browser, { type: "board", board: getBoard(getDb()) });
+        sendJson(browser, { type: "widget", widget: null });
+        logTurn({
+          ts,
+          transcript,
+          ttftMs: Date.now() - speechEndAt,
+          inputTokens: 0,
+          outputTokens: 0,
+          audioSeconds:
+            audioProcessedMs !== null
+              ? audioProcessedMs / 48000
+              : bufferedBytes / 48000,
+          tool: null,
+          modelSkipped: true,
+          error: null,
+          ignored: false,
+          asrMs,
+          chain: "none",
+          key: clientId,
+          slots: slotSnapshot(),
+          gate: verdict.gate,
+          sinceReplyS: verdict.sinceReplyS,
+          totalMs: Date.now() - speechEndAt,
+        });
+        sendJson(browser, { type: "done" });
+        finish(1000, "turn-complete");
+        return;
       }
       const result = await runAgent(
         {

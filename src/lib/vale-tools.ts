@@ -207,7 +207,8 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "add_note",
-    description: "Save a note on the client card. Health notes stay private: use kind health for allergies, onicolisis and similar health topics.",
+    description: "Save a note on the client card. Health notes stay private: use kind health for allergies, onicolisis and similar health topics. Call it right away when the request names a client and a note, even for unknown clients: the refusal carries the confirm question and a yes saves it.",
+
     parameters: {
       type: "object",
       properties: {
@@ -289,7 +290,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "create_appointment",
-    description: "Book an appointment for an existing client and service. Confirm the date and time with the user; if you inferred them, say so.",
+    description: "Book an appointment for an existing client and service. Confirm the date and time with the user; if you inferred them, say so. Call it right away when the request names a client, a service and a time: doubt carries the confirm question and a yes books it.",
     parameters: {
       type: "object",
       properties: {
