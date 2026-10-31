@@ -553,6 +553,7 @@ describe("closed reply language", () => {
     const instructions = buildInstructions("en");
     expect(instructions).toContain("25 words");
     expect(instructions).toContain("Never use terms of endearment");
+    expect(instructions).toContain("a coworker, not a friend");
     for (const word of [
       "love",
       "darling",
