@@ -38,7 +38,7 @@ function burst(callbacks: CaptureCallbacks) {
   const frame = new Int16Array(960).fill(4000);
   callbacks.onFrame(frame);
   callbacks.onSpeechStart();
-  callbacks.onFrame(frame);
+  for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
   callbacks.onSpeechEnd();
 }
 
@@ -63,7 +63,7 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
     const stopMock = vi.fn();
     mockStartCapture.mockImplementation((_stream, callbacks) => {
       seen.push(callbacks);
-      return { stop: stopMock };
+      return { stop: stopMock, state: () => "running" };
     });
 
     const fetchMock = vi.fn((..._args: unknown[]) => {

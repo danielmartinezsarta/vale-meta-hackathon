@@ -1,11 +1,21 @@
-import { VALE_TOOLS, getOpenSession, localDay, runValeTool } from "./vale-tools";
-import { getDb, type ValeDb } from "./db";
-import { DEFAULT_LANGUAGE, type ValeLanguage } from "./vale-language";
+import {
+  VALE_TOOLS,
+  clientLabel,
+  getOpenSession,
+  localDay,
+  runValeTool,
+} from "./vale-tools";
+import { DEFAULT_USER_NAME, getDb, userName, type HistoryTurn, type ValeDb } from "./db";
+import { DEFAULT_LANGUAGE, clarifyText, type ValeLanguage } from "./vale-language";
 import {
   buildPendingActions,
   clearPendingAction,
+  isConfirmYes,
+  peekPendingAction,
+  pendingConfirmTitle,
   setPendingAction,
 } from "./pending-action";
+import { buildWidget, type Widget } from "./widget";
 import {
   slotContext,
   updateSlotsFromTool,
@@ -14,62 +24,68 @@ import {
 export const AGENT_MODEL = "muse-spark-1.3";
 export const RESPONSES_URL = "https://api.meta.ai/v1/responses";
 
-/** Said once per session when a health note is saved. Appended server-side. */
-export const PRIVACY_LINE =
-  "Las notas de salud las procesa un modelo abierto en infraestructura dedicada y nunca van a la API general.";
-
-/** English twin of PRIVACY_LINE for the closed EN setting. */
-export const PRIVACY_LINE_EN =
-  "Health notes are processed by an open model on dedicated infrastructure and never reach the general API.";
-
-// Language-neutral base: acting rules with no words the user ever hears.
+// Single prompt in English for both languages: acting rules, persona and
+// standing rules with no words the user ever hears. Only the output line
+// changes: it pins the reply language. There is no auto-detection; the
+// screen selector owns the language end to end.
 const SPOKEN_BASE = [
   "You are Vale, a hands-free voice helper for nail technicians.",
   "Use plain text only. No markdown. No bold or italics. No lists. No links. No URLs. No emoji.",
-  "You have tools for sessions, client cards, notes, the shopping list, supplies, price quotes, the agenda and stock. Use them to act.",
-  "Never invent names, prices or addresses, and never claim a write happened without calling its tool. For a price always call quote_price and say every part of its breakdown. For the goal always call goal_progress and say its numbers.",
+  "You are warm and direct, like a trusted colleague at the salon: brief, kind, never robotic.",
+  "You are the colleague who knows the business: warm, kind and upbeat, but professional - a coworker, not a friend.",
+  "Never use terms of endearment, in any reply: love, darling, honey, dear, sweetie, babe, hun.",
+  "Keep every reply to about 25 words at most: direct, no filler, and never end with a question unless you are asking for confirmation or for missing information.",
+  "You can: open sessions with a timer, save notes on the client card (health notes stay private), keep the shopping list, register clients and supplies, quote prices and keep the agenda. Use them to act.",
+  "Never invent names, prices or addresses, and never claim a write happened without calling its tool. Say it is done only after the tool succeeds.",
+  "Some tools show a screen card: goal_progress, list_today, next_appointment, add_note, create_appointment and quote_price. When a screen card shows, say one short line pointing at it (for example Here's your goal on screen.) and never read its numbers aloud; earnings and goal amounts stay on the screen only. Otherwise say every part of the breakdown.",
   "Reads (find_client, read_shopping_list, quote_price, goal_progress, list_today, next_appointment, read_stock) run at once.",
-  "Act right away when the request is direct and complete: if the user names a client and a service, call open_session right away; if they dictate a note or name an item, call that write right away. Say it is done only after the tool succeeds.",
-  "Only ask first when in doubt: unknown or ambiguous names, unknown supplies. Then say what you would do in one sentence and ask the confirmation question, and wait for the user to say yes before calling.",
-  "When the tool asks whether to create a supply, ask the user and call log_supply_use again with confirm_create true only after a yes. When a booking warns about off hours, ask the user and call create_appointment again with confirm_off_hours true only after a yes.",
+  "Only ask first when in doubt: unknown or ambiguous names, unknown supplies. Then say what you would do in one sentence and ask the confirmation question (Should I save it?), and wait for the user to say yes before calling.",
+  "Greet briefly and varied when there is no request, without asking for data. When the client or service is missing, ask briefly and naturally, naming what you already have.",
+  "If the request is outside nails (hair, makeup), say so plainly and steer back to nails.",
+  "Health notes: confirm briefly and never repeat the health text.",
+  "If a date does not exist (November 31st), propose the nearest valid day at the same time, say the correction plainly, and ask for confirmation before writing.",
+  "A yes only executes the proposal from your immediately previous reply; if that reply asked an open question with no concrete proposal, ask what to confirm instead of writing.",
+  "A refused write is never a license to do the opposite: if a session is already open, call open_session anyway - its refusal tells you what to ask, and the yes runs the switch.",
 ].join(" ");
 
-// Per-language suffix: warm persona, capabilities, few-shots and the
-// standing rules. Closed set: es or en.
-const LANGUAGE_SUFFIX: Record<ValeLanguage, string> = {
-  es: [
-    "The user hears your reply read aloud, so reply in Spanish in exactly one or two short spoken sentences. Nunca respondas en otro idioma aunque la transcripción venga en otro.",
-    "Eres Vale, manicurista de voz cálida y directa: habla siempre de tú, nunca de usted.",
-    "Hoy puedes: abrir sesiones con cronómetro, guardar notas en la ficha (las de salud van en privado), llevar la lista de insumos, crear clientas e insumos. Precio y agenda aún no; dilo plainly si los piden.",
-    "Saluda variado y breve cuando no hay pedido, sin preguntar datos. Si falta clienta o servicio, pregunta natural y breve nombrando lo que sí tienes.",
-    "Ejemplos de tono (no guion): clienta «hola» -> «Hola, ¿cómo vas?»; clienta «buenas» -> «Buenas, te escucho.»; clienta «¿qué puedes hacer?» -> «Abro sesiones con cronómetro, guardo notas en tu ficha, llevo tu lista de insumos y registro clientas e insumos. Precio y agenda todavía no.»; clienta «abre sesión con Ana» -> «¿Qué servicio le hago a Ana?»; clienta «sí» con duda pendiente -> ejecuta y confirma «Listo, ya quedó.»",
-    "Si piden algo fuera de uñas (pelo, maquillaje), dilo plainly y redirige a uñas: «Eso es de pelo y yo solo atiendo uñas; ¿te abro sesión de esmaltado?»",
-    "Ante la duda pregunta con una frase y la cuestión de confirmación es ¿lo guardo?.",
-    "When the user says deshazlo, call undo_last_write at once.",
-    "Health topics (allergies, onicolisis and similar) always use add_note with kind health; confirm with Nota privada guardada. and never repeat the health text.",
-  ].join(" "),
-  en: [
-    "The user hears your reply read aloud, so reply only in English in exactly one or two short spoken sentences. Never answer in another language even if the transcript is in another.",
-    "You are Vale, a warm, direct voice nail tech: plain words, one or two short sentences.",
-    "Today you can: open timed sessions, save notes on client cards (health notes stay private), keep the shopping list, register new clients and supplies. No prices or appointments yet; say so plainly if asked.",
-    "Greet with variety and briefly when there is no request, never asking for data. When client or service is missing, ask naturally and briefly, naming what you already have.",
-    "Tone examples (not a script): client «hi» -> «Hi, how is it going?»; client «hey» -> «Hey, I'm here.»; client «what can you do?» -> «I open timed sessions, save notes on your card, keep the shopping list, and register new clients and supplies. No prices or appointments yet.»; client «open a session for Ana» -> «Which service should I do for Ana?»; client «yes» with pending doubt -> act and confirm «Done, all set.»",
-    "If they ask for anything outside nails (hair, makeup), say so plainly and steer back to nails: «That's hair and I only do nails; shall I open you a polish session?»",
-    "When in doubt ask in one sentence and the confirmation question is Should I save it?.",
-    "When the user says undo it, call undo_last_write at once.",
-    "Health topics (allergies, onycholysis and similar) always use add_note with kind health; confirm with Private note saved. and never repeat the health text.",
-  ].join(" "),
-};
+/** Output line: the only part of the prompt that changes per language. */
+function outputLine(language: ValeLanguage): string {
+  return language === "es"
+    ? "The user hears your reply read aloud in Spanish, so reply only in Spanish in exactly one or two short spoken sentences. Nunca respondas en otro idioma aunque la transcripción venga en otro."
+    : "The user hears your reply read aloud, so reply only in English in exactly one or two short spoken sentences.";
+}
 
 /**
- * Full instructions for one language; Spanish keeps the historic export.
- * The current date grounds relative days ("today") for the agenda tools.
+ * Full instructions for one language; the base stays English and only the
+ * output line switches. The current date grounds relative days ("today")
+ * for the agenda tools.
  */
 export function buildInstructions(
   language: ValeLanguage = DEFAULT_LANGUAGE,
-  today: string = localDay(),
 ): string {
-  return `${SPOKEN_BASE} Today is ${today}. Use that date for hoy and resolve relative days from it. ${LANGUAGE_SUFFIX[language]}`;
+  return `${SPOKEN_BASE} ${outputLine(language)}`;
+}
+
+/**
+ * Volatile session facts, appended AFTER the stable base so Meta's prefix
+ * cache holds on the base. Date, name, slots, session: everything the turn
+ * changes rides here, never before the stable content. Exported for tests.
+ */
+export function buildStateFacts(
+  today: string,
+  name: string,
+  slotLine: string,
+  sessionLine: string,
+): string {
+  return [
+    `Today is ${today}.`,
+    `The user's name is ${name}: say it occasionally, never every turn, and never as an endearment.`,
+    "Use that date as today and resolve relative days from it.",
+    slotLine,
+    sessionLine,
+  ]
+    .filter((line) => line !== "")
+    .join(" ");
 }
 
 // Spoken-style prompt: plain text, 1-2 short sentences, confirm before writing.
@@ -78,6 +94,8 @@ export const SPOKEN_SYSTEM_PROMPT = buildInstructions("es");
 export interface AgentUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Prefix-cache hits inside input_tokens, for the per-commit measure. */
+  cachedInputTokens: number;
 }
 
 export interface AgentResult {
@@ -85,25 +103,87 @@ export interface AgentResult {
   usage: AgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
-  /** Last completed response id: chain it as previous_response_id next turn. */
-  responseId: string;
-  /** Keep chaining: no tool ran, or a tool reported doubt. Drop after writes. */
-  chainNext: boolean;
-  /** Vale asked something: the answer may arrive without the name. */
-  askedQuestion: boolean;
+  /** Screen card derived from the tool call, never from reply text. */
+  widget: Widget | null;
 }
 
-/** A 400 before any tool ran means the chained response went stale: retry clean. */
-export function isChainError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
+/** Bogotá clock for the session facts; the salon runs on America/Bogota. */
+function bogotaParts(when: Date): { day: string; time: string; weekday: string } {
+  const day = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(when);
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Bogota",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(when);
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Bogota",
+    weekday: "long",
+  }).format(when);
+  return { day, time, weekday };
+}
+
+/**
+ * Durable session facts for the prompt: context, not a filter. The model
+ * still decides per turn; these facts only ground names, dates and the
+ * open service. Exported for tests.
+ */
+export function sessionContext(db: ValeDb, now = new Date()): string {
+  const { day, time, weekday } = bogotaParts(now);
+  const head =
+    `Session context (facts, not filters): today is ${weekday} ${day}, ` +
+    `${time} America/Bogota.`;
+  const open = getOpenSession(db);
+  if (!open) {
+    return (
+      `${head} No session is open: a booking needs a client name, ` +
+      `never invent one.`
+    );
+  }
+  const service = db
+    .prepare("SELECT name FROM services WHERE id = ?")
+    .get(open.service_id) as { name: string } | undefined;
+  const started = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Bogota",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(open.started_at));
   return (
-    /^model error: 400\b/.test(error.message) ||
-    /previous_response/i.test(error.message) ||
-    /response[^,;.]{0,60}(expired|invalid|not found)/i.test(error.message)
+    `${head} Open session: client ${clientLabel(db, open.client_id)}, ` +
+    `service ${service?.name ?? "unknown"}, started ${started}. ` +
+    `A booking with no client name belongs to the session client; a booking ` +
+    `naming another client belongs to that client and leaves the session ` +
+    `untouched. Shopping and stock questions never use the session. When you ` +
+    `fill a missing date or time from today or the session, say so in the ` +
+    `confirmation question.`
   );
 }
 
-/** Tools that complete a write when they report ok (reads never block a retry). */
+/** One history turn as a Responses input message. */
+function historyItem(turn: HistoryTurn): Record<string, unknown> {
+  // The API takes input_text on user messages and output_text on assistant
+  // ones (probed 2026-10-31: input_text on assistant is a 400); the role
+  // tells them apart either way.
+  return turn.role === "user"
+    ? {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: turn.text }],
+      }
+    : {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: turn.text }],
+      };
+}
+
+/** Tools that complete a write when they report ok. */
 const WRITE_TOOLS = new Set([
   "open_session",
   "close_session",
@@ -112,6 +192,10 @@ const WRITE_TOOLS = new Set([
   "add_to_shopping_list",
   "log_supply_use",
   "undo_last_write",
+  "create_appointment",
+  "move_appointment",
+  "set_stock",
+  "add_stock",
 ]);
 
 /**
@@ -229,6 +313,9 @@ async function postResponses(
     usage?: {
       input_tokens?: number;
       output_tokens?: number;
+      input_tokens_details?: {
+        cached_tokens?: number;
+      };
     };
   }
   let completed: CompletedResponse | null = null;
@@ -298,6 +385,7 @@ async function postResponses(
     usage: {
       inputTokens: completed.usage?.input_tokens ?? 0,
       outputTokens: completed.usage?.output_tokens ?? 0,
+      cachedInputTokens: completed.usage?.input_tokens_details?.cached_tokens ?? 0,
     },
     calls: functionCalls(completed.output),
     firstTokenMs,
@@ -307,10 +395,45 @@ async function postResponses(
 /** Max model rounds per turn: enough for ask-then-act chains, never unbounded. */
 const MAX_TOOL_ROUNDS = 4;
 
+/**
+ * Explicit prefix-cache affinity: without it, sparse live turns (minutes
+ * apart) always miss the implicit cache (cached_tokens 0) while bursts hit.
+ * One versioned key for the whole helper: the cache still matches by prefix,
+ * the key only routes sparse requests to the holder. Bump on prompt-shape
+ * changes that obsolete the cached prefix.
+ */
+export const PROMPT_CACHE_KEY = "vale-spoken-v1";
+
+/**
+ * Vale's own still-open question: her last reply asked one without acting.
+ * No tool ran, so no proposal was stored and the duplicate guard must not
+ * swallow the yes — the yes authorizes what she asked. A question asked
+ * through a tool (refusal, ask-first) already stored or deliberately
+ * cleared its proposal, so only a tool-less question counts.
+ */
+function answersOpenQuestion(history: HistoryTurn[]): boolean {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const turn = history[i];
+    if (turn.role !== "vale") continue;
+    return turn.tool == null && turn.text.trim().endsWith("?");
+  }
+  return false;
+}
+
+/**
+ * Traffic rule for a yes that answers Vale's own open question: carry out
+ * what she proposed with the tools, or clarify if there is nothing to do.
+ * Volatile, so it rides with the state facts at the end, never the base.
+ */
+const YES_TO_OPEN_QUESTION =
+  "The user just said yes to your last question, which you asked without acting: " +
+  "carry out what you proposed with the tools now, or clarify if there is nothing to carry out.";
+
 export interface AgentTurnOptions {
   key: string;
   transcript: string;
-  previousResponseId?: string;
+  /** Last conversation turns, oldest first; Vale remembers them, no chains. */
+  history?: HistoryTurn[];
   url?: string;
   onDelta?: (text: string) => void;
   startedAt?: number;
@@ -320,21 +443,8 @@ export interface AgentTurnOptions {
   language?: ValeLanguage;
   /** Slot-memory key (client IP on the server); tests use throwaway keys. */
   slotKey?: string;
-}
-
-function privacyNoticeNeeded(db: ValeDb): boolean {
-  const open = getOpenSession(db);
-  if (!open) return true;
-  const row = db.prepare("SELECT privacy_notice_sent FROM sessions WHERE id = ?").get(open.id) as {
-    privacy_notice_sent: number;
-  };
-  return row.privacy_notice_sent !== 1;
-}
-
-function markPrivacyNoticeSent(db: ValeDb): void {
-  const open = getOpenSession(db);
-  if (!open) return;
-  db.prepare("UPDATE sessions SET privacy_notice_sent = 1 WHERE id = ?").run(open.id);
+  /** Overrides the seeded user name in the prompt. */
+  userName?: string;
 }
 
 export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResult> {
@@ -344,129 +454,145 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   const db = options.db ?? getDb();
   const language = options.language ?? DEFAULT_LANGUAGE;
   const slotKey = options.slotKey ?? "local";
-  const staticInstructions = buildInstructions(language);
-  const slotLine = slotContext(slotKey, language);
-  const instructions = slotLine
-    ? `${staticInstructions} ${slotLine}`
-    : staticInstructions;
-  const privacyLine = language === "en" ? PRIVACY_LINE_EN : PRIVACY_LINE;
+  // A yes with nothing stored answers Vale's own still-open question when
+  // her last reply asked one without acting: it goes to the model so the
+  // question carries an executable proposal. Any other yes clarifies — it
+  // can only confirm a proposal, and repeating a write is the E5 bug.
+  const openQuestion =
+    isConfirmYes(options.transcript) &&
+    !peekPendingAction(slotKey) &&
+    answersOpenQuestion(options.history ?? []);
+  if (isConfirmYes(options.transcript) && !peekPendingAction(slotKey) && !openQuestion) {
+    return {
+      text: clarifyText(language),
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+      toolUsed: null,
+      firstTokenMs: null,
+      widget: null,
+    };
+  }
+  // Stable base first, volatile facts last: Meta's prefix cache holds the
+  // base across turns while the date, name, slots and session ride at the end.
+  const instructions = [
+    buildInstructions(language),
+    ...(openQuestion ? [YES_TO_OPEN_QUESTION] : []),
+    buildStateFacts(
+      localDay(),
+      options.userName ?? userName(db),
+      slotContext(slotKey, language),
+      sessionContext(db),
+    ),
+  ].join(" ");
 
-  let previousResponseId = options.previousResponseId;
-  let input: unknown = options.transcript;
+  // Explicit memory: the last turns travel in the input, oldest first.
+  // No response chains, no retries: a failure surfaces as E-MODEL at once.
+  // Every item is an object: a bare string is only valid as the whole input.
+  let input: unknown = [
+    ...(options.history ?? []).map(historyItem),
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: options.transcript }],
+    },
+  ];
   let text = "";
-  let responseId = "";
   let toolUsed: string | null = null;
-  let sawDoubt = false;
-  let healthSaved = false;
-  const usage: AgentUsage = { inputTokens: 0, outputTokens: 0 };
+  let widget: Widget | null = null;
+  // A pending proposal dies with the next real turn unless that turn stores
+  // a new one: a later yes must never fire a stale proposal (eval C17).
+  let storedThisTurn = false;
+  const usage: AgentUsage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
   let firstTokenMs: number | null = null;
 
-  // At most one clean retry: a 400 with no completed write means the
-  // chained response expired. Never replay a turn that already wrote.
-  let sawWrite = false;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) {
-      previousResponseId = undefined;
-      input = options.transcript;
-      text = "";
-      responseId = "";
-      toolUsed = null;
-      sawDoubt = false;
-      healthSaved = false;
-      sawWrite = false;
-    }
-    try {
-      for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-        const turn = await postResponses(
-          options.key,
-          url,
-          {
-            instructions,
-            ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
-            input,
-            tools: VALE_TOOLS,
-            // Cheapest reasoning mode; the latency budget depends on it.
-            reasoning: { effort: "minimal" },
-            stream: true,
-          },
-          onDelta,
-          startedAt,
-        );
-        usage.inputTokens += turn.usage.inputTokens;
-        usage.outputTokens += turn.usage.outputTokens;
-        firstTokenMs = firstTokenMs ?? turn.firstTokenMs;
-        previousResponseId = turn.id;
-        responseId = turn.id;
-        if (turn.calls.length === 0) {
-          text = turn.text;
-          break;
-        }
-        const call = turn.calls[0];
-        toolUsed = toolUsed ?? call.name;
-        let parsed: Record<string, unknown> = {};
-        try {
-          parsed = JSON.parse(call.args || "{}") as Record<string, unknown>;
-        } catch {
-          parsed = {};
-        }
-        const toolResult = runValeTool(db, call.name, parsed);
-        if (!toolResult.ok) {
-          sawDoubt = true;
-          // A complete proposal waits for the yes; anything else retires
-          // a stale one instead of confirming the wrong thing.
-          const proposal = buildPendingActions(db, call.name, parsed, toolResult);
-          if (proposal) setPendingAction(slotKey, proposal);
-          else clearPendingAction(slotKey);
-        }
-        if (toolResult.ok && WRITE_TOOLS.has(call.name)) {
-          sawWrite = true;
-          clearPendingAction(slotKey);
-        }
-        updateSlotsFromTool(
-          slotKey,
-          call.name,
-          parsed,
-          toolResult.ok,
-          (toolResult as { data?: unknown }).data,
-        );
-        if (call.name === "add_note" && (toolResult.data as { private?: boolean } | undefined)?.private === true) {
-          healthSaved = true;
-        }
-        input = [
-          {
-            type: "function_call_output",
-            call_id: call.callId,
-            output: JSON.stringify(toolResult),
-          },
-        ];
-        text = toolResult.message;
-      }
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+    const turn = await postResponses(
+      options.key,
+      url,
+      {
+        instructions,
+        input,
+        tools: VALE_TOOLS,
+        // Cheapest reasoning mode; the latency budget depends on it.
+        reasoning: { effort: "minimal" },
+        stream: true,
+        // Route sparse turns to the prefix holder (see PROMPT_CACHE_KEY).
+        prompt_cache_key: PROMPT_CACHE_KEY,
+      },
+      onDelta,
+      startedAt,
+    );
+    usage.inputTokens += turn.usage.inputTokens;
+    usage.outputTokens += turn.usage.outputTokens;
+    usage.cachedInputTokens += turn.usage.cachedInputTokens;
+    firstTokenMs = firstTokenMs ?? turn.firstTokenMs;
+    if (turn.calls.length === 0) {
+      text = turn.text;
+      if (!storedThisTurn) clearPendingAction(slotKey);
       break;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // Attempt-level trace: the next stale-chain incident must show whether
-      // the clean retry fired, without guessing from token counts.
-      console.error(
-        `[agent] attempt ${attempt} (${previousResponseId ? "chained" : "clean"}) failed: ${message}`,
-      );
-      const cleanRetry =
-        attempt === 0 &&
-        options.previousResponseId !== undefined &&
-        !sawWrite &&
-        isChainError(error);
-      if (cleanRetry) console.error("[agent] retrying clean (chain dropped)");
-      else throw error;
     }
+    const call = turn.calls[0];
+    toolUsed = toolUsed ?? call.name;
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(call.args || "{}") as Record<string, unknown>;
+    } catch {
+      parsed = {};
+    }
+    const toolResult = runValeTool(db, call.name, parsed, language);
+    if (!toolResult.ok) {
+      // A complete proposal waits for the yes; anything else retires
+      // a stale one instead of confirming the wrong thing.
+      const proposal = buildPendingActions(db, call.name, parsed, toolResult);
+      if (proposal) {
+        setPendingAction(slotKey, proposal);
+        storedThisTurn = true;
+        widget = {
+          kind: "confirm",
+          title: pendingConfirmTitle(proposal, language),
+          lines: [],
+        };
+      } else clearPendingAction(slotKey);
+    } else {
+      // The screen card mirrors the tool call, never the reply text.
+      const card = buildWidget(
+        call.name,
+        parsed,
+        (toolResult as { data?: unknown }).data ?? null,
+        language,
+      );
+      if (card) widget = card;
+    }
+    updateSlotsFromTool(
+      slotKey,
+      call.name,
+      parsed,
+      toolResult.ok,
+      (toolResult as { data?: unknown }).data,
+    );
+    if (toolResult.ok && WRITE_TOOLS.has(call.name)) {
+      clearPendingAction(slotKey);
+      // A successful write answers itself: no second model round.
+      text = toolResult.message;
+      break;
+    }
+    // Chainless second round: resend the full prefix so the API can
+    // resolve the call_id (a lone function_call_output is a 400).
+    input = [
+      ...(input as unknown[]),
+      {
+        type: "function_call",
+        call_id: call.callId,
+        name: call.name,
+        arguments: call.args,
+      },
+      {
+        type: "function_call_output",
+        call_id: call.callId,
+        output: JSON.stringify(toolResult),
+      },
+    ];
+    text = toolResult.message;
   }
 
-  if (healthSaved && privacyNoticeNeeded(db)) {
-    markPrivacyNoticeSent(db);
-    text = text === "" ? privacyLine : `${text} ${privacyLine}`;
-  }
-
-  const chainNext = toolUsed === null || sawDoubt;
-  // A question keeps the window open for the nameless answer: a tool that
-  // reported doubt, or a tool-free reply ending in one.
-  const askedQuestion = toolUsed === null ? /\?\s*$/.test(text) : sawDoubt;
-  return { text, usage, toolUsed, firstTokenMs, responseId, chainNext, askedQuestion };
+  return { text, usage, toolUsed, firstTokenMs, widget };
 }

@@ -1,25 +1,34 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { startCapture } from "@/lib/capture";
+import { startCapture, unlockAudioContext } from "@/lib/capture";
+import type {
+  CaptureCallbacks,
+  CaptureHandle,
+  UtteranceStats,
+} from "@/lib/capture";
 import { LevelMeter } from "@/components/LevelMeter";
 import { ValeBoard } from "@/components/ValeBoard";
 import type { Board } from "@/lib/board";
 import { parseSseStream } from "@/lib/sse";
+import { namesVale } from "@/lib/wake";
 import {
   isSpeaking,
   setVoiceEngine,
   speak,
+  speechSettled,
   stopSpeaking,
   voiceEngine,
   type VoiceEngine,
+  finishStream,
+  speakStream,
 } from "@/lib/speak";
-import {
-  DEFAULT_LANGUAGE,
-  parseLanguage,
-  turnErrorText,
-  type ValeLanguage,
-} from "@/lib/vale-language";
+import { createValeState, type ValeState } from "@/lib/vale-state";
+import { turnErrorText, type ValeLanguage } from "@/lib/vale-language";
+import { uiStrings } from "@/lib/vale-ui";
+import type { Widget } from "@/lib/widget";
+import { VoiceControls } from "@/components/VoiceControls";
+import { WidgetCard } from "@/components/WidgetCard";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
@@ -54,6 +63,25 @@ function hasVisibleContent(turn: {
 
 // Mirrors the VAD threshold in capture.ts.
 const VOICE_ENERGY_THRESHOLD = 200;
+/** Below this much voiced audio the utterance is noise, never a turn. */
+const MIN_VOICED_MS = 300;
+/** Strict turns: wait after her voice ends before re-listening. */
+const SPEECH_RESUME_DELAY_MS = 300;
+/** Absolute backstop: a voice stuck past this releases the mic anyway. */
+const SPEECH_HARD_CAP_MS = 60000;
+/** 960 samples at the 24 kHz capture rate (capture.ts). */
+const FRAME_MS = 40;
+
+/** Persisted screen language: the selector survives reloads, EN default. */
+const LANGUAGE_KEY = "vale-language";
+
+function storedLanguage(): ValeLanguage {
+  try {
+    return window.localStorage.getItem(LANGUAGE_KEY) === "es" ? "es" : "en";
+  } catch {
+    return "en";
+  }
+}
 
 function SpeakerIcon() {
   return (
@@ -89,19 +117,43 @@ export function TapToTalk() {
   const [, setAlertCode] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
   const [board, setBoard] = useState<Board | null>(null);
+  const [widget, setWidget] = useState<Widget | null>(null);
+  const castVoteRef = useRef<(vote: "yes" | "no") => void>(() => {});
   const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
-  const [language, setLanguage] = useState<ValeLanguage>(() => {
-    if (typeof window === "undefined") return DEFAULT_LANGUAGE;
-    try {
-      return parseLanguage(window.localStorage.getItem("vale-language"));
-    } catch {
-      return DEFAULT_LANGUAGE;
-    }
-  });
+  // Screen selector: persisted choice, EN default. It drives listening
+  // (ASR language), prompt output, voice and UI; there is no auto-detection.
+  const [language, setLanguage] = useState<ValeLanguage>(() =>
+    typeof window === "undefined" ? "en" : storedLanguage(),
+  );
   // Turn handlers close over the session; the ref keeps the live language.
   const languageRef = useRef<ValeLanguage>(language);
+  const switchLanguage = useCallback((next: ValeLanguage) => {
+    setLanguage(next);
+    // The ref is the wire truth, not the session listener: switching while
+    // idle (no live socket, no listener yet) must still stick for the next
+    // connection's first frame.
+    languageRef.current = next;
+    try {
+      window.localStorage.setItem(LANGUAGE_KEY, next);
+    } catch {
+      /* private mode: the session still switches for this visit */
+    }
+    stopSpeaking("language-switch");
+    // The session listener forwards this on the live socket at once (the
+    // next Meta dial pins ASR to it and the next reply speaks it, with no
+    // manual reconnect); an idle session adopts it from the ref instead.
+    try {
+      window.dispatchEvent(
+        new CustomEvent<ValeLanguage>("vale-language", { detail: next }),
+      );
+    } catch {
+      /* the next turn carries the language frame instead */
+    }
+  }, []);
+  const ui = uiStrings(language);
   // Stable per-browser id so slots, pending actions and chain lanes survive
   // retaps even behind one shared IP; generated once, then reused.
+  const convSocketRef = useRef<WebSocket | null>(null);
   const [clientId] = useState<string>(() => {
     if (typeof window === "undefined") return "unknown";
     try {
@@ -126,19 +178,60 @@ export function TapToTalk() {
   const controllersRef = useRef(new Set<AbortController>());
   const socketsRef = useRef(new Set<WebSocket>());
   const quietTimerRef = useRef(0);
+  const watchdogRef = useRef(0);
+  const visibilityHandlerRef = useRef<(() => void) | null>(null);
+  const languageHandlerRef = useRef<((event: Event) => void) | null>(null);
   const sessionEndRef = useRef<(() => void) | null>(null);
-  const captureRef = useRef<{ stop: () => void } | null>(null);
+  const captureRef = useRef<CaptureHandle | null>(null);
   const repliesRef = useRef(new Map<number, string>());
   const finalReceivedRef = useRef(new Set<number>());
-  // Only a still-open turn's reply can be interrupted.
   const settledTurnsRef = useRef(new Set<number>());
   // Silent streak: the banner shows only on repeated silence.
   const silentStreakRef = useRef(0);
+  // Strict turns: capture muted while she speaks, resumed ~300 ms after.
+  const mutedRef = useRef(false);
+  const resumeTimerRef = useRef(0);
+  const speechWatchRef = useRef(0);
+  const muteStartRef = useRef(0);
+  // Per-turn ear evidence, frozen at endStream and sent with it.
+  const turnPeakRef = useRef(0);
+  const turnMutedMsRef = useRef(0);
+  const turnLostRef = useRef(0);
+  const turnSrcRef = useRef(0);
+  // Single source of truth for what Vale is doing; the indicator mirrors it.
+  const valeStoreRef = useRef(createValeState());
+  const [valeUiState, setValeUiState] = useState<ValeState>("idle");
+  useEffect(() => {
+    const stop = valeStoreRef.current.subscribe(setValeUiState);
+    return stop;
+  }, []);
+
+  const clearSpeechWatch = useCallback(() => {
+    window.clearInterval(speechWatchRef.current);
+    window.clearTimeout(resumeTimerRef.current);
+    mutedRef.current = false;
+  }, []);
+
+  const clearCaptureWatch = useCallback(() => {
+    window.clearTimeout(quietTimerRef.current);
+    window.clearInterval(watchdogRef.current);
+    if (visibilityHandlerRef.current) {
+      document.removeEventListener(
+        "visibilitychange",
+        visibilityHandlerRef.current,
+      );
+      visibilityHandlerRef.current = null;
+    }
+    if (languageHandlerRef.current) {
+      window.removeEventListener("vale-language", languageHandlerRef.current);
+      languageHandlerRef.current = null;
+    }
+  }, []);
 
   const stopSession = useCallback(() => {
     sessionRef.current = false;
     stopSpeaking("tap");
-    window.clearTimeout(quietTimerRef.current);
+    clearCaptureWatch();
     controllersRef.current.forEach((controller) => {
       try {
         controller.abort();
@@ -147,6 +240,8 @@ export function TapToTalk() {
       }
     });
     controllersRef.current.clear();
+    clearSpeechWatch();
+    valeStoreRef.current.set("idle");
     try {
       captureRef.current?.stop();
     } catch {
@@ -163,10 +258,11 @@ export function TapToTalk() {
       }
     });
     socketsRef.current.clear();
+    convSocketRef.current = null;
     sessionEndRef.current?.();
     sessionEndRef.current = null;
     setStatus("idle");
-  }, []);
+  }, [clearCaptureWatch, clearSpeechWatch]);
 
   useEffect(() => stopSession, [stopSession]);
 
@@ -187,7 +283,7 @@ export function TapToTalk() {
   const endSessionWithAlert = useCallback(
     (message: string, code: string | null = null) => {
       sessionRef.current = false;
-      window.clearTimeout(quietTimerRef.current);
+      clearCaptureWatch();
       controllersRef.current.forEach((controller) => {
         try {
           controller.abort();
@@ -215,18 +311,22 @@ export function TapToTalk() {
         }
       });
       socketsRef.current.clear();
+      convSocketRef.current = null;
       setAlert(message);
       setAlertCode(code);
       setStatus("idle");
+      valeStoreRef.current.set("error");
       sessionEndRef.current?.();
       sessionEndRef.current = null;
+      clearSpeechWatch();
     },
-    [],
+    [clearCaptureWatch, clearSpeechWatch],
   );
 
   const runSession = useCallback(
     async (stream: MediaStream): Promise<void> => {
       sessionRef.current = true;
+      valeStoreRef.current.set("attentive");
       // One capture for the whole session; VAD events delimit turns.
       let resolveSession: (() => void) | null = null;
       const ended = new Promise<void>((resolve) => {
@@ -237,9 +337,66 @@ export function TapToTalk() {
       const pending: Int16Array[] = [];
       let currentId = -1;
       let posted = false;
-      // One WebSocket per turn; frames stay buffered for replay or POST fallback.
+      // Move the open mute interval into the turn total without double
+      // counting: each snap restarts the clock, the unmute adds the tail.
+      const snapMutedMs = () => {
+        if (mutedRef.current) {
+          turnMutedMsRef.current += Date.now() - muteStartRef.current;
+          muteStartRef.current = Date.now();
+        }
+        return turnMutedMsRef.current;
+      };
+      // Strict turns: follow her voice, not the VAD. While anything is
+      // owed (audible speech or the estimate window), capture stays muted;
+      // when she settles, flush stale frames, wait ~300 ms, re-listen.
+      // The window stays open throughout: a yes still lands on the session.
+      window.clearInterval(speechWatchRef.current);
+      speechWatchRef.current = window.setInterval(() => {
+        if (!sessionRef.current) return;
+        if (!speechSettled()) {
+          // She owns the air: the store says so even when the frame guard
+          // muted first (set is idempotent, no extra render past the first).
+          valeStoreRef.current.set("speaking");
+          if (!mutedRef.current) {
+            mutedRef.current = true;
+            muteStartRef.current = Date.now();
+            captureRef.current?.setPaused?.(true);
+            window.clearTimeout(resumeTimerRef.current);
+          } else if (
+            Date.now() - muteStartRef.current >
+            SPEECH_HARD_CAP_MS
+          ) {
+            // Wedged voice: release the mic instead of staying deaf.
+            stopSpeaking("speech-cap");
+          }
+          return;
+        }
+        if (mutedRef.current) {
+          mutedRef.current = false;
+          turnMutedMsRef.current += Date.now() - muteStartRef.current;
+          // Fresh stamp for the next mute: the cap measures this voice.
+          muteStartRef.current = 0;
+          pending.length = 0;
+          window.clearTimeout(resumeTimerRef.current);
+          resumeTimerRef.current = window.setTimeout(() => {
+            if (!sessionRef.current) return;
+            captureRef.current?.setPaused?.(false);
+            // A turn posted while she settled already claimed the state.
+            if (valeStoreRef.current.get() === "speaking") {
+              valeStoreRef.current.set("attentive");
+            }
+          }, SPEECH_RESUME_DELAY_MS);
+        }
+      }, 250);
+      // One conversation socket when /voice is up, else one bridge socket
+      // per turn; frames stay buffered for replay or POST fallback.
+      let convSocket: WebSocket | null = null;
+      let convOpen = false;
+      let pendingConvTurn: number | null = null;
       interface TurnTransport {
         socket: WebSocket | null;
+        /** This turn's audio rode the shared conversation socket. */
+        conv: boolean;
         frames: Int16Array[];
         opened: boolean;
         reconnected: boolean;
@@ -254,8 +411,75 @@ export function TapToTalk() {
         endFrames: Int16Array[] | null;
         /** Frames with real voice (energy above the VAD threshold). */
         voiced: number;
+        /** Frozen endStream payload: the same stats on every (re)send. */
+        endPayload: string | null;
       }
       const transports = new Map<number, TurnTransport>();
+
+      const openConvSocket = () => {
+        if (
+          convSocket ||
+          typeof WebSocket === "undefined" ||
+          typeof window === "undefined"
+        ) {
+          return;
+        }
+        let socket: WebSocket;
+        try {
+          socket = new WebSocket(
+            `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/voice`,
+          );
+        } catch {
+          return; // Per-turn sockets and POST stay as the fallback.
+        }
+        convSocket = socket;
+        convSocketRef.current = socket;
+        socketsRef.current.add(socket);
+        socket.binaryType = "arraybuffer";
+        socket.onopen = () => {
+          convOpen = true;
+          try {
+            socket.send(
+              JSON.stringify({
+                type: "language",
+                language: languageRef.current,
+              }),
+            );
+            socket.send(JSON.stringify({ type: "client", client: clientId }));
+            socket.send(JSON.stringify({ type: "wake" }));
+          } catch {
+            /* the close handler falls back to per-turn sockets */
+          }
+        };
+        socket.onmessage = (event: MessageEvent) => {
+          const id = pendingConvTurn ?? currentId;
+          if (!transports.has(id)) return;
+          handleBridgeMessage(id, event.data);
+          try {
+            const raw =
+              typeof event.data === "string"
+                ? event.data
+                : new TextDecoder().decode(event.data as ArrayBuffer);
+            if ((JSON.parse(raw) as { type?: unknown }).type === "done") {
+              if (pendingConvTurn === id) pendingConvTurn = null;
+            }
+          } catch {
+            /* not a JSON control frame */
+          }
+        };
+        const dropConv = () => {
+          convOpen = false;
+          if (convSocket === socket) convSocket = null;
+          if (convSocketRef.current === socket) convSocketRef.current = null;
+          socketsRef.current.delete(socket);
+        };
+        socket.onerror = () => {
+          // The close event follows; in-flight turns fall back below.
+        };
+        socket.onclose = () => {
+          dropConv();
+        };
+      };
 
       const showNotice = (message: string, code: string | null = null) => {
         setNotice(message);
@@ -281,8 +505,17 @@ export function TapToTalk() {
         window.clearTimeout(quietTimerRef.current);
         quietTimerRef.current = window.setTimeout(() => {
           if (!sessionRef.current) return;
+          // Muted while she speaks, the VAD is frozen: churning the turn
+          // here would drop an in-flight reply bubble, so wait her out.
+          if (mutedRef.current) {
+            armQuiet();
+            return;
+          }
           handleVadCandidate(currentId);
-          removeTurn(currentId);
+          // An empty turn never deletes a bubble: prune only contentless
+          // rows, so history survives silence and only the trailing
+          // empty row churns.
+          pruneIfEmpty(currentId);
           openTurn();
         }, NO_SPEECH_TIMEOUT_MS);
       };
@@ -292,8 +525,11 @@ export function TapToTalk() {
         currentId = id;
         posted = false;
         pending.length = 0;
+        turnPeakRef.current = 0;
+        turnMutedMsRef.current = 0;
         transports.set(id, {
           socket: null,
+          conv: false,
           frames: [],
           opened: false,
           reconnected: false,
@@ -304,6 +540,7 @@ export function TapToTalk() {
           postRetried: false,
           endFrames: null,
           voiced: 0,
+          endPayload: null,
         });
         setTurns((prev) => [
           ...prev,
@@ -314,26 +551,10 @@ export function TapToTalk() {
 
       // A failed turn ends the session so the user can tap to retry.
       const failTurn = (id: number, message: string, code: string | null = null) => {
-        if (!finalReceivedRef.current.has(id)) removeTurn(id);
+        // A failed turn may still show what was heard: only a contentless
+        // row goes away, never a bubble with interim text.
+        if (!finalReceivedRef.current.has(id)) pruneIfEmpty(id);
         endSessionWithAlert(message, code);
-      };
-
-      // The mic heard our own reply, not the user: close its socket and erase
-      // the turn before any audio leaves the device.
-      const dropEchoTurn = (id: number) => {
-        const transport = transports.get(id);
-        const socket = transport?.socket ?? null;
-        if (transport) transport.failed = true;
-        if (socket) {
-          socketsRef.current.delete(socket);
-          try {
-            socket.close();
-          } catch {
-            /* already closed */
-          }
-        }
-        transports.delete(id);
-        removeTurn(id);
       };
 
       const sendFrameBytes = (socket: WebSocket, frame: Int16Array) => {
@@ -373,31 +594,51 @@ export function TapToTalk() {
             if (typeof message.transcript !== "string") return;
             if ((message as { final?: unknown }).final === true) {
               finalReceivedRef.current.add(id);
-              if (message.transcript.trim() !== "") silentStreakRef.current = 0;
-              patchTurn(id, { final: message.transcript, interim: "" });
+              // An empty final never wipes a shown interim: the done path
+              // prunes contentless rows, and a row with interim text stays
+              // as heard instead of blanking.
+              if (message.transcript.trim() !== "") {
+                silentStreakRef.current = 0;
+                patchTurn(id, { final: message.transcript, interim: "" });
+              }
             } else {
               patchTurn(id, { interim: message.transcript });
             }
             break;
           case "reply-delta":
             if (typeof message.text !== "string") return;
-            // Append fragments; the final "reply" paints the complete text.
+            // Append fragments and voice complete sentences at once.
             {
               const next = `${repliesRef.current.get(id) ?? ""}${message.text}`;
               repliesRef.current.set(id, next);
               patchTurn(id, { reply: next });
+              valeStoreRef.current.set("speaking");
+              speakStream(message.text, languageRef.current);
             }
             break;
           case "reply":
             if (typeof message.text !== "string") return;
+            // Deltas already voiced this turn: only flush the tail.
+            if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
+            else speak(message.text, languageRef.current);
             repliesRef.current.set(id, message.text);
             patchTurn(id, { reply: message.text });
-            speak(message.text, languageRef.current);
+            valeStoreRef.current.set("speaking");
             break;
           case "board": {
             const board = (message as { board?: unknown }).board;
             if (board && typeof board === "object") {
               setBoard(board as Board);
+            }
+            break;
+          }
+          case "widget": {
+            const incoming = (message as { widget?: unknown }).widget;
+            if (
+              incoming === null ||
+              (incoming && typeof incoming === "object")
+            ) {
+              setWidget((incoming ?? null) as Widget | null);
             }
             break;
           }
@@ -504,7 +745,9 @@ export function TapToTalk() {
           if (transport.ended || transport.endQueued) {
             transport.endQueued = false;
             try {
-              socket.send(JSON.stringify({ type: "endStream" }));
+              socket.send(
+                transport.endPayload ?? JSON.stringify({ type: "endStream" }),
+              );
             } catch {
               /* the close handler decides: reconnect or fail */
             }
@@ -578,9 +821,34 @@ export function TapToTalk() {
         };
       };
 
-      // Speech end: live endStream when the socket is up, else the POST.
+      // Speech end: conversation socket first, then the turn socket, then POST.
       const endTurnTransport = (id: number) => {
+        valeStoreRef.current.set("thinking");
         const transport = transports.get(id);
+        // Freeze what the client saw: the same evidence on every (re)send.
+        const endPayload = JSON.stringify({
+          type: "endStream",
+          peakLevel: turnPeakRef.current,
+          voicedMs: (transport?.voiced ?? 0) * FRAME_MS,
+          mutedMs: snapMutedMs(),
+          valeState: valeStoreRef.current.get(),
+          lostBlocks: turnLostRef.current,
+          srcBlocks: turnSrcRef.current,
+        });
+        if (transport) transport.endPayload = endPayload;
+        if (
+          transport?.conv &&
+          convSocket &&
+          convSocket.readyState === WebSocket.OPEN
+        ) {
+          try {
+            convSocket.send(endPayload);
+            pendingConvTurn = id;
+            return;
+          } catch {
+            /* fall through to the turn socket or POST */
+          }
+        }
         const socket = transport?.socket ?? null;
         // The turn is over: any (re)open must send endStream after replay.
         if (transport) {
@@ -595,7 +863,9 @@ export function TapToTalk() {
           socket.readyState === WebSocket.OPEN
         ) {
           try {
-            socket.send(JSON.stringify({ type: "endStream" }));
+            socket.send(
+              transport.endPayload ?? JSON.stringify({ type: "endStream" }),
+            );
           } catch {
             transport.failed = true;
             postTurn(id, pending.splice(0));
@@ -632,30 +902,12 @@ export function TapToTalk() {
         postTurn(id, pending.splice(0));
       };
 
-      const postTurn = (id: number, frames: Int16Array[]) => {
-        // One buffered body per turn: Safari iOS rejects streaming request bodies.
-        const total = frames.reduce((n, frame) => n + frame.length, 0);
-        const pcm = new Int16Array(total);
-        let offset = 0;
-        for (const frame of frames) {
-          pcm.set(frame, offset);
-          offset += frame.length;
-        }
-        const body = new Blob([pcm.buffer as ArrayBuffer], {
-          type: "audio/l16",
-        });
-        const controller = new AbortController();
-        controllersRef.current.add(controller);
-        setNotice(null);
-        setNoticeCode(null);
-        void fetch(
-          `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
-          {
-          method: "POST",
-          headers: { "content-type": "audio/l16" },
-          body,
-          signal: controller.signal,
-        })
+      const subscribePostTurn = (
+        id: number,
+        request: Promise<Response>,
+        controller: AbortController,
+      ) => {
+        request
           .then(async (response) => {
             if (!response.ok) {
               let message = turnErrorText("lost", languageRef.current);
@@ -683,26 +935,34 @@ export function TapToTalk() {
               onInterim: (transcript) => patchTurn(id, { interim: transcript }),
               onFinal: (transcript) => {
                 // The turn ends at `done`; reply/notice/error follow on this stream.
+                // An empty final never wipes a shown interim: the done path
+                // prunes contentless rows instead.
                 finalReceivedRef.current.add(id);
-                if (transcript.trim() !== "") silentStreakRef.current = 0;
-                patchTurn(id, { final: transcript, interim: "" });
+                if (transcript.trim() !== "") {
+                  silentStreakRef.current = 0;
+                  patchTurn(id, { final: transcript, interim: "" });
+                }
               },
               onErrorEvent: (message, code) => {
                 controllersRef.current.delete(controller);
                 failTurn(id, message, code ?? "E-NET");
               },
               onReplyDelta: (text) => {
-                // Append fragments, same as the bridge path.
+                // Append fragments and voice complete sentences at once.
                 const next = `${repliesRef.current.get(id) ?? ""}${text}`;
                 repliesRef.current.set(id, next);
                 patchTurn(id, { reply: next });
+                speakStream(text, languageRef.current);
               },
               onReply: (text) => {
+                // Deltas already voiced this turn: only flush the tail.
+                if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
+                else speak(text, languageRef.current);
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
-                speak(text, languageRef.current);
               },
               onBoard: (next) => setBoard(next),
+              onWidget: (next) => setWidget(next),
               onIgnored: () => patchTurn(id, { ignored: true }),
               onNotice: (message, code) => {
                 // E-VAD notices pass the silence gate; anything else shows directly.
@@ -729,23 +989,203 @@ export function TapToTalk() {
           });
       };
 
+      const postTurn = (id: number, frames: Int16Array[]) => {
+        // One buffered body per turn: Safari iOS rejects streaming request bodies.
+        const total = frames.reduce((n, frame) => n + frame.length, 0);
+        const pcm = new Int16Array(total);
+        let offset = 0;
+        for (const frame of frames) {
+          pcm.set(frame, offset);
+          offset += frame.length;
+        }
+        const body = new Blob([pcm.buffer as ArrayBuffer], {
+          type: "audio/l16",
+        });
+        const controller = new AbortController();
+        controllersRef.current.add(controller);
+        setNotice(null);
+        setNoticeCode(null);
+        subscribePostTurn(
+          id,
+          fetch(
+            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+            {
+              method: "POST",
+              headers: { "content-type": "audio/l16" },
+              body,
+              signal: controller.signal,
+            },
+          ),
+          controller,
+        );
+      };
+
+      // Touch on a confirm card: rides the open socket like any control, or
+      // a JSON turn when no socket is open. Either way it equals a spoken vote.
+      const castVote = (vote: "yes" | "no") => {
+        if (!sessionRef.current) return;
+        const payload = JSON.stringify({ type: "vote", vote });
+        try {
+          if (
+            convOpen &&
+            convSocket &&
+            typeof WebSocket !== "undefined" &&
+            convSocket.readyState === WebSocket.OPEN
+          ) {
+            convSocket.send(payload);
+            return;
+          }
+          const socket = transports.get(currentId)?.socket;
+          if (
+            socket &&
+            typeof WebSocket !== "undefined" &&
+            socket.readyState === WebSocket.OPEN
+          ) {
+            socket.send(payload);
+            return;
+          }
+        } catch {
+          /* fall through to the JSON turn */
+        }
+        openTurn();
+        const id = currentId;
+        const controller = new AbortController();
+        controllersRef.current.add(controller);
+        setNotice(null);
+        setNoticeCode(null);
+        subscribePostTurn(
+          id,
+          fetch(
+            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ transcript: vote }),
+              signal: controller.signal,
+            },
+          ),
+          controller,
+        );
+      };
+
       // End-of-turn pause, tunable without redeploying the default: slow
       // phrases keep pauses under this; longer silence splits the turn.
       const endSilenceMs = Math.max(
         1,
         Number(process.env.NEXT_PUBLIC_VAD_END_SILENCE_MS) || 800,
       );
-      const capture = startCapture(
-        stream,
-        {
+      // Stall watchdog: the processor feeds a heartbeat on every audio
+      // block, speech or silence, so a quiet mic still proves it is alive.
+      // No blocks for STALL_MS means capture died (suspended context,
+      // throttled tab, killed processor) and restarts on the same stream.
+      // Silence never trips it: only the heartbeat counts, never frames.
+      const STALL_MS = 5000;
+      let lastBeatAt = Date.now();
+      let framesOut = 0;
+      const snapshotState = (capture: string): Record<string, unknown> => ({
+        capture,
+        audio: captureRef.current?.state() ?? "unknown",
+        visible:
+          typeof document !== "undefined" ? document.visibilityState : "?",
+        speaking: isSpeaking(),
+        framesOut,
+        idleMs: Date.now() - lastBeatAt,
+      });
+      const sendClientState = (capture: string) => {
+        let payload = "";
+        try {
+          payload = JSON.stringify({
+            type: "client-state",
+            state: snapshotState(capture),
+          });
+        } catch {
+          return;
+        }
+        // Diagnostics ride the open socket; they never open one themselves.
+        try {
+          if (
+            convOpen &&
+            convSocket &&
+            typeof WebSocket !== "undefined" &&
+            convSocket.readyState === WebSocket.OPEN
+          ) {
+            convSocket.send(payload);
+            return;
+          }
+          const socket = transports.get(currentId)?.socket;
+          if (
+            socket &&
+            typeof WebSocket !== "undefined" &&
+            socket.readyState === WebSocket.OPEN
+          ) {
+            socket.send(payload);
+          }
+        } catch {
+          /* diagnostics never break the turn */
+        }
+      };
+      const logClientState = (event: string) => {
+        const snapshot = snapshotState(event);
+        try {
+          console.log(
+            `[capture] ${event} visible=${String(snapshot.visible)} audio=${String(snapshot.audio)} speaking=${String(snapshot.speaking)} frames=${String(snapshot.framesOut)} idleMs=${String(snapshot.idleMs)}`,
+          );
+        } catch {
+          /* logging never breaks the turn */
+        }
+        sendClientState(event);
+      };
+      const beginCapture = () => {
+        try {
+          captureRef.current?.stop();
+        } catch {
+          /* already stopped */
+        }
+        captureRef.current = startCapture(stream, captureCallbacks, {
+          threshold: 200,
+          endSilenceMs,
+        });
+        lastBeatAt = Date.now();
+      };
+      const captureCallbacks: CaptureCallbacks = {
+          onHeartbeat: () => {
+            lastBeatAt = Date.now();
+          },
           onFrame: (frame) => {
             if (!sessionRef.current) return;
+            // Strict turns: while she speaks, nothing is captured. The
+            // capture pause usually drops these first; this guards the gap
+            // before the next watch tick lands.
+            if (!speechSettled()) {
+              captureRef.current?.setPaused?.(true);
+              mutedRef.current = true;
+              // The watch reads this for the 60 s backstop: stamp it on
+              // every mute path, or the first tick would cut her at once.
+              if (muteStartRef.current === 0) {
+                muteStartRef.current = Date.now();
+              }
+              return;
+            }
+            framesOut += 1;
             pending.push(frame.slice());
             // Stream each frame live and keep it buffered for replay or POST fallback.
             const transport = transports.get(currentId);
             if (transport && !transport.failed) {
               if (countVoiced(frame)) transport.voiced += 1;
               transport.frames.push(frame.slice());
+              if (
+                convOpen &&
+                convSocket &&
+                convSocket.readyState === WebSocket.OPEN
+              ) {
+                try {
+                  sendFrameBytes(convSocket, frame);
+                  transport.conv = true;
+                } catch {
+                  /* endTurnTransport falls back to POST */
+                }
+                return;
+              }
               const socket = transport.socket;
               if (socket && socket.readyState === WebSocket.OPEN) {
                 try {
@@ -758,38 +1198,47 @@ export function TapToTalk() {
           },
           onSpeechStart: () => {
             if (!sessionRef.current) return;
-            // Our own reply still audible: this is echo, not the user.
-            // Never cut it and never dismiss its text.
-            const echo = isSpeaking();
-            if (!echo) stopSpeaking("speech-start");
+            // Strict turns: speech only starts while she is silent (capture
+            // runs muted otherwise), so there is nothing to interrupt and
+            // her text stays put.
+            valeStoreRef.current.set("hearing");
             window.clearTimeout(quietTimerRef.current);
-            if (!echo) {
-              // New speech dismisses only the still-open turn's reply.
-              const dismissed: number[] = [];
-              setTurns((prev) =>
-                prev.map((turn) =>
-                  turn.reply && !settledTurnsRef.current.has(turn.id)
-                    ? (dismissed.push(turn.id), { ...turn, reply: null })
-                    : turn,
-                ),
-              );
-              for (const turnId of dismissed) {
-                repliesRef.current.delete(turnId);
-              }
-            }
             // A new utterance after a posted turn opens the next turn on the same capture.
             if (posted) openTurn(false);
-            // Open the socket at speech start so the ~0.9 s handshake hides inside the utterance.
-            openTurnSocket(currentId);
+            // Without a conversation socket, open one per turn so the
+            // ~0.9 s handshake hides inside the utterance.
+            if (!convOpen) openTurnSocket(currentId);
           },
-          onSpeechEnd: () => {
+          onSpeechEnd: (utterance?: UtteranceStats) => {
             if (!sessionRef.current || posted) return;
             posted = true;
-            // Reply still audible at speech end: the mic heard us, drop it.
-            if (isSpeaking()) {
-              dropEchoTurn(currentId);
+            // Delivery accounting for this utterance (blocks lost under
+            // load, source blocks spanned): frozen into the endStream below.
+            turnLostRef.current = utterance?.lostBlocks ?? 0;
+            turnSrcRef.current = utterance?.srcBlocks ?? 0;
+            // Below ~300 ms of voiced audio the mic heard noise, not Daniel:
+            // drop the turn before it reaches the wire. An empty never cuts
+            // her voice (audible starts never cut) and never moves the window
+            // (the server only stamps attention on executed turns and replies).
+            const transport = transports.get(currentId);
+            if ((transport?.voiced ?? 0) * FRAME_MS < MIN_VOICED_MS) {
+              if (transport) {
+                transport.failed = true;
+                const socket = transport.socket;
+                if (socket) {
+                  try {
+                    socket.close();
+                  } catch {
+                    /* already closed */
+                  }
+                }
+              }
+              removeTurn(currentId);
+              openTurn(false);
               return;
             }
+            // Strict turns: speech only starts while she is silent, so
+            // every utterance here is Daniel, never her echo.
             endTurnTransport(currentId);
           },
           // Same samples as the VAD, throttled to ~10 Hz.
@@ -797,23 +1246,103 @@ export function TapToTalk() {
             const now = Date.now();
             if (now - lastLevelRef.current < 100) return;
             lastLevelRef.current = now;
+            if (value > turnPeakRef.current) turnPeakRef.current = value;
             setLevel(value);
           },
-        },
+          // iOS kept the context suspended past the gesture: zeros flow.
+          onBlocked: () => {
+            if (!sessionRef.current) return;
+            endSessionWithAlert(
+              turnErrorText("suspended", languageRef.current),
+              null,
+            );
+          },
         // Threshold 200 with 1 s pre-roll; the end silence comes from
         // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
-        { threshold: 200, endSilenceMs },
-      );
-
-      captureRef.current = capture;
+        };
+        castVoteRef.current = castVote;
+      beginCapture();
+      // A stall resumes alone: no audio blocks for STALL_MS restarts
+      // capture on the same stream instead of ending the session. The mic
+      // stream itself dead is the only honest alert left.
+      watchdogRef.current = window.setInterval(() => {
+        if (!sessionRef.current) return;
+        if (Date.now() - lastBeatAt < STALL_MS) return;
+        const tracks =
+          typeof stream.getTracks === "function" ? stream.getTracks() : [];
+        const micLive =
+          tracks.length === 0 ||
+          tracks.some((track) => track.readyState === "live");
+        if (!micLive) {
+          endSessionWithAlert(
+            turnErrorText("suspended", languageRef.current),
+            null,
+          );
+          return;
+        }
+        logClientState("stall-restart");
+        try {
+          beginCapture();
+        } catch {
+          endSessionWithAlert(
+            turnErrorText("suspended", languageRef.current),
+            null,
+          );
+        }
+      }, 2000);
+      // Hidden tabs stop the processor on some platforms: log the state on
+      // every change and re-check on return; the watchdog restarts a stall.
+      const onVisibility = () => {
+        if (!sessionRef.current) return;
+        logClientState("visibility");
+      };
+      visibilityHandlerRef.current = onVisibility;
+      document.addEventListener("visibilitychange", onVisibility);
+      // Mid-session language switch: the ref, the open conversation
+      // socket and the next dial adopt it at once.
+      const onLanguage = (event: Event) => {
+        const next = (event as CustomEvent<ValeLanguage>).detail;
+        if (next !== "es" && next !== "en") return;
+        languageRef.current = next;
+        try {
+          if (
+            convOpen &&
+            convSocket &&
+            typeof WebSocket !== "undefined" &&
+            convSocket.readyState === WebSocket.OPEN
+          ) {
+            convSocket.send(JSON.stringify({ type: "language", language: next }));
+          }
+        } catch {
+          /* the next turn carries the language frame instead */
+        }
+      };
+      languageHandlerRef.current = onLanguage;
+      window.addEventListener("vale-language", onLanguage);
+      openConvSocket();
       openTurn();
       await ended;
+      clearCaptureWatch();
     },
-    [patchTurn, removeTurn, pruneIfEmpty, endSessionWithAlert, clientId],
+    [
+      patchTurn,
+      removeTurn,
+      pruneIfEmpty,
+      endSessionWithAlert,
+      clearCaptureWatch,
+      clientId,
+    ],
   );
 
   const handleTap = useCallback(async () => {
     if (status === "requesting") return;
+    // In-gesture audio unlock: resume() after the getUserMedia await below
+    // no longer counts as a gesture on iOS and the mic delivers zeros.
+    try {
+      unlockAudioContext();
+    } catch {
+      /* startCapture throws the clear error when unsupported */
+    }
     if (status === "live" || status === "error") {
       stopSession();
       setAlert(null);
@@ -852,16 +1381,6 @@ export function TapToTalk() {
     setEngine(next);
   }, [engine]);
 
-  const selectLanguage = useCallback((next: ValeLanguage) => {
-    languageRef.current = next;
-    setLanguage(next);
-    try {
-      window.localStorage.setItem("vale-language", next);
-    } catch {
-      /* persistence is best-effort; the turn still uses the new language */
-    }
-  }, []);
-
   return (
     <section>
       <button
@@ -870,10 +1389,10 @@ export function TapToTalk() {
         disabled={status === "requesting"}
       >
         {status === "live"
-          ? "Stop"
+          ? ui.stop
           : status === "requesting"
-            ? "Waiting for permission…"
-            : "Tap to talk"}
+            ? ui.waiting
+            : ui.tapToTalk}
       </button>{" "}
       <button
         type="button"
@@ -892,43 +1411,41 @@ export function TapToTalk() {
       >
         <SpeakerIcon /> Voice: {engine === "seamless" ? "Seamless" : "browser"}
       </button>{" "}
-      <span role="group" aria-label="Language">
-        <button
-          type="button"
-          onClick={() => selectLanguage("es")}
-          aria-pressed={language === "es"}
-          style={
-            language === "es"
-              ? { fontWeight: "bold", textDecoration: "underline" }
-              : undefined
-          }
-        >
-          ES
-        </button>{" "}
-        <button
-          type="button"
-          onClick={() => selectLanguage("en")}
-          aria-pressed={language === "en"}
-          style={
-            language === "en"
-              ? { fontWeight: "bold", textDecoration: "underline" }
-              : undefined
-          }
-        >
+      <fieldset>
+        <legend>{ui.language}</legend>{" "}
+        <label>
+          <input
+            type="radio"
+            aria-label="English"
+            name="vale-language"
+            value="en"
+            checked={language === "en"}
+            onChange={() => switchLanguage("en")}
+          />{" "}
           EN
-        </button>
-      </span>
+        </label>{" "}
+        <label>
+          <input
+            type="radio"
+            aria-label="Español"
+            name="vale-language"
+            value="es"
+            checked={language === "es"}
+            onChange={() => switchLanguage("es")}
+          />{" "}
+          ES
+        </label>
+      </fieldset>{" "}
+      <VoiceControls language={language} />
 
       {status === "live" && <LevelMeter level={level} />}
+
+      {status === "live" && <p role="status">{ui.valeState(valeUiState)}</p>}
 
       {status === "live" &&
         turns.every((turn) => !hasVisibleContent(turn)) &&
         !notice && (
-          <p>
-            {language === "en"
-              ? "Your microphone is on. Go ahead, I'm listening."
-              : "Tu micrófono está encendido. Adelante, te escucho."}
-          </p>
+          <p>{ui.listenHint}</p>
         )}
 
       <ol aria-label="Conversation turns">
@@ -941,7 +1458,7 @@ export function TapToTalk() {
               <p>
                 {turn.final ?? turn.interim}{" "}
                 <small>
-                  {language === "en" ? "ignored (no name)" : "ignorado (sin nombre)"}
+                  {ui.ignoredTag}
                 </small>
               </p>
             ) : (
@@ -962,7 +1479,15 @@ export function TapToTalk() {
         ))}
       </ol>
 
-      <ValeBoard board={board} />
+      <ValeBoard board={board} language={language} />
+
+      {widget && (
+        <WidgetCard
+          widget={widget}
+          language={language}
+          onVote={(vote) => castVoteRef.current(vote)}
+        />
+      )}
 
       {notice && <p role="status">{notice}</p>}
 
@@ -970,10 +1495,7 @@ export function TapToTalk() {
 
       {status === "blocked" && (
         <div role="alert">
-          <p>
-            Your microphone is blocked, so I can&apos;t hear you. To turn it
-            back on:
-          </p>
+          <p>{ui.micBlockedLead}</p>
           <ul>
             <li>
               iPhone (Safari): open Settings &gt; Safari &gt; Microphone and
@@ -989,10 +1511,7 @@ export function TapToTalk() {
 
       {status === "error" && !alert && (
         <div role="alert">
-          <p>
-            Something went wrong with the microphone. Check that one is
-            connected and tap again.
-          </p>
+          <p>{ui.micError}</p>
         </div>
       )}
     </section>

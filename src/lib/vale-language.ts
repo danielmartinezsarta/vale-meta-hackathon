@@ -5,11 +5,11 @@
 
 export type ValeLanguage = "es" | "en";
 
-export const DEFAULT_LANGUAGE: ValeLanguage = "es";
+export const DEFAULT_LANGUAGE: ValeLanguage = "en";
 
-/** Unknown or missing values fall back to Spanish; the set stays closed. */
+/** Unknown or missing values fall back to English; the set stays closed. */
 export function parseLanguage(value: unknown): ValeLanguage {
-  return value === "en" ? "en" : "es";
+  return value === "es" ? "es" : "en";
 }
 
 export type VoiceErrorKind =
@@ -17,6 +17,7 @@ export type VoiceErrorKind =
   | "timeout"
   | "lost"
   | "model"
+  | "suspended"
   | "vad-tap"
   | "vad-continue";
 
@@ -37,6 +38,10 @@ const ERROR_TEXT: Record<VoiceErrorKind, Record<ValeLanguage, string>> = {
     es: "Perdón, tuve un problema. Toca para intentar de nuevo.",
     en: "Sorry, I had a problem. Tap to try again.",
   },
+  suspended: {
+    es: "El micrófono no arrancó. Toca para intentar de nuevo.",
+    en: "The microphone did not start. Tap to try again.",
+  },
   "vad-tap": {
     es: "No te escuché. Toca y habla.",
     en: "I didn't hear you. Tap and speak.",
@@ -53,4 +58,16 @@ export function turnErrorText(
   language: ValeLanguage = DEFAULT_LANGUAGE,
 ): string {
   return ERROR_TEXT[kind][language];
+}
+
+/** Tapping No on a confirm card: the spoken equivalent of saying no. */
+export function declineText(language: ValeLanguage = DEFAULT_LANGUAGE): string {
+  return language === "es" ? "Vale, no lo guardo." : "OK, I won't save it.";
+}
+
+/** A yes with nothing pending: ask what to confirm instead of writing. */
+export function clarifyText(language: ValeLanguage = DEFAULT_LANGUAGE): string {
+  return language === "es"
+    ? "¿Qué quieres que confirme?"
+    : "What would you like me to confirm?";
 }

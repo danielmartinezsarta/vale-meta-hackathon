@@ -1,6 +1,19 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { PRIVATE_NOTE_LABEL, freshTestDb, getCounts, getPublicNotes, seedDatabase } from "./db";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  PRIVATE_NOTE_LABEL,
+  freshTestDb,
+  getCounts,
+  getDb,
+  getPublicNotes,
+  recentTurns,
+  recordTurn,
+  resolveDbFile,
+  seedDatabase,
+  userName,
+} from "./db";
 
 describe("seeded database", () => {
   it("seeds 5 clients, 6 services and 23 supplies", () => {
@@ -61,5 +74,108 @@ describe("private health notes", () => {
     expect(general.text).toBe("prefiere cita los viernes");
     expect(PRIVATE_NOTE_LABEL.length).toBeGreaterThan(0);
     db.close();
+  });
+});
+
+describe("conversation turns", () => {
+  it("returns the last turns in order for one client only", () => {
+    const db = freshTestDb();
+    recordTurn(db, "c1", "user", "Vale, open a session for Emma");
+    recordTurn(db, "c1", "vale", "Which service for Emma?", "find_client");
+    recordTurn(db, "c2", "user", "Vale, hi");
+    const turns = recentTurns(db, "c1", 20);
+    expect(turns).toEqual([
+      { role: "user", text: "Vale, open a session for Emma", tool: null },
+      { role: "vale", text: "Which service for Emma?", tool: "find_client" },
+    ]);
+    db.close();
+  });
+
+  it("keeps only the newest turns per client", () => {
+    const db = freshTestDb();
+    for (let i = 0; i < 25; i += 1) {
+      recordTurn(db, "c1", i % 2 === 0 ? "user" : "vale", `turn ${i}`);
+    }
+    const turns = recentTurns(db, "c1", 20);
+    expect(turns).toHaveLength(20);
+    expect(turns[0].text).toBe("turn 5");
+    expect(turns[19].text).toBe("turn 24");
+    db.close();
+  });
+});
+
+describe("test-database guards", () => {
+  it("refuses turns without a client key", () => {
+    const db = freshTestDb();
+    recordTurn(db, "unknown", "user", "hello?");
+    recordTurn(db, "   ", "user", "hello?");
+    recordTurn(db, "c1", "user", "Vale, open a session");
+    const turns = recentTurns(db, "c1", 20);
+    expect(turns).toHaveLength(1);
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM turns").get() as { n: number }).n,
+    ).toBe(1);
+    db.close();
+  });
+
+  it("seeds Daniel as the user", () => {
+    const db = freshTestDb();
+    expect(userName(db)).toBe("Daniel");
+    db.close();
+  });
+
+  it("prefers VALE_USER_NAME over the seed and keeps a renamed profile", () => {
+    const saved = process.env.VALE_USER_NAME;
+    const db = freshTestDb();
+    try {
+      process.env.VALE_USER_NAME = "Maria";
+      expect(userName(db)).toBe("Maria");
+    } finally {
+      if (saved === undefined) delete process.env.VALE_USER_NAME;
+      else process.env.VALE_USER_NAME = saved;
+    }
+    db.prepare("UPDATE user_profile SET name = ? WHERE id = 1").run("Maria");
+    seedDatabase(db);
+    expect(userName(db)).toBe("Maria");
+    db.close();
+  });
+
+  it("resolves the live file by default and honors VALE_DB_PATH", () => {
+    const saved = process.env.VALE_DB_PATH;
+    try {
+      delete process.env.VALE_DB_PATH;
+      expect(resolveDbFile("/tmp/x")).toBe(join("/tmp", "x", "data", "vale.db"));
+      process.env.VALE_DB_PATH = "data/eval.db";
+      expect(resolveDbFile("/tmp/x")).toBe(join("/tmp", "x", "data", "eval.db"));
+      process.env.VALE_DB_PATH = "/tmp/abs/eval.db";
+      expect(resolveDbFile("/tmp/x")).toBe("/tmp/abs/eval.db");
+    } finally {
+      if (saved === undefined) delete process.env.VALE_DB_PATH;
+      else process.env.VALE_DB_PATH = saved;
+    }
+  });
+
+  it("never lets the eval runner target the live database file", () => {
+    const source = readFileSync(
+      join(process.cwd(), "scripts", "eval-hack017.mjs"),
+      "utf8",
+    );
+    // The runner resolves its own disposable file through VALE_DB_PATH.
+    expect(source).toContain("VALE_DB_PATH");
+    // No reset or open may name the live file: rmSync vale.db once
+    // deleted Daniel's real turns, clients and appointments.
+    expect(source).not.toMatch(/rmSync\([^)]*vale\.db/);
+    expect(source).not.toMatch(/new DatabaseSync\([^)]*vale\.db/);
+  });
+
+  it("refuses the file database under vitest", () => {
+    const saved = process.env.VALE_DB_MEMORY;
+    delete process.env.VALE_DB_MEMORY;
+    try {
+      expect(() => getDb()).toThrow(/under vitest/);
+    } finally {
+      if (saved === undefined) delete process.env.VALE_DB_MEMORY;
+      else process.env.VALE_DB_MEMORY = saved;
+    }
   });
 });

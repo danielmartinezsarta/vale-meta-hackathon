@@ -1,10 +1,15 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { startCapture, unlockAudioContext } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
   // jsdom has no AudioContext.
-  startCapture: vi.fn(() => ({ stop: () => {} })),
+  startCapture: vi.fn(() => ({
+    stop: () => {},
+    state: () => "running",
+  })),
+  unlockAudioContext: vi.fn(),
 }));
 
 function stubGetUserMedia(impl: (...args: never[]) => unknown) {
@@ -36,9 +41,30 @@ describe("microphone permission", () => {
       audio: { echoCancellation: true, noiseSuppression: true },
     });
     expect(
-      await screen.findByText(/micrófono está encendido/i),
+      await screen.findByText(/microphone is on/i),
     ).toBeDefined();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("unlocks audio in the tap and alerts when the context stays suspended", async () => {
+    const stream = { getTracks: () => [] } as unknown as MediaStream;
+    stubGetUserMedia(async () => stream);
+
+    render(<TapToTalk />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    // In-gesture unlock runs before any await.
+    expect(unlockAudioContext).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => {
+      expect(startCapture).toHaveBeenCalled();
+    });
+    const callbacks = vi.mocked(startCapture).mock.calls[0][1];
+    callbacks.onBlocked?.();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/no arrancó|did not start/i);
+    expect(
+      screen.getByRole("button", { name: "Tap to talk" }),
+    ).toBeDefined();
   });
 
   it("shows how to re-enable the mic when denied, with no prompt loop", async () => {

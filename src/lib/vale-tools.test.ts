@@ -92,6 +92,21 @@ describe("sessions", () => {
     expect(closeSession(db, {}).message).toBe("No hay sesión abierta.");
     db.close();
   });
+  it("names the open session and the next step instead of reopening", () => {
+    const db = freshTestDb();
+    openAna(db);
+    const refused = openSession(
+      db,
+      { client_name: "Maria", service_name: "Manicura" },
+      "en",
+    );
+    expect(refused.ok).toBe(false);
+    expect(refused.message).toContain("already an open session");
+    expect(refused.message).toContain("Ana");
+    expect(refused.message).toContain("Do not call close_session yet");
+    db.close();
+  });
+
 
   it("reports unknown clients and services without inventing", () => {
     const db = freshTestDb();
@@ -374,6 +389,46 @@ describe("appointments", () => {
     expect(count.n).toBe(0);
     const moved = moveAppointment(db, { client_name: "Nadie", new_day: localDay(), new_time: "11:00" });
     expect(moved.ok).toBe(false);
+    db.close();
+  });
+
+  it("rejects days missing from the calendar", () => {
+    const db = freshTestDb();
+    const nov31 = createAppointment(
+      db,
+      {
+        client_name: "Ana",
+        service_name: "retiro",
+        day: "2026-11-31",
+        time: "18:00",
+        confirm_off_hours: true,
+      },
+      "en",
+    );
+    expect(nov31.ok).toBe(false);
+    expect(nov31.message).toContain("30 days");
+    const feb29 = createAppointment(db, {
+      client_name: "Ana",
+      service_name: "retiro",
+      day: "2025-02-29",
+      time: "18:00",
+      confirm_off_hours: true,
+    });
+    expect(feb29.ok).toBe(false);
+    const feb29Leap = createAppointment(
+      db,
+      {
+        client_name: "Ana",
+        service_name: "retiro",
+        day: "2024-02-29",
+        time: "18:00",
+        confirm_off_hours: true,
+      },
+      "en",
+    );
+    expect(feb29Leap.ok).toBe(true);
+    const count = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
+    expect(count.n).toBe(1);
     db.close();
   });
 

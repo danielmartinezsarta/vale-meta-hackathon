@@ -1,5 +1,7 @@
 import WebSocket from "ws";
 
+import type { ValeLanguage } from "./vale-language";
+
 export const ASR_URL = "wss://api.meta.ai/v1/asr/realtime";
 export const ASR_MODEL = "muse-voice-transcribe-1.0";
 export const ASR_ENCODING = "PCM_24KHZ";
@@ -24,6 +26,8 @@ export interface OpenAsrOptions {
   url?: string;
   onEvent: (event: AsrEvent) => void;
   onError?: (message: string) => void;
+  /** Screen language: pinned as the transcription bias (names, not tags). */
+  language?: ValeLanguage;
 }
 
 // Server-side only: holds the Meta key, never import from client code.
@@ -55,6 +59,8 @@ export function openAsrConnection(
           audioEncoding: ASR_ENCODING,
           model: ASR_MODEL,
           mode: "PUSH_TO_TALK",
+          // Pin listening to the screen language (names, not tags).
+          languageBias: [options.language === "es" ? "Spanish" : "English"],
         }),
       );
     });

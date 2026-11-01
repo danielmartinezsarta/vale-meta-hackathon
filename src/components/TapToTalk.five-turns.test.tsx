@@ -58,12 +58,12 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
         fired += 1;
         callbacks.onFrame(frame);
         callbacks.onSpeechStart();
-        callbacks.onFrame(frame);
+        for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
         callbacks.onSpeechEnd();
         window.setTimeout(fireNext, 10);
       };
       window.setTimeout(fireNext, 0);
-      return { stop: () => {} };
+      return { stop: () => {}, state: () => "running" };
     });
 
     const script: [string, string][] = [

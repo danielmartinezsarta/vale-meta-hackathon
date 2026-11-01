@@ -14,7 +14,7 @@ function burst(callbacks: CaptureCallbacks) {
   const frame = new Int16Array(960).fill(4000);
   callbacks.onFrame(frame);
   callbacks.onSpeechStart();
-  callbacks.onFrame(frame);
+  for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
   callbacks.onSpeechEnd();
 }
 
@@ -31,7 +31,7 @@ function setupDevice() {
   const seen: CaptureCallbacks[] = [];
   mockStartCapture.mockImplementation((_stream, callbacks) => {
     seen.push(callbacks);
-    return { stop: () => {} };
+    return { stop: () => {}, state: () => "running" };
   });
   return seen;
 }
@@ -141,7 +141,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     burst(seen[0]);
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/perdió la conexión/i);
+    expect(alert.textContent).toMatch(/connection dropped/i);
     expect(alert.textContent).not.toMatch(/E-NET/);
   });
 

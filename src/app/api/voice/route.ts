@@ -1,34 +1,34 @@
 import { connection } from "next/server";
 import { upgradeWebSocket } from "@vercel/functions";
 import { runAgentTurn } from "@/lib/agent";
-import { getDb } from "@/lib/db";
+import { getDb, recentTurns, recordTurn } from "@/lib/db";
 import { getBoard } from "@/lib/board";
-import {
-  chainFailed,
-  chainSucceeded,
-  nextPreviousResponseId,
-} from "@/lib/response-chain";
 import { getSlots } from "@/lib/slot-memory";
 import {
+  clearPendingAction,
   isConfirmYes,
+  isRefusalNo,
+  peekPendingAction,
   runPendingActions,
   takePendingAction,
 } from "@/lib/pending-action";
 import {
   checkWake,
-  clearQuestion,
-  collapseEcho,
-  isGreetingOnly,
-  markQuestionAsked,
+  noteAttention,
   requestClientId,
+  type WakeVerdict,
 } from "@/lib/wake";
+import { getOpenSession } from "@/lib/vale-tools";
 import { openAsrConnection } from "@/lib/asr";
-import { estimateCost, formatTurnLog } from "@/lib/turn-log";
+import { emitTurnLog, estimateCost } from "@/lib/turn-log";
+import { saveTurnWav } from "@/lib/turn-audio";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
 import {
   DEFAULT_LANGUAGE,
+  declineText,
   parseLanguage,
   turnErrorText,
+  type ValeLanguage,
 } from "@/lib/vale-language";
 
 export const runtime = "nodejs";
@@ -112,7 +112,7 @@ export async function POST(request: Request): Promise<Response> {
       if (typeof body.transcript !== "string" || body.transcript.trim() === "") {
         return Response.json({ error: "Empty transcript." }, { status: 400 });
       }
-      cannedTranscript = collapseEcho(body.transcript);
+      cannedTranscript = body.transcript;
     } catch {
       return Response.json({ error: "Bad request." }, { status: 400 });
     }
@@ -157,6 +157,10 @@ export async function POST(request: Request): Promise<Response> {
       let finalAtMs = 0;
       let audioSeconds = 0;
       let agentRan = false;
+      /** This turn's mic PCM for the WAV evidence file; freed at turn end. */
+      const audioChunks: Uint8Array[] = [];
+      let turnWav: string | null = null;
+      let wavSaved = false;
       const turnTimeoutMs = Math.max(
         1,
         Number(process.env.VOICE_TURN_TIMEOUT_MS) || TURN_TIMEOUT_MS,
@@ -166,8 +170,8 @@ export async function POST(request: Request): Promise<Response> {
         asr?.close();
         if (!settled) {
           settled = true;
-          chainFailed(clientKey);
           logTurn({
+            language,
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: finalText || lastInterim,
             ttftMs: null,
@@ -183,6 +187,9 @@ export async function POST(request: Request): Promise<Response> {
             chain: "none",
             key: clientKey,
             slots: null,
+            gate: null,
+            sinceReplyS: null,
+            totalMs: null,
           });
         }
         finishError(turnErrorText("timeout", language), "E-NET");
@@ -190,7 +197,6 @@ export async function POST(request: Request): Promise<Response> {
 
       const abort = () => {
         aborted = true;
-        chainFailed(clientKey);
         clearTimeout(timeout);
         try {
           asr?.close();
@@ -204,10 +210,12 @@ export async function POST(request: Request): Promise<Response> {
       const logTurn = (fields: {
         // ts is the caller-supplied end-of-speech moment.
         ts: string;
+        language: ValeLanguage;
         transcript: string;
         ttftMs: number | null;
         inputTokens: number;
         outputTokens: number;
+        cachedInputTokens?: number | null;
         audioSeconds: number;
         tool: string | null;
         modelSkipped: boolean;
@@ -217,28 +225,43 @@ export async function POST(request: Request): Promise<Response> {
         chain?: "hit" | "miss" | "none";
         key?: string;
         slots?: { client?: string; service?: string } | null;
+        gate?: WakeVerdict["gate"] | null;
+        sinceReplyS?: number | null;
+        totalMs?: number | null;
       }) => {
-        console.log(
-          formatTurnLog({
-            ...fields,
-            costUsd: estimateCost(
-              { inputTokens: fields.inputTokens, outputTokens: fields.outputTokens },
-              fields.audioSeconds,
-            ),
-          }),
-        );
+        // One WAV per turn from whatever the mic sent; canned transcripts
+        // carry no audio, so they log wav null. POST turns have no client
+        // stats frame, unlike the WS bridge (stats stay null there).
+        if (!wavSaved && audioChunks.length > 0) {
+          wavSaved = true;
+          turnWav = saveTurnWav(clientKey, audioChunks);
+          audioChunks.length = 0;
+        }
+        emitTurnLog({
+          ...fields,
+          wav: turnWav,
+          costUsd: estimateCost(
+            {
+              inputTokens: fields.inputTokens,
+              outputTokens: fields.outputTokens,
+              cachedInputTokens: fields.cachedInputTokens ?? 0,
+            },
+            fields.audioSeconds,
+          ),
+        });
       };
 
       const answerTranscript = async (
         transcript: string,
         audioSeconds: number,
         speechEndAt: number,
+        verdict: WakeVerdict,
       ): Promise<void> => {
         agentRan = true;
         const ts = new Date(speechEndAt || Date.now()).toISOString();
-        const chainedId = nextPreviousResponseId(clientKey);
-        const chainState: "hit" | "miss" =
-          chainedId === undefined ? "miss" : "hit";
+        // Explicit memory: history first, then record this user turn.
+        const history = recentTurns(getDb(), clientKey);
+        recordTurn(getDb(), clientKey, "user", transcript);
         const slotSnapshot = (): {
           client?: string;
           service?: string;
@@ -258,12 +281,14 @@ export async function POST(request: Request): Promise<Response> {
           if (isConfirmYes(transcript)) {
             const actions = takePendingAction(clientKey);
             if (actions) {
-              const executed = runPendingActions(getDb(), clientKey, actions);
-              chainFailed(clientKey);
-              clearQuestion(clientKey);
+              const executed = runPendingActions(getDb(), clientKey, actions, language);
+              recordTurn(getDb(), clientKey, "vale", executed.text, executed.toolUsed);
               send("reply", { text: executed.text });
+              // Her reply restarts the window: the next turn counts from here.
+              noteAttention(clientKey);
               send("board", { board: getBoard(getDb()) });
               logTurn({
+                language,
                 ts,
                 transcript,
                 ttftMs: Date.now() - speechEndAt,
@@ -278,50 +303,89 @@ export async function POST(request: Request): Promise<Response> {
                 chain: "none",
                 key: clientKey,
                 slots: slotSnapshot(),
+                gate: verdict.gate,
+                sinceReplyS: verdict.sinceReplyS,
+                totalMs: Date.now() - speechEndAt,
               });
               return;
             }
           }
+          // A no to Vale's pending proposal discards it at once: the card
+          // goes away with a short decline, no model, no second question.
+          if (isRefusalNo(transcript) && peekPendingAction(clientKey)) {
+            clearPendingAction(clientKey);
+            const declined = declineText(language);
+            recordTurn(getDb(), clientKey, "vale", declined, null);
+            send("reply", { text: declined });
+            noteAttention(clientKey);
+            send("board", { board: getBoard(getDb()) });
+            send("widget", { widget: null });
+            logTurn({
+              language,
+              ts,
+              transcript,
+              ttftMs: Date.now() - speechEndAt,
+              inputTokens: 0,
+              outputTokens: 0,
+              audioSeconds,
+              tool: null,
+              modelSkipped: true,
+              error: null,
+              ignored: false,
+              asrMs: measuredAsrMs,
+              chain: "none",
+              key: clientKey,
+              slots: slotSnapshot(),
+              gate: verdict.gate,
+              sinceReplyS: verdict.sinceReplyS,
+              totalMs: Date.now() - speechEndAt,
+            });
+            send("done", {});
+            return;
+          }
           const result = await runAgentTurn({
             key,
             transcript,
-            previousResponseId: chainedId,
+            history,
             url: process.env.META_RESPONSES_URL || undefined,
             startedAt: speechEndAt,
             onDelta: (text) => send("reply-delta", { text }),
             language,
             slotKey: clientKey,
           });
-          if (!aborted) chainSucceeded(result.responseId, result.chainNext, clientKey);
-          // The reply decides the next nameless turn: a question keeps the
-          // window open for its answer, anything else retires it.
-          if (result.askedQuestion && !isGreetingOnly(transcript)) {
-            markQuestionAsked(clientKey, speechEndAt);
-          } else {
-            clearQuestion(clientKey);
-          }
+          if (!aborted) recordTurn(getDb(), clientKey, "vale", result.text, result.toolUsed);
           send("reply", { text: result.text });
+          // Her reply restarts the window: the next turn counts from here.
+          noteAttention(clientKey);
           send("board", { board: getBoard(getDb()) });
+          if (result.widget) {
+            send("widget", { widget: result.widget });
+          }
           logTurn({
+            language,
             ts,
             transcript,
             ttftMs: result.firstTokenMs,
             inputTokens: result.usage.inputTokens,
             outputTokens: result.usage.outputTokens,
+            cachedInputTokens: result.usage.cachedInputTokens,
             audioSeconds,
             tool: result.toolUsed,
             modelSkipped: false,
             error: null,
             ignored: false,
             asrMs: measuredAsrMs,
-            chain: chainState,
+            chain: "none",
             key: clientKey,
             slots: slotSnapshot(),
+            gate: verdict.gate,
+            sinceReplyS: verdict.sinceReplyS,
+            totalMs: Date.now() - speechEndAt,
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : "failed";
-          chainFailed(clientKey);
           logTurn({
+            language,
             ts,
             transcript,
             ttftMs: null,
@@ -333,9 +397,12 @@ export async function POST(request: Request): Promise<Response> {
             error: message,
             ignored: false,
             asrMs: measuredAsrMs,
-            chain: chainState,
+            chain: "none",
             key: clientKey,
             slots: slotSnapshot(),
+            gate: verdict.gate,
+            sinceReplyS: verdict.sinceReplyS,
+            totalMs: Date.now() - speechEndAt,
           });
           send("error", {
             message: turnErrorText("model", language),
@@ -347,11 +414,14 @@ export async function POST(request: Request): Promise<Response> {
       try {
         if (cannedTranscript !== null) {
           send("final", { transcript: cannedTranscript });
-          // Name gate first: background chatter never reaches the model, the
-          // board or the response chain.
-          if (!checkWake(cannedTranscript, clientKey).execute) {
+          // Sliding gate first: background chatter never reaches the model,
+          // the board or the memory.
+          const sessionOpen = getOpenSession(getDb()) !== null;
+          const verdict = checkWake(cannedTranscript, clientKey, Date.now(), sessionOpen, language);
+          if (!verdict.execute) {
             const cannedSlots = getSlots(clientKey);
             logTurn({
+              language,
               ts: new Date().toISOString(),
               transcript: cannedTranscript,
               ttftMs: null,
@@ -370,6 +440,9 @@ export async function POST(request: Request): Promise<Response> {
                 cannedSlots.service !== undefined
                   ? cannedSlots
                   : null,
+              gate: verdict.gate,
+              sinceReplyS: verdict.sinceReplyS,
+              totalMs: 0,
             });
             send("ignored", {});
             send("done", {});
@@ -377,7 +450,7 @@ export async function POST(request: Request): Promise<Response> {
             closeStream();
             return;
           }
-          await answerTranscript(cannedTranscript, 0, Date.now());
+          await answerTranscript(cannedTranscript, 0, Date.now(), verdict);
           send("done", {});
           clearTimeout(timeout);
           closeStream();
@@ -397,6 +470,7 @@ export async function POST(request: Request): Promise<Response> {
                 asr = await openAsrConnection({
                   key,
                   url: process.env.META_ASR_URL || undefined,
+                  language,
                   onEvent: (event) => {
                     if (event.kind === "interim") {
                       lastInterim = event.transcript;
@@ -404,7 +478,7 @@ export async function POST(request: Request): Promise<Response> {
                     } else if (event.kind === "final") {
                       gotFinal = true;
                       finalAtMs = Date.now();
-                      finalText = collapseEcho(event.transcript);
+                      finalText = event.transcript;
                       audioSeconds = (event.audioProcessedMs ?? 0) / 1000;
                       send("final", {
                         transcript: finalText,
@@ -430,6 +504,7 @@ export async function POST(request: Request): Promise<Response> {
               }
             }
             asr?.sendPcm(value);
+            audioChunks.push(value);
           }
         } finally {
           reader.releaseLock();
@@ -450,6 +525,7 @@ export async function POST(request: Request): Promise<Response> {
           // Empty final: no model call, just the notice.
           send("notice", { message: turnErrorText("vad-continue", language), code: "E-VAD" });
           logTurn({
+            language,
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: "",
             ttftMs: null,
@@ -464,11 +540,23 @@ export async function POST(request: Request): Promise<Response> {
             chain: "none",
             key: clientKey,
             slots: null,
+            gate: null,
+            sinceReplyS: null,
+            totalMs: 0,
           });
-        } else if (!checkWake(finalText, clientKey).execute) {
+          settled = true;
+          send("done", {});
+          clearTimeout(timeout);
+          closeStream();
+          return;
+        }
+        const sessionOpen = getOpenSession(getDb()) !== null;
+        const verdict = checkWake(finalText, clientKey, Date.now(), sessionOpen, language);
+        if (!verdict.execute) {
           // Background chatter without the name: silent discard.
           const ignoredSlots = getSlots(clientKey);
           logTurn({
+            language,
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: finalText,
             ttftMs: null,
@@ -487,16 +575,24 @@ export async function POST(request: Request): Promise<Response> {
               ignoredSlots.service !== undefined
                 ? ignoredSlots
                 : null,
+            gate: verdict.gate,
+            sinceReplyS: verdict.sinceReplyS,
+            totalMs: Date.now() - finalAtMs,
           });
           send("ignored", {});
         } else {
-          await answerTranscript(finalText, audioSeconds, finalAtMs);
+          await answerTranscript(finalText, audioSeconds, finalAtMs, verdict);
         }
         settled = true;
         send("done", {});
         clearTimeout(timeout);
         closeStream();
-      } catch {
+      } catch (error) {
+        // The client only sees E-NET; the cause stays in the server log.
+        console.error(
+          "[voice] turn failed:",
+          error instanceof Error ? (error.stack ?? error.message) : error,
+        );
         if (!settled) finishError(turnErrorText("lost", language), "E-NET");
       } finally {
         clearTimeout(timeout);

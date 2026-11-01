@@ -5,11 +5,14 @@ import {
   buildPendingActions,
   clearPendingAction,
   isConfirmYes,
+  isRefusalNo,
+  pendingConfirmTitle,
   runPendingActions,
+  peekPendingAction,
   setPendingAction,
   takePendingAction,
 } from "./pending-action";
-import { openSession } from "./vale-tools";
+import { getOpenSession, openSession } from "./vale-tools";
 import { windowMs } from "./wake";
 
 describe("pending action", () => {
@@ -42,6 +45,24 @@ describe("pending action", () => {
       "qué puedes hacer",
     ]) {
       expect(isConfirmYes(no)).toBe(false);
+    }
+  });
+
+  it("hears a bare no addressed to the proposal, nothing else", () => {
+    for (const no of ["no", "No", "nope", "no, vale", "vale, no"]) {
+      expect(isRefusalNo(no)).toBe(true);
+    }
+    for (const other of [
+      "",
+      "vale",
+      "sí",
+      "yes",
+      "no quiero",
+      "no, gracias",
+      "deshazlo",
+      "qué puedes hacer",
+    ]) {
+      expect(isRefusalNo(other)).toBe(false);
     }
   });
 
@@ -164,5 +185,82 @@ describe("pending action", () => {
       .get() as { id: number } | undefined;
     expect(open).toBeUndefined();
     clearPendingAction("pend-partial");
+  });
+
+  it("titles the confirm card from the stored writes", () => {
+    expect(
+      pendingConfirmTitle(
+        [
+          { tool: "create_client", args: { name: "Ana" } },
+          {
+            tool: "open_session",
+            args: { client_name: "Ana", service_name: "Gel refill" },
+          },
+        ],
+        "en",
+      ),
+    ).toBe("Open session with Ana for Gel refill?");
+    expect(
+      pendingConfirmTitle(
+        [{ tool: "log_supply_use", args: { name: "Top coat" } }],
+        "en",
+      ),
+    ).toBe("Log Top coat?");
+    expect(
+      pendingConfirmTitle(
+        [
+          { tool: "create_client", args: { name: "Ana" } },
+          {
+            tool: "open_session",
+            args: { client_name: "Ana", service_name: "Gel refill" },
+          },
+        ],
+        "es",
+      ),
+    ).toBe("¿Abro sesión con Ana de Gel refill?");
+    expect(pendingConfirmTitle([], "en")).toBe("Should I save it?");
+  });
+
+  it("peeks without consuming and forgets stale proposals", () => {
+    setPendingAction("pend-peek", [{ tool: "create_client", args: { name: "Noa" } }], 1000);
+    expect(peekPendingAction("pend-peek", 2000)).toBe(true);
+    expect(takePendingAction("pend-peek", 2000)).toHaveLength(1);
+    expect(peekPendingAction("pend-peek", 2000)).toBe(false);
+    setPendingAction("pend-peek-stale", [{ tool: "create_client", args: { name: "Noa" } }], 1000);
+    expect(peekPendingAction("pend-peek-stale", 1000 + 60_000)).toBe(false);
+    expect(takePendingAction("pend-peek-stale", 1000 + 60_000)).toBeUndefined();
+  });
+
+  it("switches a live session on yes: close, register, open", () => {
+    const db = freshTestDb();
+    openSession(db, { client_name: "Ana", service_name: "Gel refill" });
+    const proposal = buildPendingActions(
+      db,
+      "open_session",
+      { client_name: "Chloe", service_name: "Gel refill" },
+      {
+        ok: false,
+        pendingSessionSwitch: { client_name: "Chloe", service_name: "Gel refill" },
+      },
+    );
+    expect(proposal).toEqual([
+      { tool: "close_session", args: {} },
+      { tool: "create_client", args: { name: "Chloe" } },
+      {
+        tool: "open_session",
+        args: { client_name: "Chloe", service_name: "Gel refill" },
+      },
+    ]);
+    expect(pendingConfirmTitle(proposal ?? [], "en")).toBe(
+      "Close the open session and open Chloe for Gel refill?",
+    );
+    setPendingAction("pend-switch", proposal ?? []);
+    const executed = runPendingActions(db, "pend-switch", takePendingAction("pend-switch") ?? []);
+    expect(executed.toolUsed).toBe("open_session");
+    const open = getOpenSession(db);
+    expect(open?.client_id).toBeGreaterThan(0);
+    const name = db.prepare("SELECT name FROM clients WHERE id = ?").get(open?.client_id ?? -1) as { name: string };
+    expect(name.name).toBe("Chloe");
+    db.close();
   });
 });

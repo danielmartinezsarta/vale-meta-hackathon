@@ -4,6 +4,7 @@
 // leaves this module toward the cloud.
 import { PRICING, getPublicNotes, type PublicNote, type ValeDb } from "./db";
 import { money, quotePrice } from "./quote";
+import type { ValeLanguage } from "./vale-language";
 
 export interface ValeToolDefinition {
   type: "function";
@@ -20,6 +21,8 @@ export interface ToolResult {
   pendingCreate?: string;
   /** Set when an off-hours booking waits for the user's yes. */
   pendingOffHours?: boolean;
+  /** Set when a live session blocks the requested open: a yes closes it first. */
+  pendingSessionSwitch?: { client_name: string; service_name: string };
 }
 
 interface Named {
@@ -169,7 +172,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "open_session",
-    description: "Open a nail session with a timer for a client and a service.",
+    description: "Open a nail session with a timer for a client and a service. Call it right away when the request names a client and a service, even when another session is already open: the refusal carries the switch question and a yes runs it.",
     parameters: {
       type: "object",
       properties: {
@@ -204,7 +207,8 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "add_note",
-    description: "Save a note on the client card. Health notes stay private.",
+    description: "Save a note on the client card. Health notes stay private: use kind health for allergies, onicolisis and similar health topics. Call it right away when the request names a client and a note, even for unknown clients: the refusal carries the confirm question and a yes saves it.",
+
     parameters: {
       type: "object",
       properties: {
@@ -244,7 +248,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "log_supply_use",
-    description: "Record a supply used in the open session.",
+    description: "Record a supply used in the open session. When it is unknown, ask first and call again with confirm_create true only after a yes.",
     parameters: {
       type: "object",
       properties: {
@@ -257,7 +261,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "undo_last_write",
-    description: "Undo the most recent write.",
+    description: "Undo the most recent write. Call it when the user says undo it (or deshazlo).",
     parameters: noParams,
   },
   {
@@ -286,7 +290,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "create_appointment",
-    description: "Book an appointment for an existing client and service.",
+    description: "Book an appointment for an existing client and service. Confirm the date and time with the user; if you inferred them, say so. Call it right away when the request names a client, a service and a time: doubt carries the confirm question and a yes books it.",
     parameters: {
       type: "object",
       properties: {
@@ -362,8 +366,29 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   },
 ];
 
-export function openSession(db: ValeDb, args: { client_name?: unknown; service_name?: unknown }): ToolResult {
-  if (getOpenSession(db)) return { ok: false, message: "Ya hay una sesión abierta." };
+export function openSession(db: ValeDb, args: { client_name?: unknown; service_name?: unknown }, language: ValeLanguage = "es"): ToolResult {
+  const already = getOpenSession(db);
+  if (already) {
+    // A vague yes never reopens: the refusal names the open session and
+    // the next step, so the model asks instead of writing.
+    const service = db.prepare("SELECT name FROM services WHERE id = ?").get(already.service_id) as {
+      name: string;
+    } | undefined;
+    const who = `${clientLabel(db, already.client_id)}, ${service?.name ?? "unknown"}`;
+    const requestedClient = typeof args.client_name === "string" ? args.client_name.trim() : "";
+    const requestedService = typeof args.service_name === "string" ? args.service_name.trim() : "";
+    return {
+      ok: false,
+      message:
+        language === "en"
+          ? `There is already an open session (${who}). Do not call close_session yet: first tell the user what is open and ask whether to close it and open ${requestedClient || "the new one"}.`
+          : `Ya hay una sesión abierta (${who}). No llames close_session todavía: primero dile al usuario qué hay abierto y pregunta si lo cierra y abre ${requestedClient || "la nueva"}.`,
+      pendingSessionSwitch:
+        requestedClient !== "" && requestedService !== ""
+          ? { client_name: requestedClient, service_name: requestedService }
+          : undefined,
+    };
+  }
   const clientName = typeof args.client_name === "string" ? args.client_name : "";
   const serviceName = typeof args.service_name === "string" ? args.service_name : "";
   const client = matchOne(allClients(db), clientName);
@@ -377,10 +402,10 @@ export function openSession(db: ValeDb, args: { client_name?: unknown; service_n
     .prepare("INSERT INTO sessions (client_id, service_id, started_at) VALUES (?, ?, ?)")
     .run(client.row.id, service.row.id, startedAt);
   logWrite(db, "open_session", "sessions", Number(result.lastInsertRowid));
-  return { ok: true, message: `Sesión abierta con ${client.row.name}.`, data: { session_id: Number(result.lastInsertRowid) } };
+  return { ok: true, message: language === "en" ? `Session open with ${client.row.name}.` : `Sesión abierta con ${client.row.name}.`, data: { session_id: Number(result.lastInsertRowid) } };
 }
 
-export function closeSession(db: ValeDb, args: { products_used?: unknown }): ToolResult {
+export function closeSession(db: ValeDb, args: { products_used?: unknown }, language: ValeLanguage = "es"): ToolResult {
   const open = getOpenSession(db);
   if (!open) return { ok: false, message: "No hay sesión abierta." };
   const products = Array.isArray(args.products_used)
@@ -415,9 +440,9 @@ export function closeSession(db: ValeDb, args: { products_used?: unknown }): Too
   ).marginEarned;
   db.prepare("UPDATE sessions SET ended_at = ?, duration_s = ?, margin_earned = ? WHERE id = ?").run(endedAt, durationS, earned, open.id);
   logWrite(db, "close_session", "sessions", open.id, { supplies: recordedIds });
-  let message = `Sesión cerrada. Duró ${minutes} minutos.`;
-  if (recorded.length > 0) message += ` Anoté: ${recorded.join(", ")}.`;
-  if (unknown.length > 0) message += ` No encontré: ${unknown.join(", ")}.`;
+  let message = language === "en" ? `Session closed. It lasted ${minutes} minutes.` : `Sesión cerrada. Duró ${minutes} minutos.`;
+  if (recorded.length > 0) message += language === "en" ? ` Logged: ${recorded.join(", ")}.` : ` Anoté: ${recorded.join(", ")}.`;
+  if (unknown.length > 0) message += language === "en" ? ` Not found: ${unknown.join(", ")}.` : ` No encontré: ${unknown.join(", ")}.`;
   return { ok: true, message, data: { duration_s: durationS, recorded, unknown } };
 }
 
@@ -436,7 +461,7 @@ export function findClient(db: ValeDb, args: { name?: unknown }): ToolResult & {
   return { ok: true, message: `Esta es la ficha de ${found.row.name}.`, data: card, card };
 }
 
-export function addNote(db: ValeDb, args: { client_name?: unknown; text?: unknown; kind?: unknown }): ToolResult {
+export function addNote(db: ValeDb, args: { client_name?: unknown; text?: unknown; kind?: unknown }, language: ValeLanguage = "es"): ToolResult {
   const clientName = typeof args.client_name === "string" ? args.client_name : "";
   const text = typeof args.text === "string" ? args.text.trim() : "";
   if (text === "") return { ok: false, message: "La nota está vacía." };
@@ -449,20 +474,20 @@ export function addNote(db: ValeDb, args: { client_name?: unknown; text?: unknow
     .run(found.row.id, text, kind, kind === "health" ? 1 : 0);
   logWrite(db, "add_note", "notes", Number(result.lastInsertRowid));
   // The result never carries the note text back: health text must not re-enter the model context.
-  if (kind === "health") return { ok: true, message: "Nota privada guardada.", data: { note_id: Number(result.lastInsertRowid), private: true } };
-  return { ok: true, message: `Nota guardada en la ficha de ${found.row.name}.`, data: { note_id: Number(result.lastInsertRowid), private: false } };
+  if (kind === "health") return { ok: true, message: language === "en" ? "Private note saved." : "Nota privada guardada.", data: { note_id: Number(result.lastInsertRowid), private: true } };
+  return { ok: true, message: language === "en" ? `Note saved on ${found.row.name}'s card.` : `Nota guardada en la ficha de ${found.row.name}.`, data: { note_id: Number(result.lastInsertRowid), private: false } };
 }
 
-export function addToShoppingList(db: ValeDb, args: { item_name?: unknown }): ToolResult {
+export function addToShoppingList(db: ValeDb, args: { item_name?: unknown }, language: ValeLanguage = "es"): ToolResult {
   const item = typeof args.item_name === "string" ? args.item_name : "";
   const found = matchSupply(db, item);
   if (found.kind === "none") return { ok: false, message: `No conozco el insumo "${item}".` };
   if (found.kind === "ambiguous") return { ok: false, message: ambiguousMessage(found.options) };
   const existing = db.prepare("SELECT id FROM shopping_list WHERE supply_id = ?").get(found.row.id) as { id: number } | undefined;
-  if (existing) return { ok: true, message: `${found.row.name} ya está en la lista.`, data: { already: true } };
+  if (existing) return { ok: true, message: language === "en" ? `${found.row.name} is already on the list.` : `${found.row.name} ya está en la lista.`, data: { already: true } };
   const result = db.prepare("INSERT INTO shopping_list (supply_id) VALUES (?)").run(found.row.id);
   logWrite(db, "add_to_shopping_list", "shopping_list", Number(result.lastInsertRowid));
-  return { ok: true, message: `${found.row.name} agregado a la lista.` };
+  return { ok: true, message: language === "en" ? `${found.row.name} added to the list.` : `${found.row.name} agregado a la lista.` };
 }
 
 export function readShoppingList(db: ValeDb): ToolResult {
@@ -474,7 +499,7 @@ export function readShoppingList(db: ValeDb): ToolResult {
   return { ok: true, message: `En la lista: ${items.join(", ")}.`, data: { items } };
 }
 
-export function createClient(db: ValeDb, args: { name?: unknown }): ToolResult {
+export function createClient(db: ValeDb, args: { name?: unknown }, language: ValeLanguage = "es"): ToolResult {
   const name = typeof args.name === "string" ? args.name.trim().replace(/\s+/g, " ") : "";
   if (name === "") return { ok: false, message: "Falta el nombre de la clienta." };
   const found = matchOne(allClients(db), name);
@@ -482,10 +507,10 @@ export function createClient(db: ValeDb, args: { name?: unknown }): ToolResult {
   if (found.kind === "ambiguous") return { ok: false, message: `${found.options[0].name} ya está registrada.` };
   const result = db.prepare("INSERT INTO clients (name) VALUES (?)").run(name);
   logWrite(db, "create_client", "clients", Number(result.lastInsertRowid));
-  return { ok: true, message: `${name} registrada.`, data: { client_id: Number(result.lastInsertRowid) } };
+  return { ok: true, message: language === "en" ? `${name} registered.` : `${name} registrada.`, data: { client_id: Number(result.lastInsertRowid) } };
 }
 
-export function logSupplyUse(db: ValeDb, args: { name?: unknown; confirm_create?: unknown }): ToolResult {
+export function logSupplyUse(db: ValeDb, args: { name?: unknown; confirm_create?: unknown }, language: ValeLanguage = "es"): ToolResult {
   const open = getOpenSession(db);
   if (!open) return { ok: false, message: "No hay sesión abierta." };
   const name = typeof args.name === "string" ? args.name.trim().replace(/\s+/g, " ") : "";
@@ -497,20 +522,28 @@ export function logSupplyUse(db: ValeDb, args: { name?: unknown; confirm_create?
       .prepare("INSERT OR IGNORE INTO session_supplies (session_id, supply_id) VALUES (?, ?)")
       .run(open.id, found.row.id);
     logWrite(db, "log_supply_use", "session_supplies", open.id, { supply_id: found.row.id, auto_created: false });
-    if (link.changes === 0) return { ok: true, message: `${found.row.name} ya estaba anotado.` };
-    return { ok: true, message: `${found.row.name} anotado en la sesión.` };
+    if (link.changes === 0) return { ok: true, message: language === "en" ? `${found.row.name} was already logged.` : `${found.row.name} ya estaba anotado.` };
+    return { ok: true, message: language === "en" ? `${found.row.name} logged for the session.` : `${found.row.name} anotado en la sesión.` };
   }
   if (args.confirm_create === true) {
     const created = db.prepare("INSERT INTO supplies (name) VALUES (?)").run(name);
     const supplyId = Number(created.lastInsertRowid);
     db.prepare("INSERT OR IGNORE INTO session_supplies (session_id, supply_id) VALUES (?, ?)").run(open.id, supplyId);
     logWrite(db, "log_supply_use", "session_supplies", open.id, { supply_id: supplyId, auto_created: true });
-    return { ok: true, message: `${name} creado y anotado en la sesión.` };
+    return { ok: true, message: language === "en" ? `${name} created and logged for the session.` : `${name} creado y anotado en la sesión.` };
   }
-  return { ok: false, message: `No encuentro "${name}". ¿lo creo y lo anoto en la sesión?`, pendingCreate: name };
+  return {
+    ok: false,
+    message:
+      language === "en"
+        ? `I can't find "${name}". Should I create it and log it? Call again with confirm_create true after a yes.`
+        : `No encuentro "${name}". ¿lo creo y lo anoto en la sesión? Llama de nuevo con confirm_create true después del sí.`,
+    pendingCreate: name,
+  };
 }
 
-const UNDO_LABELS: Record<string, string> = {
+const UNDO_LABELS: Record<ValeLanguage, Record<string, string>> = {
+  es: {
   open_session: "apertura de sesión",
   close_session: "cierre de sesión",
   add_note: "nota agregada",
@@ -521,9 +554,22 @@ const UNDO_LABELS: Record<string, string> = {
   move_appointment: "cita movida",
   set_stock: "cambio de stock",
   add_stock: "entrada de stock",
+  },
+  en: {
+  open_session: "session opening",
+  close_session: "session closing",
+  add_note: "added note",
+  add_to_shopping_list: "list addition",
+  create_client: "registered client",
+  log_supply_use: "logged supply",
+  create_appointment: "saved appointment",
+  move_appointment: "moved appointment",
+  set_stock: "stock change",
+  add_stock: "stock entry",
+  },
 };
 
-export function undoLastWrite(db: ValeDb): ToolResult {
+export function undoLastWrite(db: ValeDb, language: ValeLanguage = "es"): ToolResult {
   const entry = db.prepare("SELECT id, action, table_name, row_id, extra FROM write_log WHERE undone = 0 ORDER BY id DESC LIMIT 1").get() as
     | { id: number; action: string; table_name: string; row_id: number; extra: string | null }
     | undefined;
@@ -597,7 +643,7 @@ export function undoLastWrite(db: ValeDb): ToolResult {
       return { ok: false, message: "No se puede deshacer." };
   }
   db.prepare("UPDATE write_log SET undone = 1 WHERE id = ?").run(entry.id);
-  return { ok: true, message: `Deshecho: ${UNDO_LABELS[entry.action] ?? entry.action}.` };
+  return { ok: true, message: language === "en" ? `Undone: ${UNDO_LABELS.en[entry.action] ?? entry.action}.` : `Deshecho: ${UNDO_LABELS.es[entry.action] ?? entry.action}.` };
 }
 
 interface RecipeLine {
@@ -710,6 +756,21 @@ function checkDayTime(day: unknown, time: unknown): string | null {
   return null;
 }
 
+/** The day exists on the calendar: November 31st and February 29th on
+ * non-leap years do not. Returns the problem in the screen language. */
+function checkCalendarDay(day: string, language: ValeLanguage): string | null {
+  const [year, month, date] = day.split("-").map(Number);
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (date <= last) return null;
+  const monthName = new Date(Date.UTC(year, month - 1, 1)).toLocaleString("en-US", {
+    month: "long",
+    timeZone: "UTC",
+  });
+  return language === "en"
+    ? `${monthName} ${year} has ${last} days, so ${monthName} ${date} does not exist.`
+    : `${monthName} de ${year} tiene ${last} días, así que esa fecha no existe.`;
+}
+
 interface AppointmentRow {
   id: number;
   client: string;
@@ -754,11 +815,14 @@ export function createAppointment(
     time?: unknown;
     confirm_off_hours?: unknown;
   },
+  language: ValeLanguage = "es",
 ): ToolResult {
   const clientName = typeof args.client_name === "string" ? args.client_name : "";
   const serviceName = typeof args.service_name === "string" ? args.service_name : "";
   const problem = checkDayTime(args.day, args.time);
   if (problem) return { ok: false, message: problem };
+  const calendar = checkCalendarDay(args.day as string, language);
+  if (calendar) return { ok: false, message: calendar };
   const client = matchOne(
     db.prepare("SELECT id, name FROM clients ORDER BY id").all() as unknown as Named[],
     clientName,
@@ -772,7 +836,10 @@ export function createAppointment(
   if (reasons.length > 0 && args.confirm_off_hours !== true) {
     return {
       ok: false,
-      message: `Ojo, ${reasons.join(" y ")}. ¿La guardo igual?`,
+      message:
+        language === "en"
+          ? `Careful, ${reasons.join(" and ")}. Still book it? Call again with confirm_off_hours true after a yes.`
+          : `Ojo, ${reasons.join(" y ")}. ¿La guardo igual? Llama de nuevo con confirm_off_hours true después del sí.`,
       pendingOffHours: true,
       data: { off_hours: true },
     };
@@ -784,7 +851,7 @@ export function createAppointment(
   logWrite(db, "create_appointment", "appointments", id);
   return {
     ok: true,
-    message: `Cita guardada: ${client.row.name} ${args.day} ${args.time}.`,
+    message: language === "en" ? `Appointment booked: ${client.row.name} ${args.day} ${args.time}.` : `Cita guardada: ${client.row.name} ${args.day} ${args.time}.`,
     data: { appointment_id: id, off_hours: reasons.length > 0 },
   };
 }
@@ -829,6 +896,7 @@ export function nextAppointment(db: ValeDb): ToolResult {
 export function moveAppointment(
   db: ValeDb,
   args: { client_name?: unknown; new_day?: unknown; new_time?: unknown },
+  language: ValeLanguage = "es",
 ): ToolResult {
   const clientName = typeof args.client_name === "string" ? args.client_name : "";
   const problem = checkDayTime(args.new_day, args.new_time);
@@ -853,7 +921,7 @@ export function moveAppointment(
   logWrite(db, "move_appointment", "appointments", current.id, { prev_day: current.day, prev_time: current.time });
   return {
     ok: true,
-    message: `Cita movida: ${current.client} ${args.new_day} ${args.new_time}.`,
+    message: language === "en" ? `Appointment moved: ${current.client} ${args.new_day} ${args.new_time}.` : `Cita movida: ${current.client} ${args.new_day} ${args.new_time}.`,
     data: { appointment_id: current.id },
   };
 }
@@ -863,7 +931,7 @@ function parseQty(raw: unknown): number | null {
   return typeof qty === "number" && Number.isFinite(qty) ? qty : null;
 }
 
-export function setStock(db: ValeDb, args: { name?: unknown; qty?: unknown }): ToolResult {
+export function setStock(db: ValeDb, args: { name?: unknown; qty?: unknown }, language: ValeLanguage = "es"): ToolResult {
   const name = typeof args.name === "string" ? args.name : "";
   const qty = parseQty(args.qty);
   if (qty === null || qty < 0) return { ok: false, message: "La cantidad no es válida." };
@@ -873,10 +941,10 @@ export function setStock(db: ValeDb, args: { name?: unknown; qty?: unknown }): T
   const row = db.prepare("SELECT stock_qty FROM supplies WHERE id = ?").get(found.row.id) as { stock_qty: number };
   db.prepare("UPDATE supplies SET stock_qty = ? WHERE id = ?").run(qty, found.row.id);
   logWrite(db, "set_stock", "supplies", found.row.id, { prev_qty: row.stock_qty });
-  return { ok: true, message: `${found.row.name}: quedan ${qty}.`, data: { stock_qty: qty } };
+  return { ok: true, message: language === "en" ? `${found.row.name}: ${qty} left.` : `${found.row.name}: quedan ${qty}.`, data: { stock_qty: qty } };
 }
 
-export function addStock(db: ValeDb, args: { name?: unknown; qty?: unknown }): ToolResult {
+export function addStock(db: ValeDb, args: { name?: unknown; qty?: unknown }, language: ValeLanguage = "es"): ToolResult {
   const name = typeof args.name === "string" ? args.name : "";
   const qty = parseQty(args.qty);
   if (qty === null || qty <= 0) return { ok: false, message: "La cantidad no es válida." };
@@ -887,7 +955,7 @@ export function addStock(db: ValeDb, args: { name?: unknown; qty?: unknown }): T
   const now = row.stock_qty + qty;
   db.prepare("UPDATE supplies SET stock_qty = ? WHERE id = ?").run(now, found.row.id);
   logWrite(db, "add_stock", "supplies", found.row.id, { prev_qty: row.stock_qty });
-  return { ok: true, message: `${found.row.name}: ${row.stock_qty} + ${qty} = ${now}.`, data: { stock_qty: now } };
+  return { ok: true, message: language === "en" ? `${found.row.name}: ${row.stock_qty} + ${qty} = ${now}.` : `${found.row.name}: ${row.stock_qty} + ${qty} = ${now}.`, data: { stock_qty: now } };
 }
 
 export function readStock(db: ValeDb): ToolResult {
@@ -902,42 +970,42 @@ export function readStock(db: ValeDb): ToolResult {
   };
 }
 
-export function runValeTool(db: ValeDb, name: string, args: Record<string, unknown>): ToolResult {
+export function runValeTool(db: ValeDb, name: string, args: Record<string, unknown>, language: ValeLanguage = "es"): ToolResult {
   switch (name) {
     case "open_session":
-      return openSession(db, args);
+      return openSession(db, args, language);
     case "close_session":
-      return closeSession(db, args);
+      return closeSession(db, args, language);
     case "find_client":
       return findClient(db, args);
     case "add_note":
-      return addNote(db, args);
+      return addNote(db, args, language);
     case "create_client":
-      return createClient(db, args);
+      return createClient(db, args, language);
     case "add_to_shopping_list":
-      return addToShoppingList(db, args);
+      return addToShoppingList(db, args, language);
     case "read_shopping_list":
       return readShoppingList(db);
     case "log_supply_use":
-      return logSupplyUse(db, args);
+      return logSupplyUse(db, args, language);
     case "undo_last_write":
-      return undoLastWrite(db);
+      return undoLastWrite(db, language);
     case "quote_price":
       return quotePriceTool(db, args);
     case "goal_progress":
       return goalProgress(db);
     case "create_appointment":
-      return createAppointment(db, args);
+      return createAppointment(db, args, language);
     case "list_today":
       return listToday(db);
     case "next_appointment":
       return nextAppointment(db);
     case "move_appointment":
-      return moveAppointment(db, args);
+      return moveAppointment(db, args, language);
     case "set_stock":
-      return setStock(db, args);
+      return setStock(db, args, language);
     case "add_stock":
-      return addStock(db, args);
+      return addStock(db, args, language);
     case "read_stock":
       return readStock(db);
     default:

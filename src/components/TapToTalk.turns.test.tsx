@@ -65,12 +65,12 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
         fired += 1;
         callbacks.onFrame(frame);
         callbacks.onSpeechStart();
-        callbacks.onFrame(frame);
+        for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
         callbacks.onSpeechEnd();
         window.setTimeout(fireNext, 10);
       };
       window.setTimeout(fireNext, 0);
-      return { stop: () => {} };
+      return { stop: () => {}, state: () => "running" };
     });
 
     const turns: [string, string][] = [

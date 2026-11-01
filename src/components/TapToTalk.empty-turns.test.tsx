@@ -48,7 +48,10 @@ describe("empty turns stay hidden (fix 1)", () => {
   it("an empty open turn draws no row and keeps the listening hint", async () => {
     stubMic();
 
-    mockStartCapture.mockImplementation(() => ({ stop: () => {} }));
+    mockStartCapture.mockImplementation(() => ({
+      stop: () => {},
+      state: () => "running",
+    }));
     const fetchMock = vi.fn(() => new Promise(() => {}));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -57,7 +60,7 @@ describe("empty turns stay hidden (fix 1)", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("Tu micrófono está encendido. Adelante, te escucho."),
+        screen.getByText("Your microphone is on. Go ahead, I'm listening."),
       ).toBeTruthy();
     });
 
@@ -78,16 +81,16 @@ describe("empty turns stay hidden (fix 1)", () => {
     // Later turns stay silent so the session waits.
     let fired = false;
     mockStartCapture.mockImplementation((_stream, callbacks) => {
-      if (fired) return { stop: () => {} };
+      if (fired) return { stop: () => {}, state: () => "running" };
       fired = true;
       const frame = new Int16Array(960).fill(4000);
       window.setTimeout(() => {
         callbacks.onFrame(frame);
         callbacks.onSpeechStart();
-        callbacks.onFrame(frame);
+        for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
         callbacks.onSpeechEnd();
       }, 0);
-      return { stop: () => {} };
+      return { stop: () => {}, state: () => "running" };
     });
 
     const fetchMock = vi.fn((..._args: unknown[]) => {
@@ -104,7 +107,7 @@ describe("empty turns stay hidden (fix 1)", () => {
     });
     await waitFor(() => {
       expect(
-        screen.getByText("Tu micrófono está encendido. Adelante, te escucho."),
+        screen.getByText("Your microphone is on. Go ahead, I'm listening."),
       ).toBeTruthy();
     });
     expect(

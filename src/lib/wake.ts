@@ -4,7 +4,12 @@
 // otherwise it is silently discarded (no model, no board, ignored:true log).
 // Garbage never touches the previous_response_id chain.
 
-const DEFAULT_WAKE_WORDS = ["vale"];
+import type { ValeLanguage } from "./vale-language";
+
+// Measured ASR spellings of "Vale", including Bale (Daniel's call, 30/10:
+// heard in negatives, position rule below carries the risk).
+const DEFAULT_WAKE_WORDS = ["vale", "balle", "bali", "bale", "veil", "vail"];
+
 const DEFAULT_WINDOW_S = 45;
 
 export function normalizeWakeText(value: string): string {
@@ -17,7 +22,7 @@ export function normalizeWakeText(value: string): string {
     .trim();
 }
 
-function wakeWords(): string[] {
+export function wakeWords(): string[] {
   const words = (process.env.VALE_WAKE_WORDS ?? "")
     .split(",")
     .map((word) => normalizeWakeText(word.trim()))
@@ -25,20 +30,31 @@ function wakeWords(): string[] {
   return words.length > 0 ? words : DEFAULT_WAKE_WORDS;
 }
 
-export function windowMs(): number {
+/** Open service session on the table: the window stretches to 90 s. */
+export const SESSION_WINDOW_S = 90;
+
+/** Sliding window, longer while a service session is open on the table. */
+export function windowMs(sessionOpen = false): number {
   const seconds = Number(process.env.VALE_ATTENTION_WINDOW_S);
   if (!Number.isFinite(seconds) || seconds < 0) {
-    return DEFAULT_WINDOW_S * 1000;
+    return (sessionOpen ? SESSION_WINDOW_S : DEFAULT_WINDOW_S) * 1000;
   }
   return seconds * 1000;
 }
 
+/**
+ * The name activates in any of the first three words, in either language,
+ * with no opener or greeting lists ("Hola Vale", "Oye Vale", "Buenas Vale"
+ * all count). A bare first-word client mention ("Bale broke a nail")
+ * still wakes: that is the accepted cost of a purely positional rule.
+ */
 export function namesVale(transcript: string, words: string[] = wakeWords()): boolean {
-  const haystack = ` ${normalizeWakeText(transcript)} `;
-  return words.some((word) => {
-    const needle = normalizeWakeText(word);
-    return needle !== "" && haystack.includes(` ${needle} `);
-  });
+  const tokens = normalizeWakeText(transcript)
+    .split(" ")
+    .filter((token) => token !== "");
+  return tokens
+    .slice(0, 3)
+    .some((token) => words.includes(normalizeWakeText(token)));
 }
 
 /** Client key for the attention window: first forwarded IP or direct peer. */
@@ -67,23 +83,9 @@ export function requestClientId(request: Request): string {
 
 const attentionSince = new Map<string, number>();
 
-/**
- * Pending question per connection: Vale asked, so the answer may come
- * nameless. Set from the agent result, never from a transcript alone.
- */
-const pendingSince = new Map<string, number>();
-
-export function markQuestionAsked(clientId: string, now: number = Date.now()): void {
-  pendingSince.set(clientId, now);
-}
-
-export function clearQuestion(clientId: string): void {
-  pendingSince.delete(clientId);
-}
-
-function hasPendingQuestion(clientId: string, now: number): boolean {
-  const since = pendingSince.get(clientId);
-  return since !== undefined && now - since < windowMs();
+/** Tapping talk opens the window like naming Vale does. */
+export function noteAttention(clientId: string, now: number = Date.now()): void {
+  attentionSince.set(clientId, now);
 }
 
 /** Undo intent: deshazlo / undo it, with or without the name. */
@@ -94,39 +96,6 @@ export function isUndoIntent(transcript: string): boolean {
 const GREETING_ONLY =
   /^(hola|hey|buenas|buenos dias|buenas tardes|buenas noches|alo|oiga|oigame)$/;
 
-/**
- * Collapse ASR stutters before the gate: adjacent repeats ("mí? mí?",
- * "la la") and glued halves ("Hola,Hola", "abre sesión abre sesión").
- * Compares lowercase without trailing punctuation, keeps the first form.
- */
-export function collapseEcho(transcript: string): string {
-  const tokens = transcript.split(/[\s,]+/).filter((token) => token !== "");
-  if (tokens.length === 0) return "";
-  const keyOf = (token: string): string =>
-    token.toLowerCase().replace(/[?!.¡¿;:'"]+$/g, "");
-  const single: string[] = [];
-  let collapsed = false;
-  for (const token of tokens) {
-    const prev = single[single.length - 1];
-    const key = keyOf(token);
-    if (prev !== undefined && key !== "" && key === keyOf(prev)) {
-      collapsed = true;
-      continue;
-    }
-    single.push(token);
-  }
-  if (single.length >= 2 && single.length % 2 === 0) {
-    const half = single.length / 2;
-    const first = single.slice(0, half).map(keyOf);
-    const second = single.slice(half).map(keyOf);
-    if (first.every((key, i) => key !== "" && key === second[i])) {
-      return single.slice(0, half).join(" ");
-    }
-  }
-  // No repeat removed: keep the original untouched, punctuation included.
-  return collapsed ? single.join(" ") : transcript;
-}
-
 /** Bare greeting, optionally naming Vale: never a data request. */
 export function isGreetingOnly(transcript: string): boolean {
   const words = normalizeWakeText(transcript)
@@ -136,34 +105,91 @@ export function isGreetingOnly(transcript: string): boolean {
   return GREETING_ONLY.test(words.join(" "));
 }
 
+/** Content words that only show up in Spanish transcripts (accents stripped). */
+const SPANISH_MARKERS = new Set(
+  "que una para gracias hola estoy estas estamos tienes tiene quiere quiero abre abro sesion cita manana ficha esmaltado insumo insumos manicurista donde cuando porque quien este esta estos".split(
+    " ",
+  ),
+);
+
+/** Content words that only show up in English transcripts. */
+const ENGLISH_MARKERS = new Set(
+  "the is are you your what with how book booking appointment session open save goal goals today price prices list card service client next hello thanks please done time".split(
+    " ",
+  ),
+);
+
+/**
+ * The transcript speaks the other language: the selector owns the language
+ * end to end, never the transcript. A bare name call still opens the window:
+ * only content past the name can mismatch.
+ */
+export function languageMismatch(
+  transcript: string,
+  language: ValeLanguage = "en",
+): boolean {
+  const tokens = normalizeWakeText(transcript)
+    .split(" ")
+    .filter((word) => word !== "");
+  const words = wakeWords();
+  // The name itself says nothing about the language: drop it everywhere
+  // ("thanks, Vale" is English; "vale, gracias" is Spanish).
+  const content = tokens.filter((token) => !words.includes(token));
+  if (content.length === 0) return false;
+  if (/[¿¡]/.test(transcript)) return language !== "es";
+  const markers = language === "es" ? ENGLISH_MARKERS : SPANISH_MARKERS;
+  return content.some((token) => markers.has(token));
+}
+
+export type WakeGate = "nombre" | "ventana" | "ignorado" | "idioma";
+
 export interface WakeVerdict {
   execute: boolean;
   namedVale: boolean;
+  gate: WakeGate;
+  /** Seconds since Vale's last reply (the previous executed turn). */
+  sinceReplyS: number | null;
 }
 
 /**
+ * Sliding attention window: naming Vale opens it, and every executed turn
+ * restarts it, so any request inside the window runs without the name.
  * Empty transcripts bypass the gate: the existing silence path handles them.
- * Ignored turns neither read nor write the response chain.
+ * Ignored turns neither read nor write the model or the chain.
  */
 export function checkWake(
   transcript: string,
   clientId: string,
   now: number = Date.now(),
+  sessionOpen = false,
+  language: ValeLanguage = "en",
 ): WakeVerdict {
-  if (transcript.trim() === "") return { execute: true, namedVale: false };
-  if (namesVale(transcript)) {
-    attentionSince.set(clientId, now);
-    return { execute: true, namedVale: true };
-  }
   const since = attentionSince.get(clientId);
-  if (since !== undefined && now - since < windowMs()) {
-    // An open window covers continuations only: the answer to Vale's
-    // pending question, or an undo of the last write. A fresh request
-    // without the name stays ignored.
-    if (hasPendingQuestion(clientId, now) || isUndoIntent(transcript)) {
-      return { execute: true, namedVale: false };
-    }
-    return { execute: false, namedVale: false };
+  const inWindow = since !== undefined && now - since < windowMs(sessionOpen);
+  const sinceReplyS = since === undefined ? null : (now - since) / 1000;
+  // A phrase that names Vale is never discarded for language: the name
+  // itself says nothing about the language, and the selector owns the
+  // reply language end to end. Only unnamed content in the other language
+  // is silently discarded (no model, no writes, gate:idioma).
+  const named = namesVale(transcript);
+  if (!named && languageMismatch(transcript, language)) {
+    return { execute: false, namedVale: false, gate: "idioma", sinceReplyS };
   }
-  return { execute: false, namedVale: false };
+  if (named) {
+    attentionSince.set(clientId, now);
+    return { execute: true, namedVale: true, gate: "nombre", sinceReplyS };
+  }
+  if (transcript.trim() === "") {
+    return {
+      execute: true,
+      namedVale: false,
+      gate: inWindow ? "ventana" : "ignorado",
+      sinceReplyS,
+    };
+  }
+  if (inWindow) {
+    attentionSince.set(clientId, now);
+    return { execute: true, namedVale: false, gate: "ventana", sinceReplyS };
+  }
+  return { execute: false, namedVale: false, gate: "ignorado", sinceReplyS };
 }

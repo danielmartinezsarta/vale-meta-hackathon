@@ -1,29 +1,30 @@
 import WebSocket from "ws";
 import { runAgentTurn } from "./agent";
-import { getDb } from "./db";
+import { getDb, recentTurns, recordTurn, type HistoryTurn } from "./db";
 import { getBoard } from "./board";
 import {
-  chainFailed,
-  chainSucceeded,
-  nextPreviousResponseId,
-} from "./response-chain";
-import {
   checkWake,
-  clearQuestion,
-  collapseEcho,
-  isGreetingOnly,
-  markQuestionAsked,
+  noteAttention,
   sanitizeClientId,
+  type WakeVerdict,
 } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
-import { estimateCost, formatTurnLog } from "./turn-log";
+import { emitTurnLog, estimateCost } from "./turn-log";
+import { isMutedJunkTurn, saveTurnWav } from "./turn-audio";
 import {
+  clearPendingAction,
   isConfirmYes,
+  isRefusalNo,
+  peekPendingAction,
   runPendingActions,
   takePendingAction,
 } from "./pending-action";
 import { getSlots } from "./slot-memory";
+import { getOpenSession } from "./vale-tools";
+import type { Widget } from "./widget";
 import {
+  clarifyText,
+  declineText,
   DEFAULT_LANGUAGE,
   parseLanguage,
   turnErrorText,
@@ -38,6 +39,7 @@ const MAX_BUFFERED_BYTES = 2_000_000;
 export interface BridgeAgentUsage {
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens?: number;
 }
 
 export interface BridgeAgentResult {
@@ -45,25 +47,47 @@ export interface BridgeAgentResult {
   usage: BridgeAgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
-  responseId: string;
-  /** False after a completed write: the next turn starts the chain fresh. */
-  chainNext: boolean;
-  /** Vale asked something: the answer may arrive without the name. */
-  askedQuestion: boolean;
+  /** Screen card derived from the tool call, never from reply text. */
+  widget?: Widget | null;
+}
+
+/**
+ * Wiring for the single-process server: the Meta key authenticates upstream,
+ * the socket peer only names the conversation until the browser sends its
+ * stable client frame. Mixing them up authenticates Meta with an IP address
+ * and every turn dies as E-ASR (Daniel's "connection dropped" on tap).
+ */
+export function bridgeOptionsForUpgrade(
+  peer: string,
+  apiKey: string,
+  asrUrl?: string,
+): Pick<VoiceBridgeOptions, "key" | "clientId" | "conversation" | "metaUrl"> {
+  return {
+    key: apiKey,
+    clientId: peer,
+    conversation: true,
+    metaUrl: asrUrl,
+  };
 }
 
 export interface VoiceBridgeOptions {
-  /** Browser side of the upgraded Vercel socket, one per turn. */
+  /** Browser side of the socket: one per turn, or one per conversation. */
   browser: WebSocket;
+  /** One socket carries the whole conversation: turns reset, Meta redials. */
+  conversation?: boolean;
   key: string;
   metaUrl?: string;
+  /** Redial backoff after a failed turn (conversation sockets only). */
+  retryBaseMs?: number;
+  retryMaxMs?: number;
+  maxConsecutiveFailures?: number;
   createMetaSocket?: (url: string) => WebSocket;
   runAgent?: (args: {
     key: string;
     transcript: string;
+    history: HistoryTurn[];
     startedAt: number;
     onDelta: (text: string) => void;
-    previousResponseId?: string;
     language?: ValeLanguage;
     slotKey?: string;
   }) => Promise<BridgeAgentResult>;
@@ -74,12 +98,62 @@ export interface VoiceBridgeOptions {
 }
 
 // Browser text frames may arrive as Buffer: try JSON first; never forward a control frame as audio.
+/** What the client saw this turn: input peak, VAD ms, muted ms, her state. */
+export interface TurnClientStats {
+  peakLevel: number | null;
+  voicedMs: number | null;
+  mutedMs: number | null;
+  valeState: string | null;
+  /** Blocks lost under load (wall vs frames) and source blocks spanned. */
+  lostBlocks: number | null;
+  srcBlocks: number | null;
+}
+
+function parseClientStats(message: {
+  peakLevel?: unknown;
+  voicedMs?: unknown;
+  mutedMs?: unknown;
+  valeState?: unknown;
+  lostBlocks?: unknown;
+  srcBlocks?: unknown;
+}): TurnClientStats {
+  const num = (value: unknown, max: number): number | null =>
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= max
+      ? value
+      : null;
+  const int = (value: unknown, max: number): number | null =>
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= max
+      ? value
+      : null;
+  const state =
+    typeof message.valeState === "string" && message.valeState.length <= 16
+      ? message.valeState
+      : null;
+  return {
+    peakLevel: num(message.peakLevel, 1),
+    voicedMs: num(message.voicedMs, 3600000),
+    mutedMs: num(message.mutedMs, 3600000),
+    valeState: state,
+    lostBlocks: int(message.lostBlocks, 3600000),
+    srcBlocks: int(message.srcBlocks, 3600000),
+  };
+}
+
 export function tryParseControl(
   data: unknown,
 ):
-  | { type: "endStream" }
+  | { type: "endStream"; stats: TurnClientStats }
   | { type: "language"; language: ValeLanguage }
   | { type: "client"; client: string }
+  | { type: "wake" }
+  | { type: "client-state"; state: Record<string, unknown> }
+  | { type: "vote"; vote: "yes" | "no" }
   | null {
   let text: string | null = null;
   if (typeof data === "string") {
@@ -94,8 +168,35 @@ export function tryParseControl(
       type?: unknown;
       language?: unknown;
       client?: unknown;
+      state?: unknown;
+      vote?: unknown;
+      peakLevel?: unknown;
+      voicedMs?: unknown;
+      mutedMs?: unknown;
+      valeState?: unknown;
+      lostBlocks?: unknown;
+      srcBlocks?: unknown;
     };
-    if (message.type === "endStream") return { type: "endStream" };
+    if (message.type === "endStream")
+      return { type: "endStream", stats: parseClientStats(message) };
+    if (message.type === "wake") return { type: "wake" };
+    if (
+      message.type === "vote" &&
+      (message.vote === "yes" || message.vote === "no")
+    ) {
+      return { type: "vote", vote: message.vote };
+    }
+    if (
+      message.type === "client-state" &&
+      message.state !== null &&
+      typeof message.state === "object" &&
+      !Array.isArray(message.state)
+    ) {
+      return {
+        type: "client-state",
+        state: message.state as Record<string, unknown>,
+      };
+    }
     if (message.type === "language") {
       return { type: "language", language: parseLanguage(message.language) };
     }
@@ -117,10 +218,13 @@ function sendJson(browser: WebSocket, payload: unknown): void {
   }
 }
 
-// One live turn: browser <--WS--> Vercel <--WS--> Meta (PUSH_TO_TALK); the client reconnects, Meta has no resume.
+// browser <--WS--> server <--WS--> Meta (PUSH_TO_TALK). One socket spans one
+// turn by default; in conversation mode it spans the whole conversation while
+// every turn still redials Meta, which has no resume.
 export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const {
     browser,
+    conversation = false,
     key,
     metaUrl = ASR_URL,
     createMetaSocket,
@@ -130,6 +234,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       1,
       Number(process.env.VOICE_TURN_TIMEOUT_MS) || BRIDGE_TURN_TIMEOUT_MS,
     ),
+    maxConsecutiveFailures = 5,
   } = options;
 
   let settled = false;
@@ -139,8 +244,38 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   let audioProcessedMs: number | null = null;
   let bufferedBytes = 0;
   const pendingAudio: Buffer[] = [];
+  /** This turn's mic PCM for the WAV evidence file; freed at turn end. */
+  const wavChunks: Buffer[] = [];
+  /** WAV path + client stats for the turn now completing. */
+  let turnWav: string | null = null;
+  let wavSaved = false;
+  let turnSeq = 0;
+  let turnStats: TurnClientStats = {
+    peakLevel: null,
+    voicedMs: null,
+    mutedMs: null,
+    valeState: null,
+    lostBlocks: null,
+    srcBlocks: null,
+  };
   let pendingEnd = false;
   let agentRan = false;
+  /** Stale Meta sockets from earlier turns must not fail the current one. */
+  let metaGen = 0;
+  /** Straight failed turns on this browser socket; a final resets it. */
+  let failedTurns = 0;
+  let lastCountedGen = -1;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A Meta dial is in flight: later audio just buffers behind it. */
+  let metaDialPending = false;
+  /** When this turn's voice ended: final minus this is the real ASR time. */
+  let endStreamAt: number | null = null;
+  const clearRetry = () => {
+    if (retryTimer !== undefined) {
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
+    }
+  };
   /** Screen selector language; Spanish until the browser sends its frame. */
   let turnLanguage: ValeLanguage = DEFAULT_LANGUAGE;
   const err = (kind: VoiceErrorKind): string =>
@@ -148,13 +283,18 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
 
   const finish = (code: number, reason: string) => {
     if (settled) return;
-    settled = true;
     clearTimeout(timer);
+    metaGen += 1;
     try {
       meta.close();
     } catch {
       /* already closed */
     }
+    if (conversation && !browserGone && browser.readyState === 1) {
+      beginNextTurn();
+      return;
+    }
+    settled = true;
     try {
       browser.close(code, reason);
     } catch {
@@ -162,11 +302,105 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     }
   };
 
+  // Meta dials on first voice, never idly: an open socket with no ingress
+  // dies fast upstream ("slower than real-time"), and a pre-dialed socket
+  // would loop failures on a silent user. Buffered audio replays on open.
+  const ensureMetaOpen = () => {
+    if (metaOpen || metaDialPending || settled || browserGone) return;
+    metaDialPending = true;
+    openMetaTurn();
+  };
+
+  // Next turn on the same socket: fresh flags, same window. No dial here:
+  // the next audio frames open it, so silence never holds a Meta socket.
+  const beginNextTurn = () => {
+    metaOpen = false;
+    metaDialPending = false;
+    endStreamAt = null;
+    gotFinal = false;
+    finalText = "";
+    audioProcessedMs = null;
+    bufferedBytes = 0;
+    pendingAudio.length = 0;
+    wavChunks.length = 0;
+    turnWav = null;
+    wavSaved = false;
+    turnSeq += 1;
+    turnStats = {
+      peakLevel: null,
+      voicedMs: null,
+      mutedMs: null,
+      valeState: null,
+      lostBlocks: null,
+      srcBlocks: null,
+    };
+    pendingEnd = false;
+    agentRan = false;
+    timerArmed = false;
+    clearTimeout(timer);
+  };
+
+  // An ASR outage never kills the conversation: the turn is discarded
+  // silently and the next voice redials Meta at once. The user only sees an
+  // error after maxConsecutiveFailures straight failures, then the socket
+  // closes with a clear reason. One browser socket = visible alert only then.
   const failTurn = (message: string, code: string) => {
     if (settled) return;
-    sendJson(browser, { type: "error", message, code });
+    if (!conversation) {
+      sendJson(browser, { type: "error", message, code });
+      sendJson(browser, { type: "done" });
+      finish(1011, "turn-failed");
+      return;
+    }
+    // One outage fires several Meta handlers; count the turn once.
+    if (lastCountedGen !== metaGen) {
+      lastCountedGen = metaGen;
+      failedTurns += 1;
+    }
+    clearTimeout(timer);
+    metaGen += 1;
+    try {
+      meta.close();
+    } catch {
+      /* already closed */
+    }
+    clearRetry();
+    if (failedTurns >= maxConsecutiveFailures) {
+      // No silent redial loop: the browser sees the error below, then this.
+      sendJson(browser, { type: "error", message, code });
+      sendJson(browser, { type: "done" });
+      settled = true;
+      try {
+        browser.close(1011, "meta-unavailable");
+      } catch {
+        /* already closed */
+      }
+      return;
+    }
+    // Silent discard: the next voice redials Meta; no visible error.
+    logTurn({
+      language: turnLanguage,
+      ts: new Date().toISOString(),
+      transcript: finalText,
+      ttftMs: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      audioSeconds: bufferedBytes / 48000,
+      tool: null,
+      modelSkipped: true,
+      error: code,
+      ignored: true,
+      asrMs: null,
+      chain: "none",
+      key: clientId,
+      slots: slotSnapshot(),
+      gate: null,
+      sinceReplyS: null,
+      totalMs: null,
+    });
+    sendJson(browser, { type: "ignored" });
     sendJson(browser, { type: "done" });
-    finish(1011, "turn-failed");
+    beginNextTurn();
   };
 
   // The browser announces its stable id in a {type:"client"} frame (the
@@ -178,10 +412,12 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     "unknown";
   const logTurn = (fields: {
     ts: string;
+    language: ValeLanguage;
     transcript: string;
     ttftMs: number | null;
     inputTokens: number;
     outputTokens: number;
+    cachedInputTokens?: number | null;
     audioSeconds: number;
     tool: string | null;
     modelSkipped: boolean;
@@ -191,16 +427,37 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     chain?: "hit" | "miss" | "none";
     key?: string;
     slots?: { client?: string; service?: string } | null;
+    gate?: WakeVerdict["gate"] | null;
+    sinceReplyS?: number | null;
+    totalMs?: number | null;
+    junk?: boolean;
   }) => {
-    console.log(
-      formatTurnLog({
-        ...fields,
-        costUsd: estimateCost(
-          { inputTokens: fields.inputTokens, outputTokens: fields.outputTokens },
-          fields.audioSeconds,
-        ),
-      }),
-    );
+    // One WAV per turn from whatever the mic sent: the first log call with
+    // audio persists it, later calls for the turn reuse the path. Saved
+    // once, then freed, so a long session never grows past one turn.
+    if (!wavSaved && wavChunks.length > 0) {
+      wavSaved = true;
+      turnWav = saveTurnWav(`${clientId}-${turnSeq}`, wavChunks);
+      wavChunks.length = 0;
+    }
+    emitTurnLog({
+      ...fields,
+      wav: turnWav,
+      peakLevel: turnStats.peakLevel,
+      voicedMs: turnStats.voicedMs,
+      mutedMs: turnStats.mutedMs,
+      valeState: turnStats.valeState,
+      lostBlocks: turnStats.lostBlocks,
+      srcBlocks: turnStats.srcBlocks,
+      costUsd: estimateCost(
+        {
+          inputTokens: fields.inputTokens,
+          outputTokens: fields.outputTokens,
+          cachedInputTokens: fields.cachedInputTokens ?? 0,
+        },
+        fields.audioSeconds,
+      ),
+    });
   };
   const slotSnapshot = () => {
     const slots = getSlots(clientId);
@@ -210,11 +467,13 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   };
 
   let browserGone = false;
-  const timer = setTimeout(() => {
+  let timer: ReturnType<typeof setTimeout>;
+  /** Conversation sockets idle between turns: arm the timeout on audio. */
+  let timerArmed = false;
+  const onTurnTimeout = () => {
     if (settled) return;
-    settled = true;
-    chainFailed(clientId);
     logTurn({
+      language: turnLanguage,
       ts: new Date().toISOString(),
       transcript: finalText,
       ttftMs: null,
@@ -229,9 +488,12 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       chain: "none",
       key: clientId,
       slots: slotSnapshot(),
+      gate: null,
+      sinceReplyS: null,
+      totalMs: null,
     });
     failTurn(err("timeout"), "E-NET");
-  }, turnTimeoutMs);
+  };
 
   const flushPending = () => {
     for (const chunk of pendingAudio.splice(0)) {
@@ -251,23 +513,148 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     }
   };
 
-  const answerTranscript = async (transcript: string, speechEndAt: number) => {
+  // Heard nothing: same gentle notice with or without a Meta round trip.
+  const finishEmptyTurn = (audioSeconds: number, asrMs: number | null = null) => {
+    const at = now();
+    sendJson(browser, {
+      type: "transcript",
+      transcript: "",
+      final: true,
+      audioProcessedMs: null,
+    });
+    sendJson(browser, {
+      type: "notice",
+      message: err("vad-continue"),
+      code: "E-VAD",
+    });
+    logTurn({
+      language: turnLanguage,
+      ts: new Date(at).toISOString(),
+      transcript: "",
+      ttftMs: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      audioSeconds,
+      tool: null,
+      modelSkipped: true,
+      error: null,
+      ignored: false,
+      asrMs,
+      chain: "none",
+      key: clientId,
+      slots: null,
+      gate: null,
+      sinceReplyS: null,
+      totalMs: 0,
+    });
+    sendJson(browser, { type: "done" });
+    finish(1000, "turn-complete");
+  };
+
+  // Touch on a confirm card: the exact equivalent of a spoken yes/no.
+  // No model, no ASR: yes runs the stored writes, no declines them, and a
+  // yes with nothing stored clarifies (never repeats the last write).
+  const answerVote = async (vote: "yes" | "no"): Promise<void> => {
+    const at = now();
+    const ts = new Date(at).toISOString();
+    const answerCanned = (transcript: string, said: string) => {
+      recordTurn(getDb(), clientId, "user", transcript);
+      recordTurn(getDb(), clientId, "vale", said, null);
+      sendJson(browser, { type: "reply", text: said });
+      noteAttention(clientId);
+      sendJson(browser, { type: "board", board: getBoard(getDb()) });
+      sendJson(browser, { type: "widget", widget: null });
+      logTurn({
+        language: turnLanguage,
+        ts,
+        transcript,
+        ttftMs: Date.now() - at,
+        inputTokens: 0,
+        outputTokens: 0,
+        audioSeconds: 0,
+        tool: null,
+        modelSkipped: true,
+        error: null,
+        ignored: false,
+        asrMs: null,
+        chain: "none",
+        key: clientId,
+        slots: slotSnapshot(),
+        gate: null,
+        sinceReplyS: null,
+        totalMs: Date.now() - at,
+      });
+      sendJson(browser, { type: "done" });
+      finish(1000, "turn-complete");
+    };
+    if (vote === "yes") {
+      const actions = takePendingAction(clientId);
+      if (!actions) {
+        await answerCanned("yes", clarifyText(turnLanguage));
+        return;
+      }
+      const executed = runPendingActions(getDb(), clientId, actions, turnLanguage);
+      recordTurn(getDb(), clientId, "user", "yes");
+      recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
+      sendJson(browser, { type: "reply", text: executed.text });
+      noteAttention(clientId);
+      sendJson(browser, { type: "board", board: getBoard(getDb()) });
+      // The proposal is decided: the card goes away.
+      sendJson(browser, { type: "widget", widget: null });
+      logTurn({
+        language: turnLanguage,
+        ts,
+        transcript: "yes",
+        ttftMs: Date.now() - at,
+        inputTokens: 0,
+        outputTokens: 0,
+        audioSeconds: 0,
+        tool: executed.toolUsed,
+        modelSkipped: true,
+        error: null,
+        ignored: false,
+        asrMs: null,
+        chain: "none",
+        key: clientId,
+        slots: slotSnapshot(),
+        gate: null,
+        sinceReplyS: null,
+        totalMs: Date.now() - at,
+      });
+      sendJson(browser, { type: "done" });
+      finish(1000, "turn-complete");
+      return;
+    }
+    // A no: nothing writes, the card goes away.
+    clearPendingAction(clientId);
+    await answerCanned("no", declineText(turnLanguage));
+  };
+
+  const answerTranscript = async (
+    transcript: string,
+    speechEndAt: number,
+    verdict: WakeVerdict,
+    asrMs: number | null,
+  ) => {
     agentRan = true;
     const ts = new Date(speechEndAt || now()).toISOString();
-    const chainedId = nextPreviousResponseId(clientId);
-    const chainState = chainedId === undefined ? "miss" : "hit";
+    // Explicit memory: history first, then record this user turn.
+    const history = recentTurns(getDb(), clientId);
+    recordTurn(getDb(), clientId, "user", transcript);
     try {
       // A yes to Vale's pending proposal runs the stored writes at once:
       // no model, no questions, no chain needed.
       if (isConfirmYes(transcript)) {
         const actions = takePendingAction(clientId);
         if (actions) {
-          const executed = runPendingActions(getDb(), clientId, actions);
-          chainFailed(clientId);
-          clearQuestion(clientId);
+          const executed = runPendingActions(getDb(), clientId, actions, turnLanguage);
+          recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
           sendJson(browser, { type: "reply", text: executed.text });
+          // Her reply restarts the window: the next turn counts from here.
+          noteAttention(clientId);
           sendJson(browser, { type: "board", board: getBoard(getDb()) });
           logTurn({
+            language: turnLanguage,
             ts,
             transcript,
             ttftMs: Date.now() - speechEndAt,
@@ -281,41 +668,83 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             modelSkipped: true,
             error: null,
             ignored: false,
-            asrMs: null,
+            asrMs,
             chain: "none",
             key: clientId,
             slots: slotSnapshot(),
+            gate: verdict.gate,
+            sinceReplyS: verdict.sinceReplyS,
+            totalMs: Date.now() - speechEndAt,
           });
           sendJson(browser, { type: "done" });
           finish(1000, "turn-complete");
           return;
         }
       }
+      // A no to Vale's pending proposal discards it at once: the card goes
+      // away with a short decline, no model, no second question.
+      if (isRefusalNo(transcript) && peekPendingAction(clientId)) {
+        clearPendingAction(clientId);
+        const declined = declineText(turnLanguage);
+        recordTurn(getDb(), clientId, "vale", declined, null);
+        sendJson(browser, { type: "reply", text: declined });
+        noteAttention(clientId);
+        sendJson(browser, { type: "board", board: getBoard(getDb()) });
+        sendJson(browser, { type: "widget", widget: null });
+        logTurn({
+          language: turnLanguage,
+          ts,
+          transcript,
+          ttftMs: Date.now() - speechEndAt,
+          inputTokens: 0,
+          outputTokens: 0,
+          audioSeconds:
+            audioProcessedMs !== null
+              ? audioProcessedMs / 48000
+              : bufferedBytes / 48000,
+          tool: null,
+          modelSkipped: true,
+          error: null,
+          ignored: false,
+          asrMs,
+          chain: "none",
+          key: clientId,
+          slots: slotSnapshot(),
+          gate: verdict.gate,
+          sinceReplyS: verdict.sinceReplyS,
+          totalMs: Date.now() - speechEndAt,
+        });
+        sendJson(browser, { type: "done" });
+        finish(1000, "turn-complete");
+        return;
+      }
       const result = await runAgent(
         {
           key,
           transcript,
-          previousResponseId: chainedId,
+          history,
           startedAt: speechEndAt,
           onDelta: (text) => sendJson(browser, { type: "reply-delta", text }),
           language: turnLanguage,
           slotKey: clientId,
         },
       );
-      if (!browserGone) chainSucceeded(result.responseId, result.chainNext, clientId);
-      if (result.askedQuestion && !isGreetingOnly(transcript)) {
-        markQuestionAsked(clientId, speechEndAt);
-      } else {
-        clearQuestion(clientId);
-      }
+      if (!browserGone) recordTurn(getDb(), clientId, "vale", result.text, result.toolUsed);
       sendJson(browser, { type: "reply", text: result.text });
+      // Her reply restarts the window: the next turn counts from here.
+      noteAttention(clientId);
       sendJson(browser, { type: "board", board: getBoard(getDb()) });
+      if (result.widget) {
+        sendJson(browser, { type: "widget", widget: result.widget });
+      }
       logTurn({
+        language: turnLanguage,
         ts,
         transcript,
         ttftMs: result.firstTokenMs,
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
+        cachedInputTokens: result.usage.cachedInputTokens,
         audioSeconds:
           audioProcessedMs !== null
             ? audioProcessedMs / 1000
@@ -324,15 +753,18 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         modelSkipped: false,
         error: null,
         ignored: false,
-        asrMs: null,
-        chain: chainState,
+        asrMs,
+        chain: "none",
         key: clientId,
         slots: slotSnapshot(),
+        gate: verdict.gate,
+        sinceReplyS: verdict.sinceReplyS,
+        totalMs: Date.now() - speechEndAt,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed";
-      chainFailed(clientId);
       logTurn({
+        language: turnLanguage,
         ts,
         transcript,
         ttftMs: null,
@@ -346,10 +778,13 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         modelSkipped: false,
         error: message,
         ignored: false,
-        asrMs: null,
-        chain: chainState,
+        asrMs,
+        chain: "none",
         key: clientId,
         slots: slotSnapshot(),
+        gate: verdict.gate,
+        sinceReplyS: verdict.sinceReplyS,
+        totalMs: Date.now() - speechEndAt,
       });
       sendJson(browser, {
         type: "error",
@@ -377,6 +812,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     }
     if (message.sessionId && !message.type) {
       metaOpen = true;
+      metaDialPending = false;
       flushPending();
       return;
     }
@@ -384,7 +820,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       if (message.final) {
         if (gotFinal) return;
         gotFinal = true;
-        finalText = collapseEcho(message.transcript);
+        failedTurns = 0;
+        lastCountedGen = metaGen;
+        clearRetry();
+        finalText = message.transcript;
         audioProcessedMs =
           typeof message.audioProcessedMs === "number"
             ? message.audioProcessedMs
@@ -396,59 +835,99 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           final: true,
           audioProcessedMs,
         });
+        const asrMs = endStreamAt === null ? null : speechEndAt - endStreamAt;
         if (finalText.trim() === "") {
-          sendJson(browser, {
-            type: "notice",
-            message: err("vad-continue"),
-            code: "E-VAD",
-          });
-          logTurn({
-            ts: new Date(speechEndAt).toISOString(),
-            transcript: "",
-            ttftMs: null,
-            inputTokens: 0,
-            outputTokens: 0,
-            audioSeconds:
-              audioProcessedMs !== null
-                ? audioProcessedMs / 1000
-                : bufferedBytes / 48000,
-            tool: null,
-            modelSkipped: true,
-            error: null,
-            ignored: false,
-            asrMs: null,
-            chain: "none",
-            key: clientId,
-            slots: null,
-          });
-          sendJson(browser, { type: "done" });
-          finish(1000, "turn-complete");
-        } else if (!checkWake(finalText, clientId).execute) {
-          // Background chatter without the name: silent discard.
-          logTurn({
-            ts: new Date(speechEndAt).toISOString(),
-            transcript: finalText,
-            ttftMs: null,
-            inputTokens: 0,
-            outputTokens: 0,
-            audioSeconds:
-              audioProcessedMs !== null
-                ? audioProcessedMs / 1000
-                : bufferedBytes / 48000,
-            tool: null,
-            modelSkipped: true,
-            error: null,
-            ignored: true,
-            asrMs: null,
-            chain: "none",
-            key: clientId,
-            slots: slotSnapshot(),
-          });
-          sendJson(browser, { type: "ignored" });
-          sendJson(browser, { type: "done" });
-          finish(1000, "turn-complete");
-        } else {
-          void answerTranscript(finalText, speechEndAt);
+          finishEmptyTurn(
+            audioProcessedMs !== null
+              ? audioProcessedMs / 1000
+              : bufferedBytes / 48000,
+            asrMs,
+          );
+          return;
+        }
+        {
+          // Muted-start junk first: the mic spent the turn muted and what
+          // arrived is flat room tone, not Daniel. Discard before the wake
+          // gate and the model; the ASR pennies are already spent by live
+          // streaming, but nothing else is.
+          const audioMs =
+            (audioProcessedMs !== null
+              ? audioProcessedMs / 1000
+              : bufferedBytes / 48000) * 1000;
+          const pcmBytes = Buffer.concat(wavChunks);
+          const pcm = new Int16Array(
+            pcmBytes.buffer,
+            pcmBytes.byteOffset,
+            Math.floor(pcmBytes.length / 2),
+          );
+          // Voice beats mute accounting: the VAD counted more voiced audio
+          // than the turn contains (incident 23:04:27Z: 4320 ms of voice
+          // in 2800 ms of audio beside 8836 ms of her mute time on the
+          // clock), which proves the mute span leaked in from her reply.
+          // Only mute-dominant room tone is junk; a voice-majority turn
+          // always reaches the wake gate, which owns the window.
+          const voicedMs = turnStats.voicedMs ?? 0;
+          const voiceMajority = voicedMs > audioMs;
+          if (!voiceMajority && isMutedJunkTurn(pcm, turnStats.mutedMs, audioMs)) {
+            logTurn({
+              language: turnLanguage,
+              ts: new Date(speechEndAt).toISOString(),
+              transcript: finalText,
+              ttftMs: null,
+              inputTokens: 0,
+              outputTokens: 0,
+              audioSeconds: audioMs / 1000,
+              tool: null,
+              modelSkipped: true,
+              error: null,
+              ignored: true,
+              asrMs,
+              chain: "none",
+              key: clientId,
+              slots: slotSnapshot(),
+              gate: null,
+              sinceReplyS: null,
+              totalMs: Date.now() - speechEndAt,
+              junk: true,
+            });
+            sendJson(browser, { type: "ignored" });
+            sendJson(browser, { type: "done" });
+            finish(1000, "turn-complete");
+            return;
+          }
+          const sessionOpen = getOpenSession(getDb()) !== null;
+          const verdict = checkWake(finalText, clientId, Date.now(), sessionOpen, turnLanguage);
+          if (!verdict.execute) {
+            // Background chatter without the name: silent discard.
+            logTurn({
+              language: turnLanguage,
+              ts: new Date(speechEndAt).toISOString(),
+              transcript: finalText,
+              ttftMs: null,
+              inputTokens: 0,
+              outputTokens: 0,
+              audioSeconds:
+                audioProcessedMs !== null
+                  ? audioProcessedMs / 1000
+                  : bufferedBytes / 48000,
+              tool: null,
+              modelSkipped: true,
+              error: null,
+              ignored: true,
+              asrMs,
+              chain: "none",
+              key: clientId,
+              slots: slotSnapshot(),
+              gate: verdict.gate,
+              sinceReplyS: verdict.sinceReplyS,
+              totalMs: Date.now() - speechEndAt,
+            });
+            sendJson(browser, { type: "ignored" });
+            sendJson(browser, { type: "done" });
+            finish(1000, "turn-complete");
+          } else {
+            void answerTranscript(finalText, speechEndAt, verdict, asrMs);
+          }
         }
       } else {
         sendJson(browser, {
@@ -474,42 +953,66 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   };
 
   let meta: WebSocket;
-  try {
-    meta = createMetaSocket ? createMetaSocket(metaUrl) : new WebSocket(metaUrl);
-  } catch {
-    failTurn(err("lost"), "E-NET");
-    return;
-  }
 
-  meta.on("open", () => {
+  // Every turn redials Meta: a stale socket must never fail the next turn.
+  function openMetaTurn(): void {
+    metaGen += 1;
+    const gen = metaGen;
+    const current = () => gen === metaGen;
+    let fresh: WebSocket;
     try {
-      meta.send(
-        JSON.stringify({
-          authorization: { accessToken: `Bearer ${key}` },
-          audioEncoding: ASR_ENCODING,
-          model: ASR_MODEL,
-          mode: "PUSH_TO_TALK",
-        }),
-      );
+      fresh = createMetaSocket ? createMetaSocket(metaUrl) : new WebSocket(metaUrl);
     } catch {
       failTurn(err("lost"), "E-NET");
+      return;
     }
-  });
+    meta = fresh;
 
-  meta.on("message", (data: unknown) => handleMetaMessage(data));
+    fresh.on("open", () => {
+      if (!current()) {
+        try {
+          fresh.close();
+        } catch {
+          /* superseded */
+        }
+        return;
+      }
+      try {
+        fresh.send(
+          JSON.stringify({
+            authorization: { accessToken: `Bearer ${key}` },
+            audioEncoding: ASR_ENCODING,
+            model: ASR_MODEL,
+            mode: "PUSH_TO_TALK",
+            // Pin listening to the screen language (names, not tags).
+            languageBias: [turnLanguage === "es" ? "Spanish" : "English"],
+          }),
+        );
+      } catch {
+        failTurn(err("lost"), "E-NET");
+      }
+    });
 
-  meta.on("error", () => {
-    if (!settled && !metaOpen) {
-      failTurn(err("lost"), "E-NET");
-    }
-  });
+    fresh.on("message", (data: unknown) => {
+      if (current()) handleMetaMessage(data);
+    });
 
-  meta.on("close", () => {
-    if (settled) return;
-    if (gotFinal) return; // Meta closes after the final; the reply is on its way.
-    console.error("[voice-asr] connection closed before final transcript");
-    failTurn(err("lost"), "E-ASR");
-  });
+    fresh.on("error", () => {
+      if (current() && !settled && !metaOpen) {
+        metaDialPending = false;
+        failTurn(err("lost"), "E-NET");
+      }
+    });
+
+    fresh.on("close", () => {
+      if (!current()) return;
+      if (settled) return;
+      if (gotFinal) return; // Meta closes after the final; the reply is on its way.
+      metaDialPending = false;
+      console.error("[voice-asr] connection closed before final transcript");
+      failTurn(err("lost"), "E-ASR");
+    });
+  }
 
   browser.on("message", (data: unknown) => {
     if (settled) return;
@@ -525,6 +1028,33 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         clientId = control.client;
         return;
       }
+      // Tapping talk opens the window like naming Vale does.
+      if (control.type === "wake") {
+        noteAttention(clientId);
+        return;
+      }
+      // Field diagnostics: capture, AudioContext, tab visibility, speech
+      // and echo-hold state. Logged, never answered, never a turn.
+      if (control.type === "client-state") {
+        console.log(
+          `[client-state] client=${clientId} ${JSON.stringify(control.state).slice(0, 500)}`,
+        );
+        return;
+      }
+      // Touch on a confirm card: the exact equivalent of a spoken yes/no.
+      if (control.type === "vote") {
+        void answerVote(control.vote);
+        return;
+      }
+      // Only endStream reaches here: keep what the client saw this turn.
+      if (control.type === "endStream") turnStats = control.stats;
+      // Nothing ever voiced: answer locally instead of dialing Meta for it.
+      if (!metaOpen && bufferedBytes === 0 && pendingAudio.length === 0) {
+        finishEmptyTurn(0);
+        return;
+      }
+      // Voice ended here: the final arriving later sets the real ASR time.
+      endStreamAt = now();
       if (metaOpen) {
         try {
           meta.send(JSON.stringify({ type: "endStream" }));
@@ -534,15 +1064,23 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       } else {
         pendingEnd = true;
       }
+      ensureMetaOpen();
       return;
     }
     if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) {
       const chunk = data as Buffer;
       bufferedBytes += chunk.length;
+      wavChunks.push(chunk);
+      if (conversation && !timerArmed) {
+        timerArmed = true;
+        clearTimeout(timer);
+        timer = setTimeout(onTurnTimeout, turnTimeoutMs);
+      }
       if (bufferedBytes > MAX_BUFFERED_BYTES) {
         failTurn(err("lost"), "E-NET");
         return;
       }
+      ensureMetaOpen();
       if (metaOpen) {
         try {
           meta.send(chunk);
@@ -560,8 +1098,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     if (settled) return;
     settled = true;
     browserGone = true;
-    chainFailed(clientId);
     clearTimeout(timer);
+    clearRetry();
     try {
       meta.close();
     } catch {
@@ -571,5 +1109,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   browser.on("close", onBrowserGone);
   browser.on("error", onBrowserGone);
 
+  timer = setTimeout(onTurnTimeout, turnTimeoutMs);
+  timerArmed = true;
+  // No Meta dial here: the first audio frames open it (dial-on-voice), so a
+  // tap with no speech never holds an upstream socket that idles out.
   sendJson(browser, { type: "bridge", state: "open" });
 }

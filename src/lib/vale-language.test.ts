@@ -1,20 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+  declineText,
   DEFAULT_LANGUAGE,
   parseLanguage,
   turnErrorText,
 } from "./vale-language";
 
 describe("closed language set", () => {
-  it("defaults to Spanish and keeps only es or en", () => {
-    expect(DEFAULT_LANGUAGE).toBe("es");
+  it("defaults to English and keeps only es or en", () => {
+    expect(DEFAULT_LANGUAGE).toBe("en");
     expect(parseLanguage("en")).toBe("en");
     expect(parseLanguage("es")).toBe("es");
-    expect(parseLanguage("it")).toBe("es");
-    expect(parseLanguage("")).toBe("es");
-    expect(parseLanguage(undefined)).toBe("es");
-    expect(parseLanguage(null)).toBe("es");
-    expect(parseLanguage(42)).toBe("es");
+    expect(parseLanguage("it")).toBe("en");
+    expect(parseLanguage("")).toBe("en");
+    expect(parseLanguage(undefined)).toBe("en");
+    expect(parseLanguage(null)).toBe("en");
+    expect(parseLanguage(42)).toBe("en");
   });
 
   it("names every turn error in both languages", () => {
@@ -26,13 +27,20 @@ describe("closed language set", () => {
     expect(turnErrorText("lost", "en")).toContain("dropped");
     expect(turnErrorText("model", "es")).toContain("Perdón");
     expect(turnErrorText("model", "en")).toContain("Sorry");
+    expect(turnErrorText("suspended", "es")).toContain("no arrancó");
+    expect(turnErrorText("suspended", "en")).toContain("did not start");
     expect(turnErrorText("vad-tap", "es")).toContain("Toca y habla");
     expect(turnErrorText("vad-tap", "en")).toContain("Tap and speak");
     expect(turnErrorText("vad-continue", "es")).toContain("te escucho");
     expect(turnErrorText("vad-continue", "en")).toContain("listening");
   });
 
-  it("keeps Spanish when the caller passes nothing", () => {
-    expect(turnErrorText("lost")).toBe(turnErrorText("lost", "es"));
+  it("keeps English when the caller passes nothing", () => {
+    expect(turnErrorText("lost")).toBe(turnErrorText("lost", "en"));
+  });
+
+  it("declines a confirm in the screen language", () => {
+    expect(declineText("en")).toBe("OK, I won't save it.");
+    expect(declineText("es")).toBe("Vale, no lo guardo.");
   });
 });

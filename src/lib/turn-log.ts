@@ -1,4 +1,7 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { AgentUsage } from "./agent";
+import type { ValeLanguage } from "./vale-language";
 
 // Public Model API list prices (Standard tier), per 1M tokens.
 const INPUT_USD_PER_M = 1.25;
@@ -9,11 +12,15 @@ const ASR_USD_PER_SECOND = 0.18 / 3600;
 export interface TurnLogFields {
   /** End-of-speech timestamp (ISO). */
   ts: string;
+  /** Screen language on the connection when the turn ran. */
+  language: ValeLanguage;
   transcript: string;
   /** ms from end of speech to first reply token (null when no model call). */
   ttftMs: number | null;
   inputTokens: number;
   outputTokens: number;
+  /** Prefix-cache hits inside input_tokens; absent on paths that never reach the agent. */
+  cachedInputTokens?: number | null;
   costUsd: number;
   audioSeconds: number;
   tool: string | null;
@@ -30,6 +37,25 @@ export interface TurnLogFields {
   chain?: "hit" | "miss" | "none";
   key?: string;
   slots?: { client?: string; service?: string } | null;
+  /** Sliding-gate verdict, seconds since Vale's last reply, turn wall time. */
+  gate?: "nombre" | "ventana" | "ignorado" | "idioma" | null;
+  sinceReplyS?: number | null;
+  totalMs?: number | null;
+  /**
+   * Per-turn audio evidence: WAV path on disk plus what the client saw —
+   * peak input level 0-1, VAD-voiced ms, ms muted while she spoke, and her
+   * state when speech ended. Null on paths without audio or an old client.
+   */
+  wav?: string | null;
+  peakLevel?: number | null;
+  voicedMs?: number | null;
+  mutedMs?: number | null;
+  valeState?: string | null;
+  /** Blocks lost under load and source blocks spanned (client accounting). */
+  lostBlocks?: number | null;
+  srcBlocks?: number | null;
+  /** Muted-start room tone discarded before the gate and the model. */
+  junk?: boolean;
 }
 
 export function estimateCost(
@@ -47,4 +73,33 @@ export function estimateCost(
 /** One JSON log line per turn. */
 export function formatTurnLog(fields: TurnLogFields): string {
   return `[voice-turn] ${JSON.stringify(fields)}`;
+}
+
+/**
+ * Persistent ear log: every [voice-turn] line lands in data/turns.jsonl,
+ * ignored turns with their gate included. VALE_TURNS_PATH overrides the file
+ * (evals point it elsewhere so test turns never mix into Daniel's log).
+ */
+export function turnsLogFile(): string {
+  const override = process.env.VALE_TURNS_PATH?.trim();
+  if (override) return override;
+  return join(process.cwd(), "data", "turns.jsonl");
+}
+
+/** Append one formatted line; logging never breaks a turn. */
+export function persistTurnLog(line: string): void {
+  try {
+    const file = turnsLogFile();
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${line}\n`);
+  } catch {
+    // The console line already went out; a full disk must not fail the turn.
+  }
+}
+
+/** Console plus persistent log in one call. */
+export function emitTurnLog(fields: TurnLogFields): void {
+  const line = formatTurnLog(fields);
+  console.log(line);
+  persistTurnLog(line);
 }

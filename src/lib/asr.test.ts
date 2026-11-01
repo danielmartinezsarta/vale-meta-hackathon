@@ -9,6 +9,7 @@ interface Handshake {
   audioEncoding?: string;
   model?: string;
   mode?: string;
+  languageBias?: unknown;
 }
 
 let server: WebSocketServer;
@@ -103,9 +104,22 @@ describe("server ASR bridge", () => {
     expect(lastHandshake?.audioEncoding).toBe("PCM_24KHZ");
     expect(lastHandshake?.model).toBe("muse-voice-transcribe-1.0");
     expect(lastHandshake?.mode).toBe("PUSH_TO_TALK");
+    expect(lastHandshake?.languageBias).toEqual(["English"]);
     expect(conn.open).toBe(true);
     conn.close();
     expect(events).toEqual([]);
+  });
+
+  it("pins the transcription bias to Spanish when asked", async () => {
+    resetCounters();
+    const conn = await openAsrConnection({
+      key: "test-key",
+      url,
+      language: "es",
+      onEvent: () => {},
+    });
+    expect(lastHandshake?.languageBias).toEqual(["Spanish"]);
+    conn.close();
   });
 
   it("forwards binary PCM and delivers interim then final on endTurn", async () => {

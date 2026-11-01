@@ -1,4 +1,5 @@
 import type { ValeDb } from "./db";
+import type { ValeLanguage } from "./vale-language";
 import { updateSlotsFromTool } from "./slot-memory";
 import {
   allClients,
@@ -43,6 +44,69 @@ export function setPendingAction(
   pendingByKey.set(key, { actions, at });
 }
 
+/**
+ * Confirm title for the screen card, derived from the stored writes, never
+ * from reply text. The voice asks its own question; the card shows this.
+ */
+export function pendingConfirmTitle(
+  actions: PendingAction[],
+  language: ValeLanguage = "en",
+): string {
+  const en = language !== "es";
+  const find = (tool: string): Record<string, unknown> | null => {
+    const action = actions.find((entry) => entry.tool === tool);
+    return action ? action.args : null;
+  };
+  const open = find("open_session");
+  if (open) {
+    const client = clean(open.client_name);
+    const service = clean(open.service_name);
+    const closes = actions.some((entry) => entry.tool === "close_session");
+    if (client !== undefined && service !== undefined) {
+      if (closes) {
+        return en
+          ? `Close the open session and open ${client} for ${service}?`
+          : `¿Cierro la sesión abierta y abro ${client} de ${service}?`;
+      }
+      return en
+        ? `Open session with ${client} for ${service}?`
+        : `¿Abro sesión con ${client} de ${service}?`;
+    }
+    if (client !== undefined) {
+      return en ? `Open session with ${client}?` : `¿Abro sesión con ${client}?`;
+    }
+  }
+  const note = find("add_note");
+  if (note) {
+    const client = clean(note.client_name);
+    if (client !== undefined) {
+      return en ? `Save note for ${client}?` : `¿Guardo nota para ${client}?`;
+    }
+  }
+  const supply = find("log_supply_use");
+  if (supply) {
+    const name = clean(supply.name);
+    if (name !== undefined) {
+      return en ? `Log ${name}?` : `¿Registro ${name}?`;
+    }
+  }
+  return en ? "Should I save it?" : "¿Lo guardo?";
+}
+
+/** Peek without consuming: true while a stored proposal waits for its yes. */
+export function peekPendingAction(
+  key: string,
+  now: number = Date.now(),
+): boolean {
+  const entry = pendingByKey.get(key);
+  if (!entry) return false;
+  if (now - entry.at >= windowMs()) {
+    pendingByKey.delete(key);
+    return false;
+  }
+  return true;
+}
+
 /** Take deletes: a yes consumes its proposal exactly once. */
 export function takePendingAction(
   key: string,
@@ -68,9 +132,37 @@ export function buildPendingActions(
   db: ValeDb,
   toolName: string,
   args: Record<string, unknown>,
-  toolResult: { ok: boolean; pendingCreate?: unknown },
+  toolResult: {
+    ok: boolean;
+    pendingCreate?: unknown;
+    pendingSessionSwitch?: unknown;
+  },
 ): PendingAction[] | undefined {
   if (!toolResult.ok) {
+    // A live session blocks the requested open: a yes closes it first.
+    // Unknown clients join the same yes; the open re-validates the service.
+    if (toolName === "open_session") {
+      const target = toolResult.pendingSessionSwitch as
+        | { client_name?: unknown; service_name?: unknown }
+        | undefined;
+      const client = clean(target?.client_name);
+      const service = clean(target?.service_name);
+      if (
+        client !== undefined &&
+        service !== undefined &&
+        matchOne(allServices(db), service).kind === "match"
+      ) {
+        const steps: PendingAction[] = [{ tool: "close_session", args: {} }];
+        if (matchOne(allClients(db), client).kind === "none") {
+          steps.push({ tool: "create_client", args: { name: client } });
+        }
+        steps.push({
+          tool: "open_session",
+          args: { client_name: client, service_name: service },
+        });
+        return steps;
+      }
+    }
     if (toolName === "log_supply_use") {
       const name = clean(toolResult.pendingCreate);
       if (name !== undefined && getOpenSession(db) !== null) {
@@ -136,6 +228,15 @@ export function isConfirmYes(transcript: string): boolean {
   );
 }
 
+/** A no addressed to Vale's proposal: bare, in either language. */
+export function isRefusalNo(transcript: string): boolean {
+  const words = normalizeWakeText(transcript)
+    .split(" ")
+    .filter((word) => word !== "" && word !== "vale");
+  if (words.length === 0) return false;
+  return /^(no|nope)$/.test(words.join(" "));
+}
+
 export interface PendingExecution {
   text: string;
   toolUsed: string | null;
@@ -149,11 +250,12 @@ export function runPendingActions(
   db: ValeDb,
   slotKey: string,
   actions: PendingAction[],
+  language: ValeLanguage = "es",
 ): PendingExecution {
   const said: string[] = [];
   let toolUsed: string | null = null;
   for (const action of actions) {
-    const result = runValeTool(db, action.tool, action.args);
+    const result = runValeTool(db, action.tool, action.args, language);
     toolUsed = action.tool;
     updateSlotsFromTool(slotKey, action.tool, action.args, result.ok, (result as { data?: unknown }).data);
     said.push(result.message);

@@ -1,13 +1,24 @@
 // Server-side only: holds the SQLite database. Never import from client code.
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import seedData from "./seed-data.json";
 import { quotePrice, type PricingConfig } from "./quote";
 
 export type ValeDb = DatabaseSync;
 
-export const DB_FILE = join(process.cwd(), "data", "vale.db");
+/**
+ * File database location. VALE_DB_PATH overrides it (absolute, or relative
+ * to the working directory) so evals and tools can use their own file and
+ * never touch the live data/vale.db. Pure for tests: pass cwd explicitly.
+ */
+export function resolveDbFile(cwd: string = process.cwd()): string {
+  const override = process.env.VALE_DB_PATH?.trim();
+  if (override) return isAbsolute(override) ? override : join(cwd, override);
+  return join(cwd, "data", "vale.db");
+}
+
+export const DB_FILE = resolveDbFile();
 
 // Placeholder shown wherever a private health note would appear.
 // The real text never leaves this module toward the cloud.
@@ -123,6 +134,24 @@ function ensureColumn(db: ValeDb, table: string, column: string, definition: str
 }
 
 /** Create tables and insert the invented seed. Idempotent. */
+/** The user behind the voice: seeded, overridable with VALE_USER_NAME. */
+export const DEFAULT_USER_NAME = "Daniel";
+
+/** The user's name for the prompt: env wins, then the seeded profile. */
+export function userName(db: ValeDb): string {
+  const env = process.env.VALE_USER_NAME?.trim();
+  if (env) return env;
+  try {
+    const row = db
+      .prepare("SELECT name FROM user_profile WHERE id = 1")
+      .get() as { name: string } | undefined;
+    if (row?.name.trim()) return row.name.trim();
+  } catch {
+    /* old database without the table: fall through to the default */
+  }
+  return DEFAULT_USER_NAME;
+}
+
 export function seedDatabase(db: ValeDb): void {
   db.exec(schemaSql());
   ensureColumn(db, "services", "es", "TEXT NOT NULL DEFAULT ''");
@@ -139,6 +168,7 @@ export function seedDatabase(db: ValeDb): void {
   const seed = seedData as unknown as { clients: string[]; services: SeedService[]; supplies: SeedSupply[] };
   const addClient = db.prepare("INSERT OR IGNORE INTO clients (name) VALUES (?)");
   for (const name of seed.clients) addClient.run(name);
+  db.prepare("INSERT OR IGNORE INTO user_profile (id, name) VALUES (1, ?)").run(DEFAULT_USER_NAME);
 
   const upsertSupply = db.prepare(
     `INSERT INTO supplies (name, es, aliases, unit, content_per_product, stock_qty, min_qty, price_per_product_usd)
@@ -194,6 +224,46 @@ export function seedDatabase(db: ValeDb): void {
   }
 }
 
+export interface HistoryTurn {
+  role: "user" | "vale";
+  text: string;
+  tool: string | null;
+}
+
+/** Last turns of one conversation, oldest first. */
+export const HISTORY_TURNS = 20;
+
+export function recordTurn(
+  db: ValeDb,
+  clientKey: string,
+  role: HistoryTurn["role"],
+  text: string,
+  tool: string | null = null,
+): void {
+  // Without a key nothing is saved: "unknown" (or blank) keys used to mix
+  // test and headless traffic into Daniel's live turns.
+  if (clientKey.trim() === "" || clientKey === "unknown") {
+    console.warn(`[vale-db] refusing turn without client key (role=${role})`);
+    return;
+  }
+  db.prepare("INSERT INTO turns (client_key, role, text, tool) VALUES (?, ?, ?, ?)").run(
+    clientKey,
+    role,
+    text,
+    tool,
+  );
+  db.prepare(
+    "DELETE FROM turns WHERE client_key = ? AND id NOT IN (SELECT id FROM turns WHERE client_key = ? ORDER BY id DESC LIMIT ?)",
+  ).run(clientKey, clientKey, HISTORY_TURNS * 2);
+}
+
+export function recentTurns(db: ValeDb, clientKey: string, limit: number = HISTORY_TURNS): HistoryTurn[] {
+  const rows = db
+    .prepare("SELECT role, text, tool FROM turns WHERE client_key = ? ORDER BY id DESC LIMIT ?")
+    .all(clientKey, limit) as unknown as HistoryTurn[];
+  return rows.reverse();
+}
+
 export function getCounts(db: ValeDb): TableCounts {
   const count = (table: string): number => {
     const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
@@ -239,9 +309,15 @@ export function getDb(): ValeDb {
     console.log("[vale-db] VALE_DB_MEMORY=1; using in-memory seed");
     return shared;
   }
+  if (process.env.VITEST === "true") {
+    throw new Error(
+      "[vale-db] refusing the file database under vitest; tests use VALE_DB_MEMORY=1 or a tmp file",
+    );
+  }
   try {
-    mkdirSync(dirname(DB_FILE), { recursive: true });
-    shared = new DatabaseSync(DB_FILE);
+    const file = resolveDbFile();
+    mkdirSync(dirname(file), { recursive: true });
+    shared = new DatabaseSync(file);
     seedDatabase(shared);
     return shared;
   } catch {

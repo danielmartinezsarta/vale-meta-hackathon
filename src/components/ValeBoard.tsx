@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { Board } from "@/lib/board";
+import { uiStrings } from "@/lib/vale-ui";
+import type { ValeLanguage } from "@/lib/vale-language";
 
 function elapsedSince(startedAt: string, now: number): string {
   const seconds = Math.max(0, Math.floor((now - Date.parse(startedAt)) / 1000));
@@ -10,15 +12,16 @@ function elapsedSince(startedAt: string, now: number): string {
   return `${minutes}:${rest.toString().padStart(2, "0")}`;
 }
 
-function SessionBlock({ clientName, serviceName, startedAt }: { clientName: string; serviceName: string; startedAt: string }) {
+function SessionBlock({ clientName, serviceName, startedAt, language }: { clientName: string; serviceName: string; startedAt: string; language: ValeLanguage }) {
   const [now, setNow] = useState(() => Date.now());
+  const ui = uiStrings(language);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
   return (
-    <section aria-label="Sesión en curso">
-      <h2>Sesión en curso</h2>
+    <section aria-label={ui.sessionNow}>
+      <h2>{ui.sessionNow}</h2>
       <p>
         {clientName} · {serviceName} · {elapsedSince(startedAt, now)}
       </p>
@@ -26,8 +29,9 @@ function SessionBlock({ clientName, serviceName, startedAt }: { clientName: stri
   );
 }
 
-export function ValeBoard({ board }: { board: Board | null }) {
+export function ValeBoard({ board, language = "es" }: { board: Board | null; language?: ValeLanguage }) {
   if (!board) return null;
+  const ui = uiStrings(language);
   return (
     <div>
       {board.session ? (
@@ -35,33 +39,34 @@ export function ValeBoard({ board }: { board: Board | null }) {
           clientName={board.session.clientName}
           serviceName={board.session.serviceName}
           startedAt={board.session.startedAt}
+          language={language}
         />
       ) : (
-        <section aria-label="Sesión">
-          <h2>Sesión</h2>
-          <p>Sin sesión abierta.</p>
+        <section aria-label={ui.session}>
+          <h2>{ui.session}</h2>
+          <p>{ui.noSessionOpen}</p>
         </section>
       )}
 
       {board.card && (
-        <section aria-label="Ficha de clienta">
-          <h2>Ficha de {board.card.name}</h2>
+        <section aria-label={ui.cardFor(board.card.name)}>
+          <h2>{ui.cardFor(board.card.name)}</h2>
           {board.card.notes.length === 0 ? (
-            <p>Sin notas.</p>
+            <p>{ui.noNotes}</p>
           ) : (
             <ul>
               {board.card.notes.map((note) => (
-                <li key={note.id}>{note.masked || note.text === null ? "nota privada 🔒" : note.text}</li>
+                <li key={note.id}>{note.masked || note.text === null ? ui.privateNote : note.text}</li>
               ))}
             </ul>
           )}
         </section>
       )}
 
-      <section aria-label="Lista de compras">
-        <h2>Lista de compras</h2>
+      <section aria-label={ui.shoppingList}>
+        <h2>{ui.shoppingList}</h2>
         {board.list.length === 0 ? (
-          <p>La lista está vacía.</p>
+          <p>{ui.emptyList}</p>
         ) : (
           <ul>
             {board.list.map((item) => (

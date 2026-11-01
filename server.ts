@@ -1,0 +1,61 @@
+/**
+ * Single voice process (HACK-017): serves the Next app and the /voice
+ * WebSocket endpoint from one process. One socket per conversation — turns
+ * reset on the same socket while every turn redials Meta, which has no
+ * resume. Meta credentials never leave this process.
+ */
+import { createServer } from "node:http";
+import next from "next";
+import { WebSocket, WebSocketServer } from "ws";
+import {
+  attachVoiceBridge,
+  bridgeOptionsForUpgrade,
+} from "./src/lib/voice-bridge";
+
+const port = Number(process.env.PORT ?? process.env.VOICE_PORT ?? 3000);
+
+async function main(): Promise<void> {
+  // A missing key fails every turn as E-ASR downstream; fail here instead.
+  if (!process.env.META_API_KEY) {
+    console.error("[voice-server] META_API_KEY is not set; refusing to start.");
+    process.exit(1);
+  }
+  const app = next({ dev: false, dir: "." });
+  await app.prepare();
+  const handler = app.getRequestHandler();
+
+  const server = createServer((req, res) => {
+    void handler(req, res);
+  });
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
+    const pathname = (req.url ?? "").split("?")[0];
+    if (pathname !== "/voice") {
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (browser) => {
+      const peer =
+        (browser as unknown as { _socket?: { remoteAddress?: string } })
+          ._socket?.remoteAddress ?? "unknown";
+      attachVoiceBridge({
+        browser: browser as never,
+        ...bridgeOptionsForUpgrade(
+          peer,
+          process.env.META_API_KEY as string,
+          process.env.META_ASR_URL || undefined,
+        ),
+        createMetaSocket: (url: string) => new WebSocket(url),
+      });
+    });
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(port, () => {
+      console.log(`[voice-server] up on :${port} (next + /voice)`);
+      resolve();
+    });
+  });
+}
+
+void main();
