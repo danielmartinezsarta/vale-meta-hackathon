@@ -501,6 +501,42 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     }
   });
 
+  it("answers the next turn in Spanish after a mid-listening switch", async () => {
+    finalTranscript = "hola vale";
+    const agent = vi.fn<AgentFn>(fakeAgent("Hola Daniel."));
+    try {
+      const browser = new FakeBrowser();
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: "conv-switch-es",
+        metaUrl: url,
+        runAgent: agent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      // Listening is on (default EN); the selector flips to ES mid-stream.
+      browser.peerMessage(JSON.stringify({ type: "language", language: "es" }));
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "reply"),
+        ).toBe(true);
+      });
+      expect(agent).toHaveBeenCalledTimes(1);
+      expect(agent.mock.calls[0][0].language).toBe("es");
+      expect(agent.mock.calls[0][0].transcript).toBe("hola vale");
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
+
   it("carries real voiced PCM byte-identical to Meta, then ends the turn", async () => {
     receivedBinaryBytes = 0;
     receivedEndStream = 0;

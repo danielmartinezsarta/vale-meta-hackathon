@@ -14,6 +14,7 @@ describe("turn log persistence", () => {
   it("formats one [voice-turn] JSON line per turn", () => {
     const line = formatTurnLog({
       ts: "2026-10-31T00:00:00.000Z",
+      language: "es",
       transcript: "hola",
       ttftMs: null,
       inputTokens: 0,
@@ -57,6 +58,7 @@ describe("turn log persistence", () => {
       process.env.VALE_TURNS_PATH = file;
       const fields = {
         ts: "2026-10-31T00:00:00.000Z",
+        language: "es" as const,
         transcript: "vale?",
         ttftMs: null as number | null,
         inputTokens: 0,

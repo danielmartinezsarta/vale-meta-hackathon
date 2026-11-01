@@ -300,6 +300,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     }
     // Silent discard: the next voice redials Meta; no visible error.
     logTurn({
+      language: turnLanguage,
       ts: new Date().toISOString(),
       transcript: finalText,
       ttftMs: null,
@@ -332,6 +333,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     "unknown";
   const logTurn = (fields: {
     ts: string;
+    language: ValeLanguage;
     transcript: string;
     ttftMs: number | null;
     inputTokens: number;
@@ -376,6 +378,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const onTurnTimeout = () => {
     if (settled) return;
     logTurn({
+      language: turnLanguage,
       ts: new Date().toISOString(),
       transcript: finalText,
       ttftMs: null,
@@ -430,6 +433,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       code: "E-VAD",
     });
     logTurn({
+      language: turnLanguage,
       ts: new Date(at).toISOString(),
       transcript: "",
       ttftMs: null,
@@ -480,6 +484,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       sendJson(browser, { type: "board", board: getBoard(getDb()) });
       sendJson(browser, { type: "widget", widget: null });
       logTurn({
+        language: turnLanguage,
         ts,
         transcript,
         ttftMs: Date.now() - at,
@@ -516,6 +521,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       // The proposal is decided: the card goes away.
       sendJson(browser, { type: "widget", widget: null });
       logTurn({
+        language: turnLanguage,
         ts,
         transcript: "yes",
         ttftMs: Date.now() - at,
@@ -567,6 +573,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           noteAttention(clientId);
           sendJson(browser, { type: "board", board: getBoard(getDb()) });
           logTurn({
+            language: turnLanguage,
             ts,
             transcript,
             ttftMs: Date.now() - speechEndAt,
@@ -604,6 +611,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         sendJson(browser, { type: "board", board: getBoard(getDb()) });
         sendJson(browser, { type: "widget", widget: null });
         logTurn({
+          language: turnLanguage,
           ts,
           transcript,
           ttftMs: Date.now() - speechEndAt,
@@ -649,6 +657,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         sendJson(browser, { type: "widget", widget: result.widget });
       }
       logTurn({
+        language: turnLanguage,
         ts,
         transcript,
         ttftMs: result.firstTokenMs,
@@ -674,6 +683,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed";
       logTurn({
+        language: turnLanguage,
         ts,
         transcript,
         ttftMs: null,
@@ -758,6 +768,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           // Her own reply through the mic: no Spark call, no writes,
           // no window move. Logged so the field test can count echoes.
           logTurn({
+            language: turnLanguage,
             ts: new Date(speechEndAt).toISOString(),
             transcript: finalText,
             ttftMs: null,
@@ -790,6 +801,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           if (!verdict.execute) {
             // Background chatter without the name: silent discard.
             logTurn({
+              language: turnLanguage,
               ts: new Date(speechEndAt).toISOString(),
               transcript: finalText,
               ttftMs: null,

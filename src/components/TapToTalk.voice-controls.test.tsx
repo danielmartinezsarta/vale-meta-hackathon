@@ -53,6 +53,7 @@ function renderTalk() {
 afterEach(() => {
   cleanup();
   window.localStorage.removeItem("vale-voice");
+  window.localStorage.removeItem("vale-language");
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -198,5 +199,20 @@ describe("voice controls", () => {
       (screen.getByRole("slider", { name: "Velocidad" }) as HTMLInputElement)
         .value,
     ).toBe("1.1");
+  });
+
+  it("persists the selector and restarts in the saved language", async () => {
+    stubSpeechSynthesis(VOICES);
+    window.localStorage.removeItem("vale-language");
+    renderTalk();
+    fireEvent.click(screen.getByRole("radio", { name: "Español" }));
+    expect(window.localStorage.getItem("vale-language")).toBe("es");
+    cleanup();
+    renderTalk();
+    expect(
+      (screen.getByRole("radio", { name: "Español" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    window.localStorage.removeItem("vale-language");
   });
 });

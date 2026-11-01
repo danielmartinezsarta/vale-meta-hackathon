@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentUsage } from "./agent";
+import type { ValeLanguage } from "./vale-language";
 
 // Public Model API list prices (Standard tier), per 1M tokens.
 const INPUT_USD_PER_M = 1.25;
@@ -11,6 +12,8 @@ const ASR_USD_PER_SECOND = 0.18 / 3600;
 export interface TurnLogFields {
   /** End-of-speech timestamp (ISO). */
   ts: string;
+  /** Screen language on the connection when the turn ran. */
+  language: ValeLanguage;
   transcript: string;
   /** ms from end of speech to first reply token (null when no model call). */
   ttftMs: number | null;

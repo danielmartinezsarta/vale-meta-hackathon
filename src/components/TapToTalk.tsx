@@ -63,6 +63,17 @@ const MIN_VOICED_MS = 300;
 /** 960 samples at the 24 kHz capture rate (capture.ts). */
 const FRAME_MS = 40;
 
+/** Persisted screen language: the selector survives reloads, EN default. */
+const LANGUAGE_KEY = "vale-language";
+
+function storedLanguage(): ValeLanguage {
+  try {
+    return window.localStorage.getItem(LANGUAGE_KEY) === "es" ? "es" : "en";
+  } catch {
+    return "en";
+  }
+}
+
 function SpeakerIcon() {
   return (
     <svg
@@ -100,16 +111,28 @@ export function TapToTalk() {
   const [widget, setWidget] = useState<Widget | null>(null);
   const castVoteRef = useRef<(vote: "yes" | "no") => void>(() => {});
   const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
-  // Screen selector: EN default. It drives listening (ASR language),
-  // prompt output, voice and UI; there is no auto-detection.
-  const [language, setLanguage] = useState<ValeLanguage>("en");
+  // Screen selector: persisted choice, EN default. It drives listening
+  // (ASR language), prompt output, voice and UI; there is no auto-detection.
+  const [language, setLanguage] = useState<ValeLanguage>(() =>
+    typeof window === "undefined" ? "en" : storedLanguage(),
+  );
   // Turn handlers close over the session; the ref keeps the live language.
   const languageRef = useRef<ValeLanguage>(language);
   const switchLanguage = useCallback((next: ValeLanguage) => {
     setLanguage(next);
+    // The ref is the wire truth, not the session listener: switching while
+    // idle (no live socket, no listener yet) must still stick for the next
+    // connection's first frame.
+    languageRef.current = next;
+    try {
+      window.localStorage.setItem(LANGUAGE_KEY, next);
+    } catch {
+      /* private mode: the session still switches for this visit */
+    }
     stopSpeaking("language-switch");
-    // The live session adopts it from here: the next dial pins ASR to it
-    // and the next reply speaks it.
+    // The session listener forwards this on the live socket at once (the
+    // next Meta dial pins ASR to it and the next reply speaks it, with no
+    // manual reconnect); an idle session adopts it from the ref instead.
     try {
       window.dispatchEvent(
         new CustomEvent<ValeLanguage>("vale-language", { detail: next }),

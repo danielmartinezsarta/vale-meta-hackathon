@@ -28,6 +28,7 @@ import {
   declineText,
   parseLanguage,
   turnErrorText,
+  type ValeLanguage,
 } from "@/lib/vale-language";
 
 export const runtime = "nodejs";
@@ -166,6 +167,7 @@ export async function POST(request: Request): Promise<Response> {
         if (!settled) {
           settled = true;
           logTurn({
+            language,
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: finalText || lastInterim,
             ttftMs: null,
@@ -204,6 +206,7 @@ export async function POST(request: Request): Promise<Response> {
       const logTurn = (fields: {
         // ts is the caller-supplied end-of-speech moment.
         ts: string;
+        language: ValeLanguage;
         transcript: string;
         ttftMs: number | null;
         inputTokens: number;
@@ -272,6 +275,7 @@ export async function POST(request: Request): Promise<Response> {
               noteAttention(clientKey);
               send("board", { board: getBoard(getDb()) });
               logTurn({
+                language,
                 ts,
                 transcript,
                 ttftMs: Date.now() - speechEndAt,
@@ -304,6 +308,7 @@ export async function POST(request: Request): Promise<Response> {
             send("board", { board: getBoard(getDb()) });
             send("widget", { widget: null });
             logTurn({
+              language,
               ts,
               transcript,
               ttftMs: Date.now() - speechEndAt,
@@ -344,6 +349,7 @@ export async function POST(request: Request): Promise<Response> {
             send("widget", { widget: result.widget });
           }
           logTurn({
+            language,
             ts,
             transcript,
             ttftMs: result.firstTokenMs,
@@ -366,6 +372,7 @@ export async function POST(request: Request): Promise<Response> {
         } catch (error) {
           const message = error instanceof Error ? error.message : "failed";
           logTurn({
+            language,
             ts,
             transcript,
             ttftMs: null,
@@ -401,6 +408,7 @@ export async function POST(request: Request): Promise<Response> {
           if (!verdict.execute) {
             const cannedSlots = getSlots(clientKey);
             logTurn({
+              language,
               ts: new Date().toISOString(),
               transcript: cannedTranscript,
               ttftMs: null,
@@ -503,6 +511,7 @@ export async function POST(request: Request): Promise<Response> {
           // Empty final: no model call, just the notice.
           send("notice", { message: turnErrorText("vad-continue", language), code: "E-VAD" });
           logTurn({
+            language,
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: "",
             ttftMs: null,
@@ -533,6 +542,7 @@ export async function POST(request: Request): Promise<Response> {
           // Background chatter without the name: silent discard.
           const ignoredSlots = getSlots(clientKey);
           logTurn({
+            language,
             ts: new Date(finalAtMs || Date.now()).toISOString(),
             transcript: finalText,
             ttftMs: null,
