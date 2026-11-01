@@ -140,4 +140,46 @@ describe("interruption (fake-device fallback)", () => {
     turn.doneGate.resolve();
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
   });
+
+  it("holds the open turn while muted: no quiet churn, no vad notice", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("navigator", {
+        mediaDevices: {
+          getUserMedia: async () =>
+            ({ getTracks: () => [] }) as unknown as MediaStream,
+        },
+      });
+      vi.stubGlobal("WebSocket", undefined);
+      const seen: CaptureCallbacks[] = [];
+      mockStartCapture.mockImplementation((_stream, callbacks) => {
+        seen.push(callbacks);
+        return { stop: () => {}, state: () => "running" };
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() => new Promise(() => {})),
+      );
+      render(<TapToTalk />);
+      fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen.length).toBeGreaterThan(0);
+      // Her voice: the watch mutes within one tick and stays muted.
+      speakAudibleRef.current = true;
+      await vi.advanceTimersByTimeAsync(300);
+      // Two full quiet windows with the VAD frozen: the turn never churns,
+      // so the two-strike silence banner never shows and she is never cut.
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(
+        screen.queryByText("I didn't hear you. Speak, I'm listening."),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Stop" }),
+      ).toBeTruthy();
+      expect(mockStopSpeaking).not.toHaveBeenCalled();
+    } finally {
+      speakAudibleRef.current = false;
+      vi.useRealTimers();
+    }
+  });
 });

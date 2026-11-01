@@ -1163,6 +1163,71 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
       finalTranscript = "vale, live from the bridge";
     }
   });
+
+  it("discards a mute-dominant flat turn before the gate and the model", async () => {
+    receivedEndStream = 0;
+    const agent = vi.fn(fakeAgent("Should never run."));
+    // Named, so only the junk gate can stop it: without it the agent runs.
+    finalTranscript = "vale, junk check";
+    const lines: string[] = [];
+    const logSpy = vi
+      .spyOn(console, "log")
+      .mockImplementation((line: string) => {
+        lines.push(String(line));
+      });
+    try {
+      const browser = new FakeBrowser();
+      const client = `conv-junk-${Date.now()}`;
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: client,
+        metaUrl: url,
+        runAgent: agent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      // 0.6 s of flat tone after a long mute: room tone, not Daniel.
+      for (let i = 0; i < 15; i++) {
+        browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      }
+      browser.peerMessage(
+        Buffer.from(
+          JSON.stringify({
+            type: "endStream",
+            peakLevel: 0.12,
+            voicedMs: 600,
+            mutedMs: 7251,
+            valeState: "thinking",
+          }),
+        ),
+      );
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "ignored"),
+        ).toBe(true);
+      });
+      expect(agent).not.toHaveBeenCalled();
+      const served = lines
+        .filter((line) => line.startsWith("[voice-turn] "))
+        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
+      const entry = served.find(
+        (e) => e.transcript === "vale, junk check",
+      );
+      expect(entry).toBeDefined();
+      expect(entry.junk).toBe(true);
+      expect(entry.ignored).toBe(true);
+      expect(typeof entry.wav).toBe("string");
+      browser.close(1000, "test done");
+    } finally {
+      logSpy.mockRestore();
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
 });
 
 describe("empty finals (noise, not Daniel)", () => {
@@ -1227,6 +1292,8 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
       voicedMs: null,
       mutedMs: null,
       valeState: null,
+      lostBlocks: null,
+      srcBlocks: null,
     };
     expect(tryParseControl(JSON.stringify({ type: "endStream" }))).toEqual({
       type: "endStream",
@@ -1243,6 +1310,8 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
           voicedMs: 800,
           mutedMs: 1200,
           valeState: "speaking",
+          lostBlocks: 0,
+          srcBlocks: 41,
           junk: "dropped",
         }),
       ),
@@ -1253,6 +1322,8 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
         voicedMs: 800,
         mutedMs: 1200,
         valeState: "speaking",
+        lostBlocks: 0,
+        srcBlocks: 41,
       },
     });
     expect(
@@ -1262,6 +1333,8 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
           peakLevel: 9,
           voicedMs: -1,
           valeState: "x".repeat(17),
+          lostBlocks: 1.5,
+          srcBlocks: -2,
         }),
       ),
     ).toEqual({ type: "endStream", stats: emptyStats });

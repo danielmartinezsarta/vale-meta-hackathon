@@ -15,6 +15,43 @@ export const TURN_AUDIO_CHANNELS = 1;
 export const TURN_AUDIO_BITS = 16;
 
 /** data/audio under the repo; VALE_AUDIO_DIR points tests at tmp. */
+/**
+ * Muted-start junk: the mic spent most of the turn muted (her tail) and
+ * what arrived is flat — amplified room tone, not Daniel. Such a turn
+ * never reaches the model: the ASR pennies are already spent by live
+ * streaming, but the reply, the writes and the confusion are all avoided,
+ * and the turn stays measurable in the log instead of vanishing.
+ *
+ * The flatness bar is deliberately low (peak/mean < 3): voice is spiky
+ * (the …-3 turn reads 6.8) while room tone sits near 1-2, and the muted
+ * dominance plus the 500 ms floor keep fast yeses and short turns safe.
+ */
+export function isMutedJunkTurn(
+  samples: Int16Array,
+  mutedMs: number | null,
+  audioMs: number,
+): boolean {
+  if (mutedMs === null || mutedMs < 0) return false;
+  if (!(audioMs > 500)) return false;
+  if (!(mutedMs > audioMs / 2)) return false;
+  const FRAME = 960;
+  const frames = Math.floor(samples.length / FRAME);
+  if (frames === 0) return false;
+  let peak = 0;
+  let total = 0;
+  for (let f = 0; f < frames; f++) {
+    let sum = 0;
+    const base = f * FRAME;
+    for (let i = 0; i < FRAME; i++) sum += Math.abs(samples[base + i]);
+    const mean = sum / FRAME;
+    total += mean;
+    if (mean > peak) peak = mean;
+  }
+  const overall = total / frames;
+  if (overall <= 0) return true;
+  return peak / overall < 3;
+}
+
 export function turnAudioDir(): string {
   const override = process.env.VALE_AUDIO_DIR?.trim();
   if (override) return override;

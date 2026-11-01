@@ -3,14 +3,20 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   floatToPcm16,
+  framePcmBlocks,
   resampleLinear,
   SpeechDetector,
   startCapture,
   unlockAudioContext,
+  utteranceLoss,
   FRAME_SAMPLES,
   CAPTURE_RATE,
   PREROLL_FRAMES,
 } from "./capture";
+import {
+  CAPTURE_WORKLET_NAME,
+  captureWorkletSource,
+} from "./capture-worklet-source";
 
 function toneFrame(amplitude = 5000, samples = FRAME_SAMPLES): Int16Array {
   const frame = new Int16Array(samples);
@@ -161,18 +167,123 @@ describe("end-of-turn pause (NEXT_PUBLIC_VAD_END_SILENCE_MS)", () => {
   });
 });
 
-describe("strict-turn pause (mute while Vale speaks)", () => {
-  const block = (value: number, length = 4096): unknown => ({
-    inputBuffer: {
-      numberOfChannels: 1,
-      getChannelData: () => new Float32Array(length).fill(value),
-    },
+describe("utterance accounting (lost blocks vs wall time)", () => {
+  it("reports zero loss when frames match the clock", () => {
+    expect(utteranceLoss(400, 10)).toBe(0);
+    expect(utteranceLoss(0, 0)).toBe(0);
   });
-  const liveProcessor = (): ((event: unknown) => void) => {
-    const node = FakeAudioNode.created[FakeAudioNode.created.length - 1];
-    if (!node?.onaudioprocess) throw new Error("no live processor");
-    return (event: unknown) => node.onaudioprocess?.(event);
+
+  it("counts missing frames, never negative for surplus", () => {
+    expect(utteranceLoss(1000, 20)).toBe(5);
+    expect(utteranceLoss(400, 12)).toBe(0);
+  });
+});
+
+describe("worklet processor source (AudioWorklet primary path)", () => {
+  it("registers under the expected name with the pause/resume contract", () => {
+    const source = captureWorkletSource();
+    expect(source).toContain(CAPTURE_WORKLET_NAME);
+    expect(source).toContain("registerProcessor");
+    expect(source).toContain("960");
+    expect(source).toContain("24000");
+    expect(source).toContain('"pause"');
+    expect(source).toContain('"resume"');
+    expect(source).toContain('"frame"');
+    expect(source).toContain('"beat"');
+    expect(source).toContain("quanta");
+  });
+});
+
+describe("framePcmBlocks (pure framing shared by both engines)", () => {
+  it("carries a sub-frame tail into the next call", () => {
+    const first = framePcmBlocks(
+      new Float32Array(0),
+      new Float32Array(5000).fill(0.5),
+    );
+    expect(first.frames).toHaveLength(5);
+    expect(first.carry).toHaveLength(200);
+    const second = framePcmBlocks(
+      first.carry,
+      new Float32Array(4120).fill(0.5),
+    );
+    // 200 carried + 4120 new = 4320 = 4.5 frames: 4 out, 480 held.
+    expect(second.frames).toHaveLength(4);
+    expect(second.carry).toHaveLength(480);
+    // No sample lost across the joint: 5 + 4 frames + 480 tail = 9320 in.
+    expect(
+      second.frames.length * FRAME_SAMPLES +
+        second.carry.length +
+        first.frames.length * FRAME_SAMPLES,
+    ).toBe(5000 + 4120);
+  });
+});
+
+describe("remainder carry (every sample reaches the VAD)", () => {
+  const countingCallbacks = () => {
+    const seen = { samples: 0, frames: 0, out: [] as number[] };
+    return {
+      seen,
+      callbacks: {
+        onFrame: (frame: Int16Array) => {
+          seen.samples += frame.length;
+          seen.frames += 1;
+          seen.out.push(...Array.from(frame));
+        },
+        onSpeechStart: () => {},
+        onSpeechEnd: () => {},
+      },
+    };
   };
+
+  it("keeps every sample: N blocks in = N*4096 samples out, zero loss", () => {
+    stubAudio();
+    const { seen, callbacks } = countingCallbacks();
+    const handle = startCapture({} as MediaStream, callbacks);
+    const process = liveProcessor();
+    // 15 blocks = 61440 samples = exactly 64 frames: no tail held back.
+    // Loud enough to trip the VAD: every frame reaches onFrame.
+    for (let i = 0; i < 15; i++) process(block(0.5));
+    handle.stop();
+    expect(seen.frames).toBe(64);
+    expect(seen.samples).toBe(15 * 4096);
+  });
+
+  it("concatenated output equals the input: no gaps at frame joints", () => {
+    stubAudio();
+    const { seen, callbacks } = countingCallbacks();
+    const handle = startCapture({} as MediaStream, callbacks);
+    const process = liveProcessor();
+    // Exact multiple of the frame: the carry drains to zero by the end.
+    const total = 15 * 4096;
+    const ramp = new Float32Array(total);
+    for (let i = 0; i < total; i++) ramp[i] = 0.2 + (0.6 * (i % 960)) / 960;
+    for (let off = 0; off < total; off += 4096) {
+      process({
+        inputBuffer: {
+          numberOfChannels: 1,
+          getChannelData: () => ramp.subarray(off, off + 4096),
+        },
+      });
+    }
+    handle.stop();
+    const expected = floatToPcm16(ramp);
+    expect(seen.out).toEqual(Array.from(expected));
+  });
+});
+
+const block = (value: number, length = 4096): unknown => ({
+  inputBuffer: {
+    numberOfChannels: 1,
+    getChannelData: () => new Float32Array(length).fill(value),
+  },
+});
+const liveProcessor = (): ((event: unknown) => void) => {
+  const node = FakeAudioNode.created[FakeAudioNode.created.length - 1];
+  if (!node?.onaudioprocess) throw new Error("no live processor");
+  return (event: unknown) => node.onaudioprocess?.(event);
+};
+
+describe("strict-turn pause (mute while Vale speaks)", () => {
   const counters = () => {
     const seen = { frames: 0, starts: 0, ends: 0, beats: 0 };
     return {
@@ -203,6 +314,32 @@ describe("strict-turn pause (mute while Vale speaks)", () => {
     expect(seen.frames).toBe(framesWhileLive);
     expect(seen.starts).toBe(1);
     expect(seen.beats).toBeGreaterThan(beatsWhileLive);
+    handle.stop();
+  });
+
+  it("a speech frozen by mute never closes after resume: no phantom turn", () => {
+    stubAudio();
+    const seen = { frames: 0, starts: 0, ends: 0 };
+    const handle = startCapture({} as MediaStream, {
+      onFrame: () => void seen.frames++,
+      onSpeechStart: () => void seen.starts++,
+      onSpeechEnd: () => void seen.ends++,
+    });
+    const process = liveProcessor();
+    process(block(0.5)); // room tone trips speech-start
+    expect(seen.starts).toBe(1);
+    const framesAtMute = seen.frames;
+    handle.setPaused?.(true);
+    process(block(0.5));
+    process(block(0.5));
+    expect(seen.frames).toBe(framesAtMute);
+    // She settles: the detector restarts fresh, so the following room
+    // tone is silence, not the close of a stale speech.
+    handle.setPaused?.(false);
+    for (let i = 0; i < 25; i++) process(block(0));
+    expect(seen.ends).toBe(0);
+    expect(seen.frames).toBe(framesAtMute);
+    expect(seen.starts).toBe(1);
     handle.stop();
   });
 

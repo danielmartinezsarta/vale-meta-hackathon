@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   encodeWavPcm16Mono,
+  isMutedJunkTurn,
   sanitizeAudioStem,
   saveTurnWav,
   turnAudioDir,
@@ -45,5 +46,21 @@ describe("turn audio evidence", () => {
     expect(sanitizeAudioStem("../../../etc")).toBe("etc");
     expect(sanitizeAudioStem("!!!")).toBe("turn");
     expect(sanitizeAudioStem("Client 42")).toBe("client-42");
+  });
+
+  it("flags a mute-dominant flat turn as junk, voice never", () => {
+    const flat = new Int16Array(14400).fill(3);
+    expect(isMutedJunkTurn(flat, 7251, 600)).toBe(true);
+    const voice = new Int16Array(14400);
+    for (let i = 0; i < voice.length; i++) {
+      const frame = Math.floor(i / 960);
+      voice[i] = frame % 8 === 0 ? 15000 : 50;
+    }
+    expect(isMutedJunkTurn(voice, 7251, 600)).toBe(false);
+    expect(isMutedJunkTurn(flat, 0, 600)).toBe(false);
+    expect(isMutedJunkTurn(flat, null, 600)).toBe(false);
+    expect(isMutedJunkTurn(new Int16Array(7200).fill(3), 7251, 300)).toBe(
+      false,
+    );
   });
 });

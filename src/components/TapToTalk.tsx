@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { startCapture, unlockAudioContext } from "@/lib/capture";
-import type { CaptureCallbacks, CaptureHandle } from "@/lib/capture";
+import type {
+  CaptureCallbacks,
+  CaptureHandle,
+  UtteranceStats,
+} from "@/lib/capture";
 import { LevelMeter } from "@/components/LevelMeter";
 import { ValeBoard } from "@/components/ValeBoard";
 import type { Board } from "@/lib/board";
@@ -192,6 +196,8 @@ export function TapToTalk() {
   // Per-turn ear evidence, frozen at endStream and sent with it.
   const turnPeakRef = useRef(0);
   const turnMutedMsRef = useRef(0);
+  const turnLostRef = useRef(0);
+  const turnSrcRef = useRef(0);
   // Single source of truth for what Vale is doing; the indicator mirrors it.
   const valeStoreRef = useRef(createValeState());
   const [valeUiState, setValeUiState] = useState<ValeState>("idle");
@@ -499,6 +505,12 @@ export function TapToTalk() {
         window.clearTimeout(quietTimerRef.current);
         quietTimerRef.current = window.setTimeout(() => {
           if (!sessionRef.current) return;
+          // Muted while she speaks, the VAD is frozen: churning the turn
+          // here would drop an in-flight reply bubble, so wait her out.
+          if (mutedRef.current) {
+            armQuiet();
+            return;
+          }
           handleVadCandidate(currentId);
           removeTurn(currentId);
           openTurn();
@@ -810,6 +822,8 @@ export function TapToTalk() {
           voicedMs: (transport?.voiced ?? 0) * FRAME_MS,
           mutedMs: snapMutedMs(),
           valeState: valeStoreRef.current.get(),
+          lostBlocks: turnLostRef.current,
+          srcBlocks: turnSrcRef.current,
         });
         if (transport) transport.endPayload = endPayload;
         if (
@@ -1181,9 +1195,13 @@ export function TapToTalk() {
             // ~0.9 s handshake hides inside the utterance.
             if (!convOpen) openTurnSocket(currentId);
           },
-          onSpeechEnd: () => {
+          onSpeechEnd: (utterance?: UtteranceStats) => {
             if (!sessionRef.current || posted) return;
             posted = true;
+            // Delivery accounting for this utterance (blocks lost under
+            // load, source blocks spanned): frozen into the endStream below.
+            turnLostRef.current = utterance?.lostBlocks ?? 0;
+            turnSrcRef.current = utterance?.srcBlocks ?? 0;
             // Below ~300 ms of voiced audio the mic heard noise, not Daniel:
             // drop the turn before it reaches the wire. An empty never cuts
             // her voice (audible starts never cut) and never moves the window

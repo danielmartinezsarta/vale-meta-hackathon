@@ -51,6 +51,11 @@ export interface TurnLogFields {
   voicedMs?: number | null;
   mutedMs?: number | null;
   valeState?: string | null;
+  /** Blocks lost under load and source blocks spanned (client accounting). */
+  lostBlocks?: number | null;
+  srcBlocks?: number | null;
+  /** Muted-start room tone discarded before the gate and the model. */
+  junk?: boolean;
 }
 
 export function estimateCost(

@@ -79,7 +79,7 @@ class FakeWs {
 
 interface CaptureDriver {
   onSpeechStart: () => void;
-  onSpeechEnd: () => void;
+  onSpeechEnd: (stats?: { lostBlocks: number; srcBlocks: number }) => void;
   onFrame?: (frame: Int16Array) => void;
 }
 
@@ -141,13 +141,33 @@ describe("browser voice output", () => {
     driver!.onSpeechStart();
     expect(mockStopSpeaking).not.toHaveBeenCalled();
     for (let i = 0; i < 8; i += 1) driver!.onFrame?.(voiced);
-    driver!.onSpeechEnd();
+    driver!.onSpeechEnd({ lostBlocks: 0, srcBlocks: 9 });
     expect(ws.sentBinaryCount()).toBeGreaterThan(0);
     expect(FakeWs.instances).toHaveLength(1);
     // The posted turn claimed the state, so the mic-resume timer leaves it.
     await waitFor(() => {
       expect(screen.getByRole("status").textContent).toBe("Thinking");
     });
+    // The turn's endStream carries delivery accounting, not just audio.
+    const endStreams = ws
+      .sentStrings()
+      .map((raw) => JSON.parse(raw))
+      .filter((msg) => msg.type === "endStream");
+    expect(endStreams.length).toBeGreaterThan(0);
+    const endPayload = endStreams[endStreams.length - 1];
+    for (const key of [
+      "peakLevel",
+      "voicedMs",
+      "mutedMs",
+      "valeState",
+      "lostBlocks",
+      "srcBlocks",
+    ]) {
+      expect(endPayload, key).toHaveProperty(key);
+    }
+    expect(endPayload.voicedMs).toBeGreaterThan(0);
+    expect(endPayload.srcBlocks).toBe(9);
+    expect(endPayload.lostBlocks).toBe(0);
   });
 
   it("drops a sub-300ms blip before the wire: no turn, no cut, no window move", async () => {

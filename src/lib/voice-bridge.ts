@@ -10,7 +10,7 @@ import {
 } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
 import { emitTurnLog, estimateCost } from "./turn-log";
-import { saveTurnWav } from "./turn-audio";
+import { isMutedJunkTurn, saveTurnWav } from "./turn-audio";
 import {
   clearPendingAction,
   isConfirmYes,
@@ -104,6 +104,9 @@ export interface TurnClientStats {
   voicedMs: number | null;
   mutedMs: number | null;
   valeState: string | null;
+  /** Blocks lost under load (wall vs frames) and source blocks spanned. */
+  lostBlocks: number | null;
+  srcBlocks: number | null;
 }
 
 function parseClientStats(message: {
@@ -111,10 +114,19 @@ function parseClientStats(message: {
   voicedMs?: unknown;
   mutedMs?: unknown;
   valeState?: unknown;
+  lostBlocks?: unknown;
+  srcBlocks?: unknown;
 }): TurnClientStats {
   const num = (value: unknown, max: number): number | null =>
     typeof value === "number" &&
     Number.isFinite(value) &&
+    value >= 0 &&
+    value <= max
+      ? value
+      : null;
+  const int = (value: unknown, max: number): number | null =>
+    typeof value === "number" &&
+    Number.isInteger(value) &&
     value >= 0 &&
     value <= max
       ? value
@@ -128,6 +140,8 @@ function parseClientStats(message: {
     voicedMs: num(message.voicedMs, 3600000),
     mutedMs: num(message.mutedMs, 3600000),
     valeState: state,
+    lostBlocks: int(message.lostBlocks, 3600000),
+    srcBlocks: int(message.srcBlocks, 3600000),
   };
 }
 
@@ -160,6 +174,8 @@ export function tryParseControl(
       voicedMs?: unknown;
       mutedMs?: unknown;
       valeState?: unknown;
+      lostBlocks?: unknown;
+      srcBlocks?: unknown;
     };
     if (message.type === "endStream")
       return { type: "endStream", stats: parseClientStats(message) };
@@ -239,6 +255,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     voicedMs: null,
     mutedMs: null,
     valeState: null,
+    lostBlocks: null,
+    srcBlocks: null,
   };
   let pendingEnd = false;
   let agentRan = false;
@@ -308,7 +326,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     turnWav = null;
     wavSaved = false;
     turnSeq += 1;
-    turnStats = { peakLevel: null, voicedMs: null, mutedMs: null, valeState: null };
+    turnStats = {
+      peakLevel: null,
+      voicedMs: null,
+      mutedMs: null,
+      valeState: null,
+      lostBlocks: null,
+      srcBlocks: null,
+    };
     pendingEnd = false;
     agentRan = false;
     timerArmed = false;
@@ -405,6 +430,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     gate?: WakeVerdict["gate"] | null;
     sinceReplyS?: number | null;
     totalMs?: number | null;
+    junk?: boolean;
   }) => {
     // One WAV per turn from whatever the mic sent: the first log call with
     // audio persists it, later calls for the turn reuse the path. Saved
@@ -421,6 +447,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       voicedMs: turnStats.voicedMs,
       mutedMs: turnStats.mutedMs,
       valeState: turnStats.valeState,
+      lostBlocks: turnStats.lostBlocks,
+      srcBlocks: turnStats.srcBlocks,
       costUsd: estimateCost(
         {
           inputTokens: fields.inputTokens,
@@ -818,6 +846,47 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           return;
         }
         {
+          // Muted-start junk first: the mic spent the turn muted and what
+          // arrived is flat room tone, not Daniel. Discard before the wake
+          // gate and the model; the ASR pennies are already spent by live
+          // streaming, but nothing else is.
+          const audioMs =
+            (audioProcessedMs !== null
+              ? audioProcessedMs / 1000
+              : bufferedBytes / 48000) * 1000;
+          const pcmBytes = Buffer.concat(wavChunks);
+          const pcm = new Int16Array(
+            pcmBytes.buffer,
+            pcmBytes.byteOffset,
+            Math.floor(pcmBytes.length / 2),
+          );
+          if (isMutedJunkTurn(pcm, turnStats.mutedMs, audioMs)) {
+            logTurn({
+              language: turnLanguage,
+              ts: new Date(speechEndAt).toISOString(),
+              transcript: finalText,
+              ttftMs: null,
+              inputTokens: 0,
+              outputTokens: 0,
+              audioSeconds: audioMs / 1000,
+              tool: null,
+              modelSkipped: true,
+              error: null,
+              ignored: true,
+              asrMs,
+              chain: "none",
+              key: clientId,
+              slots: slotSnapshot(),
+              gate: null,
+              sinceReplyS: null,
+              totalMs: Date.now() - speechEndAt,
+              junk: true,
+            });
+            sendJson(browser, { type: "ignored" });
+            sendJson(browser, { type: "done" });
+            finish(1000, "turn-complete");
+            return;
+          }
           const sessionOpen = getOpenSession(getDb()) !== null;
           const verdict = checkWake(finalText, clientId, Date.now(), sessionOpen, turnLanguage);
           if (!verdict.execute) {
