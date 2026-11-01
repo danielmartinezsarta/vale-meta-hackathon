@@ -18,4 +18,23 @@ describe("interface dictionary", () => {
     expect(uiStrings("en").sessionNow).toBe("Session in progress");
     expect(uiStrings("es").sessionNow).toBe("Sesión en curso");
   });
+
+  it("names every Vale state in both languages with no empties", () => {
+    const states = [
+      "idle",
+      "attentive",
+      "hearing",
+      "thinking",
+      "speaking",
+      "error",
+    ] as const;
+    for (const language of ["en", "es"] as const) {
+      const ui = uiStrings(language);
+      for (const state of states) {
+        expect(ui.valeState(state).trim(), `${language}.${state}`).not.toBe("");
+      }
+    }
+    expect(uiStrings("en").valeState("attentive")).toBe("Listening");
+    expect(uiStrings("es").valeState("speaking")).toBe("Hablando");
+  });
 });

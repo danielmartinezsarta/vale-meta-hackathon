@@ -161,7 +161,77 @@ describe("end-of-turn pause (NEXT_PUBLIC_VAD_END_SILENCE_MS)", () => {
   });
 });
 
+describe("strict-turn pause (mute while Vale speaks)", () => {
+  const block = (value: number, length = 4096): unknown => ({
+    inputBuffer: {
+      numberOfChannels: 1,
+      getChannelData: () => new Float32Array(length).fill(value),
+    },
+  });
+  const liveProcessor = (): ((event: unknown) => void) => {
+    const node = FakeAudioNode.created[FakeAudioNode.created.length - 1];
+    if (!node?.onaudioprocess) throw new Error("no live processor");
+    return (event: unknown) => node.onaudioprocess?.(event);
+  };
+  const counters = () => {
+    const seen = { frames: 0, starts: 0, ends: 0, beats: 0 };
+    return {
+      seen,
+      callbacks: {
+        onFrame: () => void seen.frames++,
+        onSpeechStart: () => void seen.starts++,
+        onSpeechEnd: () => void seen.ends++,
+        onHeartbeat: () => void seen.beats++,
+        onBlocked: () => {},
+      },
+    };
+  };
+
+  it("pausing drops detector and frames but keeps the heartbeat", () => {
+    stubAudio();
+    const { seen, callbacks } = counters();
+    const handle = startCapture({} as MediaStream, callbacks);
+    const process = liveProcessor();
+    process(block(0.5));
+    expect(seen.starts).toBe(1);
+    const framesWhileLive = seen.frames;
+    expect(framesWhileLive).toBeGreaterThan(0);
+    const beatsWhileLive = seen.beats;
+    handle.setPaused?.(true);
+    process(block(0.5));
+    process(block(0.5));
+    expect(seen.frames).toBe(framesWhileLive);
+    expect(seen.starts).toBe(1);
+    expect(seen.beats).toBeGreaterThan(beatsWhileLive);
+    handle.stop();
+  });
+
+  it("resuming clears stale pre-roll so her voice never prefixes the turn", () => {
+    stubAudio();
+    // Control: silence fills pre-roll, then speech flushes it (25 + 4 frames).
+    const control = counters();
+    startCapture({} as MediaStream, control.callbacks);
+    let process = liveProcessor();
+    for (let i = 0; i < 30; i++) process(block(0));
+    process(block(0.5));
+    expect(control.seen.frames).toBe(25 + 4);
+    // Paused path: the same silence is discarded on resume.
+    stubAudio();
+    const muted = counters();
+    const handle = startCapture({} as MediaStream, muted.callbacks);
+    process = liveProcessor();
+    for (let i = 0; i < 30; i++) process(block(0));
+    handle.setPaused?.(true);
+    handle.setPaused?.(false);
+    process(block(0.5));
+    expect(muted.seen.frames).toBe(4);
+    handle.stop();
+  });
+});
+
 class FakeAudioNode {
+  static created: FakeAudioNode[] = [];
+  onaudioprocess: ((event: unknown) => void) | null = null;
   connect(): void {}
   disconnect(): void {}
 }
@@ -196,7 +266,9 @@ class FakeAudioContext {
     return new FakeAudioNode();
   }
   createScriptProcessor(): FakeAudioNode {
-    return new FakeAudioNode();
+    const node = new FakeAudioNode();
+    FakeAudioNode.created.push(node);
+    return node;
   }
   createGain(): FakeAudioNode & { gain: { value: number } } {
     return Object.assign(new FakeAudioNode(), { gain: { value: 0 } });
@@ -205,6 +277,7 @@ class FakeAudioContext {
 
 function stubAudio() {
   FakeAudioContext.instances = [];
+  FakeAudioNode.created = [];
   FakeAudioContext.startSuspended = false;
   FakeAudioContext.resumeUnlocks = true;
   vi.stubGlobal("window", {

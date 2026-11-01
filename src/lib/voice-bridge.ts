@@ -4,14 +4,13 @@ import { getDb, recentTurns, recordTurn, type HistoryTurn } from "./db";
 import { getBoard } from "./board";
 import {
   checkWake,
-  collapseEcho,
   noteAttention,
   sanitizeClientId,
   type WakeVerdict,
 } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
-import { isEchoOfReply } from "./echo";
 import { emitTurnLog, estimateCost } from "./turn-log";
+import { saveTurnWav } from "./turn-audio";
 import {
   clearPendingAction,
   isConfirmYes,
@@ -99,10 +98,43 @@ export interface VoiceBridgeOptions {
 }
 
 // Browser text frames may arrive as Buffer: try JSON first; never forward a control frame as audio.
+/** What the client saw this turn: input peak, VAD ms, muted ms, her state. */
+export interface TurnClientStats {
+  peakLevel: number | null;
+  voicedMs: number | null;
+  mutedMs: number | null;
+  valeState: string | null;
+}
+
+function parseClientStats(message: {
+  peakLevel?: unknown;
+  voicedMs?: unknown;
+  mutedMs?: unknown;
+  valeState?: unknown;
+}): TurnClientStats {
+  const num = (value: unknown, max: number): number | null =>
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= max
+      ? value
+      : null;
+  const state =
+    typeof message.valeState === "string" && message.valeState.length <= 16
+      ? message.valeState
+      : null;
+  return {
+    peakLevel: num(message.peakLevel, 1),
+    voicedMs: num(message.voicedMs, 3600000),
+    mutedMs: num(message.mutedMs, 3600000),
+    valeState: state,
+  };
+}
+
 export function tryParseControl(
   data: unknown,
 ):
-  | { type: "endStream" }
+  | { type: "endStream"; stats: TurnClientStats }
   | { type: "language"; language: ValeLanguage }
   | { type: "client"; client: string }
   | { type: "wake" }
@@ -124,8 +156,13 @@ export function tryParseControl(
       client?: unknown;
       state?: unknown;
       vote?: unknown;
+      peakLevel?: unknown;
+      voicedMs?: unknown;
+      mutedMs?: unknown;
+      valeState?: unknown;
     };
-    if (message.type === "endStream") return { type: "endStream" };
+    if (message.type === "endStream")
+      return { type: "endStream", stats: parseClientStats(message) };
     if (message.type === "wake") return { type: "wake" };
     if (
       message.type === "vote" &&
@@ -191,6 +228,18 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   let audioProcessedMs: number | null = null;
   let bufferedBytes = 0;
   const pendingAudio: Buffer[] = [];
+  /** This turn's mic PCM for the WAV evidence file; freed at turn end. */
+  const wavChunks: Buffer[] = [];
+  /** WAV path + client stats for the turn now completing. */
+  let turnWav: string | null = null;
+  let wavSaved = false;
+  let turnSeq = 0;
+  let turnStats: TurnClientStats = {
+    peakLevel: null,
+    voicedMs: null,
+    mutedMs: null,
+    valeState: null,
+  };
   let pendingEnd = false;
   let agentRan = false;
   /** Stale Meta sockets from earlier turns must not fail the current one. */
@@ -255,6 +304,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     audioProcessedMs = null;
     bufferedBytes = 0;
     pendingAudio.length = 0;
+    wavChunks.length = 0;
+    turnWav = null;
+    wavSaved = false;
+    turnSeq += 1;
+    turnStats = { peakLevel: null, voicedMs: null, mutedMs: null, valeState: null };
     pendingEnd = false;
     agentRan = false;
     timerArmed = false;
@@ -352,8 +406,21 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     sinceReplyS?: number | null;
     totalMs?: number | null;
   }) => {
+    // One WAV per turn from whatever the mic sent: the first log call with
+    // audio persists it, later calls for the turn reuse the path. Saved
+    // once, then freed, so a long session never grows past one turn.
+    if (!wavSaved && wavChunks.length > 0) {
+      wavSaved = true;
+      turnWav = saveTurnWav(`${clientId}-${turnSeq}`, wavChunks);
+      wavChunks.length = 0;
+    }
     emitTurnLog({
       ...fields,
+      wav: turnWav,
+      peakLevel: turnStats.peakLevel,
+      voicedMs: turnStats.voicedMs,
+      mutedMs: turnStats.mutedMs,
+      valeState: turnStats.valeState,
       costUsd: estimateCost(
         {
           inputTokens: fields.inputTokens,
@@ -454,20 +521,6 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     });
     sendJson(browser, { type: "done" });
     finish(1000, "turn-complete");
-  };
-
-  /** Latest thing Vale said to this client: the echo test compares against it. */
-  const lastValeReply = (): string | null => {
-    try {
-      const turns = recentTurns(getDb(), clientId);
-      for (let i = turns.length - 1; i >= 0; i--) {
-        if (turns[i].role === "vale" && turns[i].text.trim() !== "")
-          return turns[i].text;
-      }
-    } catch {
-      /* a DB hiccup must never execute a turn: no echo without proof */
-    }
-    return null;
   };
 
   // Touch on a confirm card: the exact equivalent of a spoken yes/no.
@@ -742,7 +795,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         failedTurns = 0;
         lastCountedGen = metaGen;
         clearRetry();
-        finalText = collapseEcho(message.transcript);
+        finalText = message.transcript;
         audioProcessedMs =
           typeof message.audioProcessedMs === "number"
             ? message.audioProcessedMs
@@ -762,37 +815,6 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
               : bufferedBytes / 48000,
             asrMs,
           );
-          return;
-        }
-        if (isEchoOfReply(finalText, lastValeReply())) {
-          // Her own reply through the mic: no Spark call, no writes,
-          // no window move. Logged so the field test can count echoes.
-          logTurn({
-            language: turnLanguage,
-            ts: new Date(speechEndAt).toISOString(),
-            transcript: finalText,
-            ttftMs: null,
-            inputTokens: 0,
-            outputTokens: 0,
-            audioSeconds:
-              audioProcessedMs !== null
-                ? audioProcessedMs / 1000
-                : bufferedBytes / 48000,
-            tool: null,
-            modelSkipped: true,
-            error: null,
-            ignored: true,
-            asrMs,
-            chain: "none",
-            key: clientId,
-            slots: slotSnapshot(),
-            gate: "eco",
-            sinceReplyS: null,
-            totalMs: Date.now() - speechEndAt,
-          });
-          sendJson(browser, { type: "ignored" });
-          sendJson(browser, { type: "done" });
-          finish(1000, "turn-complete");
           return;
         }
         {
@@ -947,6 +969,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         void answerVote(control.vote);
         return;
       }
+      // Only endStream reaches here: keep what the client saw this turn.
+      if (control.type === "endStream") turnStats = control.stats;
       // Nothing ever voiced: answer locally instead of dialing Meta for it.
       if (!metaOpen && bufferedBytes === 0 && pendingAudio.length === 0) {
         finishEmptyTurn(0);
@@ -969,6 +993,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) {
       const chunk = data as Buffer;
       bufferedBytes += chunk.length;
+      wavChunks.push(chunk);
       if (conversation && !timerArmed) {
         timerArmed = true;
         clearTimeout(timer);

@@ -27,7 +27,17 @@ export interface UiStrings {
   micBlockedLead: string;
   micError: string;
   cardFor: (name: string) => string;
+  valeState: (state: ValeStateName) => string;
 }
+
+/** The six Vale states the indicator can show. */
+export type ValeStateName =
+  | "idle"
+  | "attentive"
+  | "hearing"
+  | "thinking"
+  | "speaking"
+  | "error";
 
 const EN: UiStrings = {
   tapToTalk: "Tap to talk",
@@ -53,6 +63,15 @@ const EN: UiStrings = {
   micError:
     "Something went wrong with the microphone. Check that one is connected and tap again.",
   cardFor: (name: string) => `${name}'s card`,
+  valeState: (state: ValeStateName) =>
+    ({
+      idle: "Idle",
+      attentive: "Listening",
+      hearing: "Hearing you",
+      thinking: "Thinking",
+      speaking: "Speaking",
+      error: "Something is wrong",
+    })[state],
 };
 
 const ES: UiStrings = {
@@ -79,6 +98,15 @@ const ES: UiStrings = {
   micError:
     "Algo falló con el micrófono. Revisa que haya uno conectado y toca de nuevo.",
   cardFor: (name: string) => `Ficha de ${name}`,
+  valeState: (state: ValeStateName) =>
+    ({
+      idle: "Inactiva",
+      attentive: "Escuchando",
+      hearing: "Te oigo",
+      thinking: "Pensando",
+      speaking: "Hablando",
+      error: "Algo falla",
+    })[state],
 };
 
 /** Every interface string in the screen language. */

@@ -52,7 +52,10 @@ async function tapToTalk() {
   stubSession();
   render(<TapToTalk />);
   fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
-  await vi.advanceTimersByTimeAsync(0);
+  // Flush the async getUserMedia continuation: advance(0) alone does not
+  // commit the live render once the session owns more than one interval,
+  // so run past the first session tick (no turn effects at this silence).
+  await vi.advanceTimersByTimeAsync(300);
 }
 
 function sessionAlive() {

@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  SPEECH_END_MARGIN_MS,
+  SPEECH_MS_PER_CHAR,
   availableVoices,
   cleanSpokenText,
+  estimateSpeechMs,
   finishStream,
   getVoicePrefs,
   isSpeaking,
@@ -550,5 +553,21 @@ describe("one voice per language (lead round p2)", () => {
     await vi.waitFor(() => {
       expect(utterances).toEqual(["Hi, I'm Vah-leh."]);
     });
+  });
+
+  it("caps speech end by phrase length, never cutting real speech", () => {
+    expect(estimateSpeechMs("", 1)).toBe(0);
+    expect(estimateSpeechMs("   ", 1)).toBe(0);
+    // 11 chars at 150 ms/char plus the margin.
+    expect(estimateSpeechMs("Hola Daniel", 1)).toBe(
+      11 * SPEECH_MS_PER_CHAR + SPEECH_END_MARGIN_MS,
+    );
+    // A slower rate stretches the cap instead of cutting her off.
+    expect(estimateSpeechMs("Hola Daniel", 0.5)).toBe(
+      Math.ceil((11 * SPEECH_MS_PER_CHAR) / 0.5) + SPEECH_END_MARGIN_MS,
+    );
+    // A 25-word reply still fits far inside its cap.
+    const reply = "All set, timer is running for Nina. Take your time.".repeat(2);
+    expect(estimateSpeechMs(reply, 0.9)).toBeGreaterThan(2 * reply.length * 70);
   });
 });

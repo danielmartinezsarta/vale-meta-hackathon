@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_MODEL,
+  PROMPT_CACHE_KEY,
   SPOKEN_SYSTEM_PROMPT,
   buildInstructions,
   buildStateFacts,
@@ -121,6 +122,8 @@ describe("agent prompt", () => {
     expect(String(bodies[0].instructions).startsWith(SPOKEN_SYSTEM_PROMPT)).toBe(true);
     expect(String(bodies[0].instructions)).toContain("Session context");
     expect(bodies[0].tools).toEqual(VALE_TOOLS);
+    // Sparse live turns share the holder: explicit cache affinity.
+    expect(bodies[0].prompt_cache_key).toBe(PROMPT_CACHE_KEY);
   });
 });
 

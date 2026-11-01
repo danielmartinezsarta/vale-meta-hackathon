@@ -127,27 +127,49 @@ function pcmBody(bytes: number, silent = false): ReadableStream<Uint8Array> {
 describe("POST /api/voice", () => {
   it("streams PCM to Meta and returns SSE interim/final/reply events", async () => {
     vi.stubGlobal("fetch", stubAgent("All set, see you soon."));
-    const request = new Request("http://localhost/api/voice", {
-      method: "POST",
-      headers: { "content-type": "audio/l16" },
-      body: pcmBody(4800),
-      // @ts-expect-error Node fetch streaming upload flag
-      duplex: "half",
-    });
-    const response = await POST(request);
-    expect(response.headers.get("content-type")).toContain("text/event-stream");
-    const text = await response.text();
-    const interimAt = text.indexOf("event: interim");
-    const finalAt = text.indexOf("event: final");
-    expect(interimAt).toBeGreaterThan(-1);
-    expect(finalAt).toBeGreaterThan(interimAt);
-    expect(text).toContain("canning");
-    expect(text).toContain("canned from fake asr");
-    expect(text).toContain("event: reply");
-    expect(text).toContain("All set, see you soon.");
-    expect(text).toContain("event: done");
-    expect(text).not.toContain("test-key");
-    vi.unstubAllGlobals();
+    const lines: string[] = [];
+    const logSpy = vi
+      .spyOn(console, "log")
+      .mockImplementation((line: string) => {
+        lines.push(String(line));
+      });
+    try {
+      const request = new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: { "content-type": "audio/l16" },
+        body: pcmBody(4800),
+        // @ts-expect-error Node fetch streaming upload flag
+        duplex: "half",
+      });
+      const response = await POST(request);
+      expect(response.headers.get("content-type")).toContain("text/event-stream");
+      const text = await response.text();
+      const interimAt = text.indexOf("event: interim");
+      const finalAt = text.indexOf("event: final");
+      expect(interimAt).toBeGreaterThan(-1);
+      expect(finalAt).toBeGreaterThan(interimAt);
+      expect(text).toContain("canning");
+      expect(text).toContain("canned from fake asr");
+      expect(text).toContain("event: reply");
+      expect(text).toContain("All set, see you soon.");
+      expect(text).toContain("event: done");
+      expect(text).not.toContain("test-key");
+      // The turn's PCM is kept as a WAV and its path rides the turn log.
+      const served = lines
+        .filter((line) => line.startsWith("[voice-turn] "))
+        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
+      expect(served.length).toBeGreaterThan(0);
+      const entry = served[served.length - 1];
+      expect(typeof entry.wav).toBe("string");
+      const { existsSync, readFileSync } = await import("node:fs");
+      expect(existsSync(entry.wav)).toBe(true);
+      const wav = readFileSync(entry.wav);
+      expect(wav.subarray(0, 4).toString()).toBe("RIFF");
+      expect(wav.length).toBe(44 + 4800);
+    } finally {
+      logSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("accepts a canned transcript without touching ASR (agent-only turn)", async () => {
@@ -165,7 +187,10 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
   });
 
-  it("collapses echoed repeats before the gate", async () => {
+  it("passes repeats through untouched: no server-side echo collapsing", async () => {
+    // Strict turns: the client never captures her voice, so the server no
+    // longer collapses repeats. A doubled transcript reaches the gate
+    // verbatim; naming her in the first words still executes the turn.
     vi.stubGlobal("fetch", stubAgent("vale mismo"));
     const text = await POST(
       new Request("http://localhost/api/voice", {
@@ -179,8 +204,9 @@ describe("POST /api/voice", () => {
       .filter((chunk) => chunk.startsWith("event: final"));
     expect(finals).toHaveLength(1);
     expect(JSON.parse(finals[0].split("data: ")[1])).toEqual({
-      transcript: "vale abre sesion",
+      transcript: "vale abre sesion, vale abre sesion",
     });
+    expect(text).toContain("event: reply");
     vi.unstubAllGlobals();
   });
 

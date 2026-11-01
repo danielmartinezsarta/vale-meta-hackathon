@@ -38,9 +38,19 @@ export interface TurnLogFields {
   key?: string;
   slots?: { client?: string; service?: string } | null;
   /** Sliding-gate verdict, seconds since Vale's last reply, turn wall time. */
-  gate?: "nombre" | "ventana" | "ignorado" | "eco" | "idioma" | null;
+  gate?: "nombre" | "ventana" | "ignorado" | "idioma" | null;
   sinceReplyS?: number | null;
   totalMs?: number | null;
+  /**
+   * Per-turn audio evidence: WAV path on disk plus what the client saw —
+   * peak input level 0-1, VAD-voiced ms, ms muted while she spoke, and her
+   * state when speech ended. Null on paths without audio or an old client.
+   */
+  wav?: string | null;
+  peakLevel?: number | null;
+  voicedMs?: number | null;
+  mutedMs?: number | null;
+  valeState?: string | null;
 }
 
 export function estimateCost(

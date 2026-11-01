@@ -14,7 +14,6 @@ import {
 } from "@/lib/pending-action";
 import {
   checkWake,
-  collapseEcho,
   noteAttention,
   requestClientId,
   type WakeVerdict,
@@ -22,6 +21,7 @@ import {
 import { getOpenSession } from "@/lib/vale-tools";
 import { openAsrConnection } from "@/lib/asr";
 import { emitTurnLog, estimateCost } from "@/lib/turn-log";
+import { saveTurnWav } from "@/lib/turn-audio";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
 import {
   DEFAULT_LANGUAGE,
@@ -112,7 +112,7 @@ export async function POST(request: Request): Promise<Response> {
       if (typeof body.transcript !== "string" || body.transcript.trim() === "") {
         return Response.json({ error: "Empty transcript." }, { status: 400 });
       }
-      cannedTranscript = collapseEcho(body.transcript);
+      cannedTranscript = body.transcript;
     } catch {
       return Response.json({ error: "Bad request." }, { status: 400 });
     }
@@ -157,6 +157,10 @@ export async function POST(request: Request): Promise<Response> {
       let finalAtMs = 0;
       let audioSeconds = 0;
       let agentRan = false;
+      /** This turn's mic PCM for the WAV evidence file; freed at turn end. */
+      const audioChunks: Uint8Array[] = [];
+      let turnWav: string | null = null;
+      let wavSaved = false;
       const turnTimeoutMs = Math.max(
         1,
         Number(process.env.VOICE_TURN_TIMEOUT_MS) || TURN_TIMEOUT_MS,
@@ -225,8 +229,17 @@ export async function POST(request: Request): Promise<Response> {
         sinceReplyS?: number | null;
         totalMs?: number | null;
       }) => {
+        // One WAV per turn from whatever the mic sent; canned transcripts
+        // carry no audio, so they log wav null. POST turns have no client
+        // stats frame, unlike the WS bridge (stats stay null there).
+        if (!wavSaved && audioChunks.length > 0) {
+          wavSaved = true;
+          turnWav = saveTurnWav(clientKey, audioChunks);
+          audioChunks.length = 0;
+        }
         emitTurnLog({
           ...fields,
+          wav: turnWav,
           costUsd: estimateCost(
             {
               inputTokens: fields.inputTokens,
@@ -465,7 +478,7 @@ export async function POST(request: Request): Promise<Response> {
                     } else if (event.kind === "final") {
                       gotFinal = true;
                       finalAtMs = Date.now();
-                      finalText = collapseEcho(event.transcript);
+                      finalText = event.transcript;
                       audioSeconds = (event.audioProcessedMs ?? 0) / 1000;
                       send("final", {
                         transcript: finalText,
@@ -491,6 +504,7 @@ export async function POST(request: Request): Promise<Response> {
               }
             }
             asr?.sendPcm(value);
+            audioChunks.push(value);
           }
         } finally {
           reader.releaseLock();

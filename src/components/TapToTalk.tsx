@@ -7,18 +7,19 @@ import { LevelMeter } from "@/components/LevelMeter";
 import { ValeBoard } from "@/components/ValeBoard";
 import type { Board } from "@/lib/board";
 import { parseSseStream } from "@/lib/sse";
-import { resemblesReply } from "@/lib/echo";
 import { namesVale } from "@/lib/wake";
 import {
   isSpeaking,
   setVoiceEngine,
   speak,
+  speechSettled,
   stopSpeaking,
   voiceEngine,
   type VoiceEngine,
   finishStream,
   speakStream,
 } from "@/lib/speak";
+import { createValeState, type ValeState } from "@/lib/vale-state";
 import { turnErrorText, type ValeLanguage } from "@/lib/vale-language";
 import { uiStrings } from "@/lib/vale-ui";
 import type { Widget } from "@/lib/widget";
@@ -60,6 +61,10 @@ function hasVisibleContent(turn: {
 const VOICE_ENERGY_THRESHOLD = 200;
 /** Below this much voiced audio the utterance is noise, never a turn. */
 const MIN_VOICED_MS = 300;
+/** Strict turns: wait after her voice ends before re-listening. */
+const SPEECH_RESUME_DELAY_MS = 300;
+/** Absolute backstop: a voice stuck past this releases the mic anyway. */
+const SPEECH_HARD_CAP_MS = 60000;
 /** 960 samples at the 24 kHz capture rate (capture.ts). */
 const FRAME_MS = 40;
 
@@ -176,10 +181,30 @@ export function TapToTalk() {
   const captureRef = useRef<CaptureHandle | null>(null);
   const repliesRef = useRef(new Map<number, string>());
   const finalReceivedRef = useRef(new Set<number>());
-  // Only a still-open turn's reply can be interrupted.
   const settledTurnsRef = useRef(new Set<number>());
   // Silent streak: the banner shows only on repeated silence.
   const silentStreakRef = useRef(0);
+  // Strict turns: capture muted while she speaks, resumed ~300 ms after.
+  const mutedRef = useRef(false);
+  const resumeTimerRef = useRef(0);
+  const speechWatchRef = useRef(0);
+  const muteStartRef = useRef(0);
+  // Per-turn ear evidence, frozen at endStream and sent with it.
+  const turnPeakRef = useRef(0);
+  const turnMutedMsRef = useRef(0);
+  // Single source of truth for what Vale is doing; the indicator mirrors it.
+  const valeStoreRef = useRef(createValeState());
+  const [valeUiState, setValeUiState] = useState<ValeState>("idle");
+  useEffect(() => {
+    const stop = valeStoreRef.current.subscribe(setValeUiState);
+    return stop;
+  }, []);
+
+  const clearSpeechWatch = useCallback(() => {
+    window.clearInterval(speechWatchRef.current);
+    window.clearTimeout(resumeTimerRef.current);
+    mutedRef.current = false;
+  }, []);
 
   const clearCaptureWatch = useCallback(() => {
     window.clearTimeout(quietTimerRef.current);
@@ -209,6 +234,8 @@ export function TapToTalk() {
       }
     });
     controllersRef.current.clear();
+    clearSpeechWatch();
+    valeStoreRef.current.set("idle");
     try {
       captureRef.current?.stop();
     } catch {
@@ -229,7 +256,7 @@ export function TapToTalk() {
     sessionEndRef.current?.();
     sessionEndRef.current = null;
     setStatus("idle");
-  }, [clearCaptureWatch]);
+  }, [clearCaptureWatch, clearSpeechWatch]);
 
   useEffect(() => stopSession, [stopSession]);
 
@@ -282,15 +309,18 @@ export function TapToTalk() {
       setAlert(message);
       setAlertCode(code);
       setStatus("idle");
+      valeStoreRef.current.set("error");
       sessionEndRef.current?.();
       sessionEndRef.current = null;
+      clearSpeechWatch();
     },
-    [clearCaptureWatch],
+    [clearCaptureWatch, clearSpeechWatch],
   );
 
   const runSession = useCallback(
     async (stream: MediaStream): Promise<void> => {
       sessionRef.current = true;
+      valeStoreRef.current.set("attentive");
       // One capture for the whole session; VAD events delimit turns.
       let resolveSession: (() => void) | null = null;
       const ended = new Promise<void>((resolve) => {
@@ -301,17 +331,62 @@ export function TapToTalk() {
       const pending: Int16Array[] = [];
       let currentId = -1;
       let posted = false;
+      // Move the open mute interval into the turn total without double
+      // counting: each snap restarts the clock, the unmute adds the tail.
+      const snapMutedMs = () => {
+        if (mutedRef.current) {
+          turnMutedMsRef.current += Date.now() - muteStartRef.current;
+          muteStartRef.current = Date.now();
+        }
+        return turnMutedMsRef.current;
+      };
+      // Strict turns: follow her voice, not the VAD. While anything is
+      // owed (audible speech or the estimate window), capture stays muted;
+      // when she settles, flush stale frames, wait ~300 ms, re-listen.
+      // The window stays open throughout: a yes still lands on the session.
+      window.clearInterval(speechWatchRef.current);
+      speechWatchRef.current = window.setInterval(() => {
+        if (!sessionRef.current) return;
+        if (!speechSettled()) {
+          // She owns the air: the store says so even when the frame guard
+          // muted first (set is idempotent, no extra render past the first).
+          valeStoreRef.current.set("speaking");
+          if (!mutedRef.current) {
+            mutedRef.current = true;
+            muteStartRef.current = Date.now();
+            captureRef.current?.setPaused?.(true);
+            window.clearTimeout(resumeTimerRef.current);
+          } else if (
+            Date.now() - muteStartRef.current >
+            SPEECH_HARD_CAP_MS
+          ) {
+            // Wedged voice: release the mic instead of staying deaf.
+            stopSpeaking("speech-cap");
+          }
+          return;
+        }
+        if (mutedRef.current) {
+          mutedRef.current = false;
+          turnMutedMsRef.current += Date.now() - muteStartRef.current;
+          // Fresh stamp for the next mute: the cap measures this voice.
+          muteStartRef.current = 0;
+          pending.length = 0;
+          window.clearTimeout(resumeTimerRef.current);
+          resumeTimerRef.current = window.setTimeout(() => {
+            if (!sessionRef.current) return;
+            captureRef.current?.setPaused?.(false);
+            // A turn posted while she settled already claimed the state.
+            if (valeStoreRef.current.get() === "speaking") {
+              valeStoreRef.current.set("attentive");
+            }
+          }, SPEECH_RESUME_DELAY_MS);
+        }
+      }, 250);
       // One conversation socket when /voice is up, else one bridge socket
       // per turn; frames stay buffered for replay or POST fallback.
       let convSocket: WebSocket | null = null;
       let convOpen = false;
       let pendingConvTurn: number | null = null;
-      // Voice-first: speech that starts while Vale is audible, or within
-      // AUDIBLE_TAIL_MS after her last audible frame, is transcribed like any
-      // other. It only interrupts her when it starts with the name and does
-      // not resemble what she says; the rest is her echo (gate:eco).
-      const AUDIBLE_TAIL_MS = 500;
-      let lastValeAudibleAt = 0;
       interface TurnTransport {
         socket: WebSocket | null;
         /** This turn's audio rode the shared conversation socket. */
@@ -330,10 +405,8 @@ export function TapToTalk() {
         endFrames: Int16Array[] | null;
         /** Frames with real voice (energy above the VAD threshold). */
         voiced: number;
-        /** Speech started while Vale was audible (or within her tail). */
-        heardVale: boolean;
-        /** A named, dissimilar interrupt already cut her voice. */
-        interrupted: boolean;
+        /** Frozen endStream payload: the same stats on every (re)send. */
+        endPayload: string | null;
       }
       const transports = new Map<number, TurnTransport>();
 
@@ -437,6 +510,8 @@ export function TapToTalk() {
         currentId = id;
         posted = false;
         pending.length = 0;
+        turnPeakRef.current = 0;
+        turnMutedMsRef.current = 0;
         transports.set(id, {
           socket: null,
           conv: false,
@@ -450,8 +525,7 @@ export function TapToTalk() {
           postRetried: false,
           endFrames: null,
           voiced: 0,
-          heardVale: false,
-          interrupted: false,
+          endPayload: null,
         });
         setTurns((prev) => [
           ...prev,
@@ -464,45 +538,6 @@ export function TapToTalk() {
       const failTurn = (id: number, message: string, code: string | null = null) => {
         if (!finalReceivedRef.current.has(id)) removeTurn(id);
         endSessionWithAlert(message, code);
-      };
-
-      // New speech only dismisses the still-open turn's reply when it really
-      // interrupts Vale: her voice silent, or a named dissimilar barge-in.
-      const dismissOpenReply = () => {
-        const dismissed: number[] = [];
-        setTurns((prev) =>
-          prev.map((turn) =>
-            turn.reply && !settledTurnsRef.current.has(turn.id)
-              ? (dismissed.push(turn.id), { ...turn, reply: null })
-              : turn,
-          ),
-        );
-        for (const turnId of dismissed) {
-          repliesRef.current.delete(turnId);
-        }
-      };
-
-      // Latest reply Vale voiced: the echo test compares against it.
-      const lastReplyText = (): string | null => {
-        let last: string | null = null;
-        repliesRef.current.forEach((reply) => {
-          last = reply;
-        });
-        return last;
-      };
-
-      // A transcript for a turn that started while she was audible cuts her
-      // voice only when it starts with the name and does not resemble what
-      // she says. Anything else is her echo: keep transcribing, no cut, no
-      // dismiss; the server discards it (gate:eco, no Spark call).
-      const maybeInterrupt = (id: number, text: string) => {
-        const transport = transports.get(id);
-        if (!transport || transport.interrupted || !transport.heardVale) return;
-        if (!namesVale(text)) return;
-        if (resemblesReply(text, lastReplyText())) return;
-        transport.interrupted = true;
-        stopSpeaking("barge-in");
-        dismissOpenReply();
       };
 
       const sendFrameBytes = (socket: WebSocket, frame: Int16Array) => {
@@ -544,10 +579,8 @@ export function TapToTalk() {
               finalReceivedRef.current.add(id);
               if (message.transcript.trim() !== "") silentStreakRef.current = 0;
               patchTurn(id, { final: message.transcript, interim: "" });
-              maybeInterrupt(id, message.transcript);
             } else {
               patchTurn(id, { interim: message.transcript });
-              maybeInterrupt(id, message.transcript);
             }
             break;
           case "reply-delta":
@@ -557,6 +590,7 @@ export function TapToTalk() {
               const next = `${repliesRef.current.get(id) ?? ""}${message.text}`;
               repliesRef.current.set(id, next);
               patchTurn(id, { reply: next });
+              valeStoreRef.current.set("speaking");
               speakStream(message.text, languageRef.current);
             }
             break;
@@ -567,6 +601,7 @@ export function TapToTalk() {
             else speak(message.text, languageRef.current);
             repliesRef.current.set(id, message.text);
             patchTurn(id, { reply: message.text });
+            valeStoreRef.current.set("speaking");
             break;
           case "board": {
             const board = (message as { board?: unknown }).board;
@@ -688,7 +723,9 @@ export function TapToTalk() {
           if (transport.ended || transport.endQueued) {
             transport.endQueued = false;
             try {
-              socket.send(JSON.stringify({ type: "endStream" }));
+              socket.send(
+                transport.endPayload ?? JSON.stringify({ type: "endStream" }),
+              );
             } catch {
               /* the close handler decides: reconnect or fail */
             }
@@ -764,14 +801,24 @@ export function TapToTalk() {
 
       // Speech end: conversation socket first, then the turn socket, then POST.
       const endTurnTransport = (id: number) => {
+        valeStoreRef.current.set("thinking");
         const transport = transports.get(id);
+        // Freeze what the client saw: the same evidence on every (re)send.
+        const endPayload = JSON.stringify({
+          type: "endStream",
+          peakLevel: turnPeakRef.current,
+          voicedMs: (transport?.voiced ?? 0) * FRAME_MS,
+          mutedMs: snapMutedMs(),
+          valeState: valeStoreRef.current.get(),
+        });
+        if (transport) transport.endPayload = endPayload;
         if (
           transport?.conv &&
           convSocket &&
           convSocket.readyState === WebSocket.OPEN
         ) {
           try {
-            convSocket.send(JSON.stringify({ type: "endStream" }));
+            convSocket.send(endPayload);
             pendingConvTurn = id;
             return;
           } catch {
@@ -792,7 +839,9 @@ export function TapToTalk() {
           socket.readyState === WebSocket.OPEN
         ) {
           try {
-            socket.send(JSON.stringify({ type: "endStream" }));
+            socket.send(
+              transport.endPayload ?? JSON.stringify({ type: "endStream" }),
+            );
           } catch {
             transport.failed = true;
             postTurn(id, pending.splice(0));
@@ -865,7 +914,6 @@ export function TapToTalk() {
                 finalReceivedRef.current.add(id);
                 if (transcript.trim() !== "") silentStreakRef.current = 0;
                 patchTurn(id, { final: transcript, interim: "" });
-                maybeInterrupt(id, transcript);
               },
               onErrorEvent: (message, code) => {
                 controllersRef.current.delete(controller);
@@ -1006,19 +1054,12 @@ export function TapToTalk() {
       const STALL_MS = 5000;
       let lastBeatAt = Date.now();
       let framesOut = 0;
-      // Latest echo hold for the field log: speech that started while Vale
-      // was audible and has not cut her yet.
-      const echoHold = (): boolean => {
-        const transport = transports.get(currentId);
-        return transport ? transport.heardVale && !transport.interrupted : false;
-      };
       const snapshotState = (capture: string): Record<string, unknown> => ({
         capture,
         audio: captureRef.current?.state() ?? "unknown",
         visible:
           typeof document !== "undefined" ? document.visibilityState : "?",
         speaking: isSpeaking(),
-        echoHold: echoHold(),
         framesOut,
         idleMs: Date.now() - lastBeatAt,
       });
@@ -1059,7 +1100,7 @@ export function TapToTalk() {
         const snapshot = snapshotState(event);
         try {
           console.log(
-            `[capture] ${event} visible=${String(snapshot.visible)} audio=${String(snapshot.audio)} speaking=${String(snapshot.speaking)} echoHold=${String(snapshot.echoHold)} frames=${String(snapshot.framesOut)} idleMs=${String(snapshot.idleMs)}`,
+            `[capture] ${event} visible=${String(snapshot.visible)} audio=${String(snapshot.audio)} speaking=${String(snapshot.speaking)} frames=${String(snapshot.framesOut)} idleMs=${String(snapshot.idleMs)}`,
           );
         } catch {
           /* logging never breaks the turn */
@@ -1084,10 +1125,20 @@ export function TapToTalk() {
           },
           onFrame: (frame) => {
             if (!sessionRef.current) return;
+            // Strict turns: while she speaks, nothing is captured. The
+            // capture pause usually drops these first; this guards the gap
+            // before the next watch tick lands.
+            if (!speechSettled()) {
+              captureRef.current?.setPaused?.(true);
+              mutedRef.current = true;
+              // The watch reads this for the 60 s backstop: stamp it on
+              // every mute path, or the first tick would cut her at once.
+              if (muteStartRef.current === 0) {
+                muteStartRef.current = Date.now();
+              }
+              return;
+            }
             framesOut += 1;
-            // Track her audibility every frame: the 500 ms tail below hangs
-            // on this, not on a single check at speech start.
-            if (isSpeaking()) lastValeAudibleAt = Date.now();
             pending.push(frame.slice());
             // Stream each frame live and keep it buffered for replay or POST fallback.
             const transport = transports.get(currentId);
@@ -1119,23 +1170,13 @@ export function TapToTalk() {
           },
           onSpeechStart: () => {
             if (!sessionRef.current) return;
-            // Voice-first: speech that starts while she is audible, or within
-            // 500 ms after her last audible frame, is transcribed like any
-            // other. It only cuts her (and dismisses her text) when a later
-            // transcript starts with the name and is dissimilar; the rest is
-            // her echo, discarded server-side (gate:eco, no Spark call).
-            const audible =
-              isSpeaking() || Date.now() - lastValeAudibleAt < AUDIBLE_TAIL_MS;
-            if (!audible) stopSpeaking("speech-start");
+            // Strict turns: speech only starts while she is silent (capture
+            // runs muted otherwise), so there is nothing to interrupt and
+            // her text stays put.
+            valeStoreRef.current.set("hearing");
             window.clearTimeout(quietTimerRef.current);
-            if (!audible) dismissOpenReply();
             // A new utterance after a posted turn opens the next turn on the same capture.
             if (posted) openTurn(false);
-            const fresh = transports.get(currentId);
-            if (fresh) {
-              fresh.heardVale = audible;
-              fresh.interrupted = false;
-            }
             // Without a conversation socket, open one per turn so the
             // ~0.9 s handshake hides inside the utterance.
             if (!convOpen) openTurnSocket(currentId);
@@ -1164,8 +1205,8 @@ export function TapToTalk() {
               openTurn(false);
               return;
             }
-            // Every utterance is transcribed; the server tells echo
-            // (gate:eco, ignored) apart from a real turn (reply).
+            // Strict turns: speech only starts while she is silent, so
+            // every utterance here is Daniel, never her echo.
             endTurnTransport(currentId);
           },
           // Same samples as the VAD, throttled to ~10 Hz.
@@ -1173,6 +1214,7 @@ export function TapToTalk() {
             const now = Date.now();
             if (now - lastLevelRef.current < 100) return;
             lastLevelRef.current = now;
+            if (value > turnPeakRef.current) turnPeakRef.current = value;
             setLevel(value);
           },
           // iOS kept the context suspended past the gesture: zeros flow.
@@ -1365,6 +1407,8 @@ export function TapToTalk() {
       <VoiceControls language={language} />
 
       {status === "live" && <LevelMeter level={level} />}
+
+      {status === "live" && <p role="status">{ui.valeState(valeUiState)}</p>}
 
       {status === "live" &&
         turns.every((turn) => !hasVisibleContent(turn)) &&

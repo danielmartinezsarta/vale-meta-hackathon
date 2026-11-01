@@ -396,6 +396,15 @@ async function postResponses(
 const MAX_TOOL_ROUNDS = 4;
 
 /**
+ * Explicit prefix-cache affinity: without it, sparse live turns (minutes
+ * apart) always miss the implicit cache (cached_tokens 0) while bursts hit.
+ * One versioned key for the whole helper: the cache still matches by prefix,
+ * the key only routes sparse requests to the holder. Bump on prompt-shape
+ * changes that obsolete the cached prefix.
+ */
+export const PROMPT_CACHE_KEY = "vale-spoken-v1";
+
+/**
  * Vale's own still-open question: her last reply asked one without acting.
  * No tool ran, so no proposal was stored and the duplicate guard must not
  * swallow the yes — the yes authorizes what she asked. A question asked
@@ -506,6 +515,8 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
         // Cheapest reasoning mode; the latency budget depends on it.
         reasoning: { effort: "minimal" },
         stream: true,
+        // Route sparse turns to the prefix holder (see PROMPT_CACHE_KEY).
+        prompt_cache_key: PROMPT_CACHE_KEY,
       },
       onDelta,
       startedAt,

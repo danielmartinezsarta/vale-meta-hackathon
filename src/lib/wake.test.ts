@@ -2,7 +2,6 @@
 import { describe, expect, it } from "vitest";
 import {
   checkWake,
-  collapseEcho,
   isGreetingOnly,
   isUndoIntent,
   languageMismatch,
@@ -102,17 +101,6 @@ describe("wake word gate", () => {
       gate: "ignorado",
       sinceReplyS: null,
     });
-  });
-
-  it("collapses echoed repeats before the gate", () => {
-    expect(collapseEcho("Hola,Hola")).toBe("Hola");
-    expect(collapseEcho("mí? mí?")).toBe("mí?");
-    expect(collapseEcho("abre sesión abre sesión")).toBe("abre sesión");
-    expect(collapseEcho("la la clienta")).toBe("la clienta");
-    expect(collapseEcho("vale abre una sesión")).toBe("vale abre una sesión");
-    expect(collapseEcho("muy bueno")).toBe("muy bueno");
-    expect(collapseEcho("")).toBe("");
-    expect(collapseEcho("  ")).toBe("");
   });
 
   it("spots undo intent and bare greetings", () => {

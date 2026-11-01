@@ -147,6 +147,14 @@ export interface CaptureHandle {
   stop: () => void;
   /** Live AudioContext state: the stall watchdog reports it, never blocks on it. */
   state: () => string;
+  /**
+   * Strict turns: while paused, blocks still heartbeat (the watchdog stays
+   * alive) but feed neither the detector nor the frames. Resuming clears
+   * stale pre-roll so her just-finished voice never prefixes the next turn.
+   * Optional so older test doubles still typecheck; startCapture always
+   * provides it and the app guards the call.
+   */
+  setPaused?: (paused: boolean) => void;
 }
 
 export function startCapture(
@@ -188,9 +196,19 @@ export function startCapture(
   const detector = new SpeechDetector(detectorOptions);
   const preroll: Int16Array[] = [];
   let stopped = false;
+  let paused = false;
 
   processor.onaudioprocess = (event: AudioProcessingEvent) => {
     if (stopped) return;
+    // Muted while Vale speaks: blocks still heartbeat, nothing else flows.
+    if (paused) {
+      try {
+        callbacks.onHeartbeat?.();
+      } catch {
+        /* the watchdog must never break capture */
+      }
+      return;
+    }
     try {
       callbacks.onHeartbeat?.();
     } catch {
@@ -249,6 +267,10 @@ export function startCapture(
         /* already torn down */
       }
       void context.close().catch(() => {});
+    },
+    setPaused(next: boolean) {
+      paused = next;
+      if (!next) preroll.length = 0;
     },
     state() {
       try {

@@ -982,8 +982,8 @@ describe("bridgeOptionsForUpgrade (single-process wiring)", () => {
   });
 });
 
-describe("echo guard (her own reply back through the mic)", () => {
-  it("drops her own reply coming back as the next transcript: gate eco, no model call", async () => {
+describe("strict turns (no echo guard: the mic never hears her)", () => {
+  it("runs a wakeless repeat of her reply as a normal window turn: gate ventana", async () => {
     receivedEndStream = 0;
     const agent = vi.fn(fakeAgent("Emma is booked for gel refill"));
     finalTranscript = "vale, book Emma for gel refill";
@@ -995,7 +995,7 @@ describe("echo guard (her own reply back through the mic)", () => {
       });
     try {
       const browser = new FakeBrowser();
-      const client = `conv-eco-${Date.now()}`;
+      const client = `conv-noeco-${Date.now()}`;
       attachVoiceBridge({
         browser: browser as unknown as WebSocket,
         key: "test-key",
@@ -1009,7 +1009,7 @@ describe("echo guard (her own reply back through the mic)", () => {
           browser.frames().some((frame) => frame.type === "bridge"),
         ).toBe(true);
       });
-      // Turn 1: a real request with a real reply.
+      // Turn 1: a real request with a real reply; the reply opens the window.
       browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
       browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
       await vi.waitFor(() => {
@@ -1021,7 +1021,9 @@ describe("echo guard (her own reply back through the mic)", () => {
       const doneAfterFirst = browser.frames().filter(
         (frame) => frame.type === "done",
       ).length;
-      // Turn 2: her own reply echoing back through the mic.
+      // Turn 2: the same words back without her name. Strict turns mean the
+      // client never sends her audio, so the server treats this as Daniel
+      // talking inside the window: a normal turn, gate ventana.
       finalTranscript = "Emma is booked for gel refill";
       browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
       browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
@@ -1030,17 +1032,19 @@ describe("echo guard (her own reply back through the mic)", () => {
           browser.frames().filter((frame) => frame.type === "done").length,
         ).toBe(doneAfterFirst + 1);
       });
-      // Discarded: no second model call, no second reply, ignored on screen.
-      expect(agent).toHaveBeenCalledTimes(1);
+      // Executed, not discarded: a second model call and a second reply.
+      expect(agent).toHaveBeenCalledTimes(2);
       expect(
         browser.frames().filter((frame) => frame.type === "reply"),
-      ).toHaveLength(1);
+      ).toHaveLength(2);
       expect(
         browser.frames().some((frame) => frame.type === "ignored"),
-      ).toBe(true);
-      const eco = lines.filter((line) => line.includes('"gate":"eco"'));
-      expect(eco).toHaveLength(1);
-      expect(eco[0]).toContain("Emma is booked for gel refill");
+      ).toBe(false);
+      expect(lines.some((line) => line.includes('"gate":"eco"'))).toBe(false);
+      const ventana = lines.filter((line) =>
+        line.includes('"gate":"ventana"'),
+      );
+      expect(ventana.length).toBeGreaterThan(0);
       // The served turn carries a real measured ASR time.
       const served = lines
         .filter((line) => line.startsWith("[voice-turn] "))
@@ -1091,6 +1095,73 @@ describe("echo guard (her own reply back through the mic)", () => {
     });
     expect(agent).toHaveBeenCalledTimes(2);
     browser.close(1000, "test done");
+  });
+
+  it("keeps the turn PCM as a WAV and logs it with the client stats", async () => {
+    receivedEndStream = 0;
+    const agent = vi.fn(fakeAgent("WAV heard you."));
+    finalTranscript = "vale, wav check";
+    const lines: string[] = [];
+    const logSpy = vi
+      .spyOn(console, "log")
+      .mockImplementation((line: string) => {
+        lines.push(String(line));
+      });
+    try {
+      const browser = new FakeBrowser();
+      const client = `conv-wav-${Date.now()}`;
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: client,
+        metaUrl: url,
+        runAgent: agent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(
+        Buffer.from(
+          JSON.stringify({
+            type: "endStream",
+            peakLevel: 0.5,
+            voicedMs: 320,
+            mutedMs: 0,
+            valeState: "hearing",
+          }),
+        ),
+      );
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "reply"),
+        ).toBe(true);
+      });
+      const served = lines
+        .filter((line) => line.startsWith("[voice-turn] "))
+        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
+      const entry = served.find(
+        (e) => e.transcript === "vale, wav check",
+      );
+      expect(entry).toBeDefined();
+      expect(typeof entry.wav).toBe("string");
+      const { readFileSync, existsSync } = await import("node:fs");
+      expect(existsSync(entry.wav)).toBe(true);
+      const wav = readFileSync(entry.wav);
+      expect(wav.subarray(0, 4).toString()).toBe("RIFF");
+      expect(wav.readUInt32LE(24)).toBe(24000);
+      expect(entry.peakLevel).toBe(0.5);
+      expect(entry.voicedMs).toBe(320);
+      expect(entry.mutedMs).toBe(0);
+      expect(entry.valeState).toBe("hearing");
+      browser.close(1000, "test done");
+    } finally {
+      logSpy.mockRestore();
+      finalTranscript = "vale, live from the bridge";
+    }
   });
 });
 
@@ -1151,12 +1222,49 @@ describe("empty finals (noise, not Daniel)", () => {
 
 describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
   it("parses string and Buffer endStream controls, ignores binary audio", () => {
+    const emptyStats = {
+      peakLevel: null,
+      voicedMs: null,
+      mutedMs: null,
+      valeState: null,
+    };
     expect(tryParseControl(JSON.stringify({ type: "endStream" }))).toEqual({
       type: "endStream",
+      stats: emptyStats,
     });
     expect(
       tryParseControl(Buffer.from(JSON.stringify({ type: "endStream" }))),
-    ).toEqual({ type: "endStream" });
+    ).toEqual({ type: "endStream", stats: emptyStats });
+    expect(
+      tryParseControl(
+        JSON.stringify({
+          type: "endStream",
+          peakLevel: 0.5,
+          voicedMs: 800,
+          mutedMs: 1200,
+          valeState: "speaking",
+          junk: "dropped",
+        }),
+      ),
+    ).toEqual({
+      type: "endStream",
+      stats: {
+        peakLevel: 0.5,
+        voicedMs: 800,
+        mutedMs: 1200,
+        valeState: "speaking",
+      },
+    });
+    expect(
+      tryParseControl(
+        JSON.stringify({
+          type: "endStream",
+          peakLevel: 9,
+          voicedMs: -1,
+          valeState: "x".repeat(17),
+        }),
+      ),
+    ).toEqual({ type: "endStream", stats: emptyStats });
     expect(tryParseControl(Buffer.from([0, 1, 2, 3]))).toBeNull();
     expect(tryParseControl('{"type":"other"}')).toBeNull();
     expect(tryParseControl(null)).toBeNull();

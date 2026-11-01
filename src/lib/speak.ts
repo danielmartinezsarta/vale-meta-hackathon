@@ -475,6 +475,7 @@ function playSeamless(
   language: ValeLanguage = DEFAULT_LANGUAGE,
 ): void {
   stopSeamlessSpeech();
+  expectSpeech(text, 1);
   const playId = seamlessPlayId;
   const sentences = splitSentences(text);
   if (sentences.length === 0) return;
@@ -542,6 +543,7 @@ function queueBrowserSentences(
     for (const sentence of sentences) {
       const clean = spokenText(sentence, language);
       if (clean === "") continue;
+      expectSpeech(clean, prosody.rate);
       const utterance = new SpeechSynthesisUtterance(clean);
       utterance.rate = prosody.rate;
       utterance.pitch = prosody.pitch;
@@ -623,12 +625,46 @@ export function stopSpeaking(reason: string): void {
   } catch {
     /* logging must never break the stop */
   }
+  speechDueUntil = 0;
   stopSeamlessSpeech();
   try {
     synth()?.cancel();
   } catch {
     /* nothing playing or nothing to stop */
   }
+}
+
+/**
+ * Speech-end estimate from the reply length: real TTS lands near 70-80
+ * ms/char, so 150 ms/char plus margin never cuts real speech — it only
+ * releases a mic stuck on a voice that never reports its end (missing
+ * onend, a wedged queue). Unit-tested; the field proves it per turn.
+ */
+export const SPEECH_MS_PER_CHAR = 150;
+export const SPEECH_END_MARGIN_MS = 2500;
+
+/** When the queued reply should be over, worst case. 0 means nothing queued. */
+let speechDueUntil = 0;
+
+export function estimateSpeechMs(text: string, rate = 1): number {
+  const chars = text.replace(/\s+/g, " ").trim().length;
+  if (chars === 0) return 0;
+  return (
+    Math.ceil((chars * SPEECH_MS_PER_CHAR) / Math.max(rate, 0.1)) +
+    SPEECH_END_MARGIN_MS
+  );
+}
+
+/** Note queued speech so a stuck voice still releases the mic on time. */
+export function expectSpeech(text: string, rate = 1): void {
+  const ms = estimateSpeechMs(text, rate);
+  if (ms > 0) speechDueUntil = Date.now() + ms;
+}
+
+/** True when no voice is audible and no reply is owed: safe to re-listen. */
+export function speechSettled(): boolean {
+  if (isSpeaking()) return false;
+  return speechDueUntil === 0 || Date.now() >= speechDueUntil;
 }
 
 /** True while a reply is audible: browser queue or Seamless audio. */

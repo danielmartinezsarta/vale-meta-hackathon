@@ -12,3 +12,7 @@ if (process.env.VALE_DB_MEMORY === undefined) {
 if (process.env.VALE_TURNS_PATH === undefined) {
   process.env.VALE_TURNS_PATH = join(tmpdir(), `test-turns-${process.pid}.jsonl`);
 }
+// Turn WAVs land in tmp under tests, never in Daniel's data/audio.
+if (process.env.VALE_AUDIO_DIR === undefined) {
+  process.env.VALE_AUDIO_DIR = join(tmpdir(), `test-audio-${process.pid}`);
+}

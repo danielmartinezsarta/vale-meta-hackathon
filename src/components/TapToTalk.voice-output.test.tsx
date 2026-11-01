@@ -28,6 +28,9 @@ vi.mock("@/lib/speak", async (importOriginal) => {
       (...args: Parameters<typeof actual.isSpeaking>) =>
         speakAudibleRef.current || actual.isSpeaking(...args),
     ),
+    // Strict turns: the mock voice never reports its end through the
+    // estimate, so the suite drives settled-ness directly.
+    speechSettled: vi.fn(() => !speakAudibleRef.current),
   };
 });
 
@@ -92,7 +95,7 @@ afterEach(() => {
 });
 
 describe("browser voice output", () => {
-  it("transcribes over its audible reply and cuts only on a named, dissimilar interrupt", async () => {
+  it("never captures while she speaks and re-listens after she settles", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
@@ -119,94 +122,31 @@ describe("browser voice output", () => {
     // The conversation socket is up before speech: no per-turn socket.
     FakeWs.instances[0].open();
     const ws = FakeWs.instances[0];
-    const frame = new Int16Array(960);
     const voiced = new Int16Array(960).fill(4000);
-    const voice = (n: number) => {
-      for (let i = 0; i < n; i += 1) driver!.onFrame?.(voiced);
-    };
-    const endStreams = () =>
-      ws.sentStrings().filter((raw) => raw.includes("endStream")).length;
-
-    // Real voice: speech cuts nothing (nothing to cut) and the turn rides
-    // the conversation socket, never the buffered POST.
-    driver!.onSpeechStart();
-    expect(mockStopSpeaking).toHaveBeenCalledTimes(1);
-    voice(8);
-    driver!.onSpeechEnd();
-    expect(endStreams()).toBe(1);
-
-    // Deltas paint the screen and stream to the speaker at once. The reply is
-    // still streaming: no reply, no done, the turn stays open.
-    ws.serverMessage({ type: "reply-delta", text: "Booking you " });
-    ws.serverMessage({ type: "reply-delta", text: "for tomorrow at three." });
-    expect(mockSpeakStream).toHaveBeenCalledTimes(2);
-    expect(mockSpeakStream).toHaveBeenCalledWith("Booking you ", "en");
-    expect(mockSpeak).not.toHaveBeenCalled();
     await waitFor(() => {
-      expect(screen.getByText("Booking you for tomorrow at three.")).toBeDefined();
+      expect(screen.getByRole("status").textContent).toBe("Listening");
     });
 
-    // Her reply audible: speech without the name is transcribed, never cut,
-    // and never dismisses her text. The server bins it as echo (gate:eco).
+    // Her reply is audible: mic frames never reach the wire.
     speakAudibleRef.current = true;
-    mockStopSpeaking.mockClear();
-    const binaryBefore = ws.sentBinaryCount();
-    driver!.onSpeechStart();
-    expect(mockStopSpeaking).not.toHaveBeenCalled();
-    expect(FakeWs.instances).toHaveLength(1);
-    voice(8);
-    expect(ws.sentBinaryCount()).toBeGreaterThan(binaryBefore);
-    driver!.onSpeechEnd();
-    expect(endStreams()).toBe(2);
-    ws.serverMessage({
-      type: "transcript",
-      transcript: "Hey there great to hear you",
-    });
-    ws.serverMessage({ type: "ignored" });
-    ws.serverMessage({ type: "done" });
-    expect(mockStopSpeaking).not.toHaveBeenCalled();
-    expect(screen.getByText("Booking you for tomorrow at three.")).toBeDefined();
+    driver!.onFrame?.(voiced);
+    driver!.onFrame?.(voiced);
+    expect(ws.sentBinaryCount()).toBe(0);
     await waitFor(() => {
-      expect(screen.getByText("ignored (no name)")).toBeDefined();
+      expect(screen.getByRole("status").textContent).toBe("Speaking");
     });
 
-    // A named, dissimilar interrupt cuts her voice mid-sentence and dismisses
-    // the streaming text.
-    driver!.onSpeechStart();
-    expect(mockStopSpeaking).not.toHaveBeenCalled();
-    voice(8);
-    ws.serverMessage({
-      type: "transcript",
-      transcript: "Vale, book it November first",
-    });
-    expect(mockStopSpeaking).toHaveBeenCalledTimes(1);
-    expect(mockStopSpeaking).toHaveBeenCalledWith("barge-in");
-    await waitFor(() => {
-      expect(screen.queryByText("Booking you for tomorrow at three.")).toBeNull();
-    });
-    driver!.onSpeechEnd();
-    expect(endStreams()).toBe(3);
-    ws.serverMessage({ type: "reply-delta", text: "Done, " });
-    ws.serverMessage({ type: "reply", text: "Done, booking you in." });
-    await waitFor(() => {
-      expect(screen.getByText("Done, booking you in.")).toBeDefined();
-    });
-    ws.serverMessage({ type: "done" });
-
-    // Speech within 500 ms after her last audible frame still counts as
-    // audible: no cut, no dismiss.
-    driver!.onFrame?.(frame);
+    // She settles: the same session captures again, no reconnect, no cut.
     speakAudibleRef.current = false;
     driver!.onSpeechStart();
-    voice(8);
-    expect(mockStopSpeaking).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("Done, booking you in.")).toBeDefined();
+    expect(mockStopSpeaking).not.toHaveBeenCalled();
+    for (let i = 0; i < 8; i += 1) driver!.onFrame?.(voiced);
     driver!.onSpeechEnd();
-    expect(endStreams()).toBe(4);
-    ws.serverMessage({ type: "ignored" });
-    ws.serverMessage({ type: "done" });
+    expect(ws.sentBinaryCount()).toBeGreaterThan(0);
+    expect(FakeWs.instances).toHaveLength(1);
+    // The posted turn claimed the state, so the mic-resume timer leaves it.
     await waitFor(() => {
-      expect(screen.getByText("Done, booking you in.")).toBeDefined();
+      expect(screen.getByRole("status").textContent).toBe("Thinking");
     });
   });
 
@@ -442,7 +382,7 @@ describe("voice engine switch", () => {
     ).toBeTruthy();
   });
 
-  it("transcribes its audible reply as an ignored echo turn", async () => {
+  it("holds her reply through speaker echo, then serves the next turn", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
@@ -487,38 +427,42 @@ describe("voice engine switch", () => {
     });
     ws.serverMessage({ type: "done" });
 
-    // The speaker echo trips speech start while the reply is audible: a
-    // partial echo naming her is still echo, so no cut, no dismiss.
+    // The speaker echo trips speech start while the reply is audible:
+    // nothing is captured and the reply stays put.
     speakAudibleRef.current = true;
     mockStopSpeaking.mockClear();
     mockSpeak.mockClear();
     const playedBefore = played.length;
     const binaryBefore = ws.sentBinaryCount();
+    const stringsBefore = ws.sentStrings().length;
+    driver!.onSpeechStart();
+    expect(mockStopSpeaking).not.toHaveBeenCalled();
+    expect(screen.getByText("Vale, I hear you.")).toBeDefined();
+    voice(8);
+    expect(ws.sentBinaryCount()).toBe(binaryBefore);
+    // The echo ends with the reply still playing: no turn, no wire traffic.
+    driver!.onSpeechEnd();
+    expect(ws.sentStrings()).toHaveLength(stringsBefore);
+    expect(FakeWs.instances).toHaveLength(1);
+    expect(screen.getByText("Vale, I hear you.")).toBeDefined();
+
+    // She settles: the same session captures again, no reconnect, no cut.
+    speakAudibleRef.current = false;
     driver!.onSpeechStart();
     expect(mockStopSpeaking).not.toHaveBeenCalled();
     expect(screen.getByText("Vale, I hear you.")).toBeDefined();
     voice(8);
     expect(ws.sentBinaryCount()).toBeGreaterThan(binaryBefore);
-    ws.serverMessage({ type: "transcript", transcript: "Vale, I" });
-    expect(mockStopSpeaking).not.toHaveBeenCalled();
-    expect(screen.getByText("Vale, I hear you.")).toBeDefined();
-
-    // The echo ends with the reply still playing: transcribed and ignored
-    // server-side, the original reply untouched, nothing new spoken.
-    const endStreamsBefore = ws
-      .sentStrings()
-      .filter((raw) => raw.includes("endStream")).length;
     driver!.onSpeechEnd();
-    expect(
-      ws.sentStrings().filter((raw) => raw.includes("endStream")),
-    ).toHaveLength(endStreamsBefore + 1);
-    ws.serverMessage({ type: "ignored" });
+    ws.serverMessage({ type: "reply", text: "On it." });
+    await waitFor(() => {
+      expect(screen.getByText("On it.")).toBeDefined();
+    });
     ws.serverMessage({ type: "done" });
-    // No second socket, the original reply untouched, nothing new spoken.
+    // One session socket all along; her first reply stood until the next
+    // turn replaced it, and the new reply is spoken, never cut.
     expect(FakeWs.instances).toHaveLength(1);
-    expect(screen.getByText("Vale, I hear you.")).toBeDefined();
-    expect(played).toHaveLength(playedBefore);
-    expect(mockSpeak).not.toHaveBeenCalled();
+    expect(played).toHaveLength(playedBefore + 1);
     expect(mockStopSpeaking).not.toHaveBeenCalled();
   });
 });
