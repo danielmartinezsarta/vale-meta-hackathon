@@ -1228,6 +1228,82 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
       finalTranscript = "vale, live from the bridge";
     }
   });
+
+  it("a voice-majority turn with her mute time on the clock reaches the gate", async () => {
+    // Incident 23:04:27Z: "el servicio semipermanente" died as junk:true
+    // with mutedMs 8836 on 2800 ms of audio, yet the VAD counted 4320 ms
+    // of voice at peak 0.12 and the 90 s window was open (14 s after the
+    // previous reply). The flatness bar misfires on loud sustained vowels
+    // (WAV peak/overall 2.83 < 3), so voice evidence must beat mute
+    // accounting: a turn with more voiced audio than audio reaches the
+    // wake gate instead of the junk bin.
+    receivedEndStream = 0;
+    const agent = vi.fn(fakeAgent("Servicio semipermanente, on screen."));
+    // Named, so only the junk gate can stop it: without the voice guard
+    // this turn dies as junk and the agent never runs.
+    finalTranscript = "vale, servicio semipermanente";
+    const lines: string[] = [];
+    const logSpy = vi
+      .spyOn(console, "log")
+      .mockImplementation((line: string) => {
+        lines.push(String(line));
+      });
+    try {
+      const browser = new FakeBrowser();
+      const client = `conv-voice-${Date.now()}`;
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: client,
+        metaUrl: url,
+        runAgent: agent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      // 2.8 s of loud flat-ish voice after a long mute, like the
+      // incident WAV (flat ratio 2.83, peak 0.12): without the voice
+      // guard the flatness bar calls it room tone.
+      for (let i = 0; i < 70; i++) {
+        browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      }
+      browser.peerMessage(
+        Buffer.from(
+          JSON.stringify({
+            type: "endStream",
+            peakLevel: 0.12,
+            voicedMs: 1300,
+            mutedMs: 2600,
+            valeState: "thinking",
+            lostBlocks: 0,
+            srcBlocks: 200,
+          }),
+        ),
+      );
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "reply"),
+        ).toBe(true);
+      });
+      expect(agent).toHaveBeenCalledTimes(1);
+      const served = lines
+        .filter((line) => line.startsWith("[voice-turn] "))
+        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
+      const entry = served.find(
+        (e) => e.transcript === "vale, servicio semipermanente",
+      );
+      expect(entry).toBeDefined();
+      expect(entry.ignored).toBe(false);
+      expect(entry.junk).toBeUndefined();
+      browser.close(1000, "test done");
+    } finally {
+      logSpy.mockRestore();
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
 });
 
 describe("empty finals (noise, not Daniel)", () => {

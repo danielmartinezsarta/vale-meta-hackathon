@@ -860,7 +860,15 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             pcmBytes.byteOffset,
             Math.floor(pcmBytes.length / 2),
           );
-          if (isMutedJunkTurn(pcm, turnStats.mutedMs, audioMs)) {
+          // Voice beats mute accounting: the VAD counted more voiced audio
+          // than the turn contains (incident 23:04:27Z: 4320 ms of voice
+          // in 2800 ms of audio beside 8836 ms of her mute time on the
+          // clock), which proves the mute span leaked in from her reply.
+          // Only mute-dominant room tone is junk; a voice-majority turn
+          // always reaches the wake gate, which owns the window.
+          const voicedMs = turnStats.voicedMs ?? 0;
+          const voiceMajority = voicedMs > audioMs;
+          if (!voiceMajority && isMutedJunkTurn(pcm, turnStats.mutedMs, audioMs)) {
             logTurn({
               language: turnLanguage,
               ts: new Date(speechEndAt).toISOString(),

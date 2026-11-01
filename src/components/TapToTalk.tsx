@@ -512,7 +512,10 @@ export function TapToTalk() {
             return;
           }
           handleVadCandidate(currentId);
-          removeTurn(currentId);
+          // An empty turn never deletes a bubble: prune only contentless
+          // rows, so history survives silence and only the trailing
+          // empty row churns.
+          pruneIfEmpty(currentId);
           openTurn();
         }, NO_SPEECH_TIMEOUT_MS);
       };
@@ -548,7 +551,9 @@ export function TapToTalk() {
 
       // A failed turn ends the session so the user can tap to retry.
       const failTurn = (id: number, message: string, code: string | null = null) => {
-        if (!finalReceivedRef.current.has(id)) removeTurn(id);
+        // A failed turn may still show what was heard: only a contentless
+        // row goes away, never a bubble with interim text.
+        if (!finalReceivedRef.current.has(id)) pruneIfEmpty(id);
         endSessionWithAlert(message, code);
       };
 
@@ -589,8 +594,13 @@ export function TapToTalk() {
             if (typeof message.transcript !== "string") return;
             if ((message as { final?: unknown }).final === true) {
               finalReceivedRef.current.add(id);
-              if (message.transcript.trim() !== "") silentStreakRef.current = 0;
-              patchTurn(id, { final: message.transcript, interim: "" });
+              // An empty final never wipes a shown interim: the done path
+              // prunes contentless rows, and a row with interim text stays
+              // as heard instead of blanking.
+              if (message.transcript.trim() !== "") {
+                silentStreakRef.current = 0;
+                patchTurn(id, { final: message.transcript, interim: "" });
+              }
             } else {
               patchTurn(id, { interim: message.transcript });
             }
@@ -925,9 +935,13 @@ export function TapToTalk() {
               onInterim: (transcript) => patchTurn(id, { interim: transcript }),
               onFinal: (transcript) => {
                 // The turn ends at `done`; reply/notice/error follow on this stream.
+                // An empty final never wipes a shown interim: the done path
+                // prunes contentless rows instead.
                 finalReceivedRef.current.add(id);
-                if (transcript.trim() !== "") silentStreakRef.current = 0;
-                patchTurn(id, { final: transcript, interim: "" });
+                if (transcript.trim() !== "") {
+                  silentStreakRef.current = 0;
+                  patchTurn(id, { final: transcript, interim: "" });
+                }
               },
               onErrorEvent: (message, code) => {
                 controllersRef.current.delete(controller);
