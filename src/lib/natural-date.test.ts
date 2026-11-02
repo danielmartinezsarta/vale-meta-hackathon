@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { bogotaDay, parseNaturalDate } from "./natural-date";
+import { bogotaDay, bogotaTime, formatNaturalDateTime, hour12, parseNaturalDate } from "./natural-date";
 import type { NaturalDateAnchor } from "./natural-date";
 
 // Monday on the Bogota calendar; the salon clock reads 3 PM.
@@ -280,5 +280,25 @@ describe("bogotaDay", () => {
     // 02:00 UTC is still 21:00 the day before in Bogota (UTC-5, no DST).
     expect(bogotaDay(new Date("2026-11-02T02:00:00Z"))).toBe("2026-11-01");
     expect(bogotaDay(new Date("2026-11-02T12:00:00Z"))).toBe("2026-11-02");
+  });
+});
+
+describe("bogotaTime and natural sheets (trial 9.7)", () => {
+  it("reads the current Bogota time, not the server clock", () => {
+    expect(bogotaTime(new Date("2026-11-02T04:30:00.000Z"))).toBe("23:30");
+    expect(bogotaTime(new Date("2026-11-02T12:00:00.000Z"))).toBe("07:00");
+  });
+
+  it("says sheet dates in words, never ISO", () => {
+    expect(formatNaturalDateTime("2026-11-13", "17:00")).toBe("Friday the 13th at 5 PM");
+    expect(formatNaturalDateTime("2026-11-13", "09:05")).toBe("Friday the 13th at 9:05 AM");
+    expect(formatNaturalDateTime("2026-11-02", "12:00")).toBe("Monday the 2nd at 12 PM");
+  });
+
+  it("reads whole hours without minutes", () => {
+    expect(hour12("00:00")).toBe("12 AM");
+    expect(hour12("12:00")).toBe("12 PM");
+    expect(hour12("15:00")).toBe("3 PM");
+    expect(hour12("09:30")).toBe("9:30 AM");
   });
 });

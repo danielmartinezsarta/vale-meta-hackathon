@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   checkWake,
+  isBareNameCall,
   isCloseSheetIntent,
   isGreetingOnly,
   isUndoIntent,
@@ -366,5 +367,29 @@ describe("isCloseSheetIntent (spoken sheet close)", () => {
     expect(isCloseSheetIntent("no la cierres todavía")).toBe(false);
     expect(isCloseSheetIntent("book Ana for tomorrow")).toBe(false);
     expect(isCloseSheetIntent("")).toBe(false);
+  });
+});
+
+describe("bare name calls (trial 9.1)", () => {
+  it("spots the name alone, however the ASR spells it", () => {
+    expect(isBareNameCall("Vale")).toBe(true);
+    expect(isBareNameCall("vale")).toBe(true);
+    expect(isBareNameCall("valley")).toBe(true);
+    expect(isBareNameCall("vale,")).toBe(true);
+    expect(isBareNameCall("vale vale")).toBe(true);
+  });
+
+  it("ignores anything past the name", () => {
+    for (const turn of [
+      "",
+      "vale book Ana",
+      "vale, book Ana next Friday",
+      "5 PM for a gel removal",
+      "yes",
+      "no",
+      "hola",
+    ]) {
+      expect(isBareNameCall(turn)).toBe(false);
+    }
   });
 });

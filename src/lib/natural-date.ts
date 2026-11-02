@@ -39,6 +39,54 @@ export function bogotaDay(when: Date): string {
   }).format(when);
 }
 
+/** Current time on the America/Bogota clock for `when` (HH:MM, 24h). */
+export function bogotaTime(when: Date): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Bogota",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(when);
+}
+
+const ORDINALS: Record<number, string> = {
+  1: "1st",
+  2: "2nd",
+  3: "3rd",
+};
+
+/** "13" -> "13th": the day words Vale says on screen and aloud. */
+function ordinal(day: number): string {
+  return ORDINALS[day] ?? `${day}th`;
+}
+
+/** "17:00" -> "5 PM": the hour words Vale says and shows. */
+export function hour12(time: string): string {
+  const [rawHour, minute] = time.split(":");
+  const hour = Number(rawHour);
+  if (!Number.isInteger(hour) || minute === undefined) return time;
+  const suffix = hour < 12 ? "AM" : "PM";
+  const twelve = hour % 12 === 0 ? 12 : hour % 12;
+  return minute === "00" ? `${twelve} ${suffix}` : `${twelve}:${minute} ${suffix}`;
+}
+
+/**
+ * Natural EN words for a Bogota day + time, for sheets and speech.
+ * "2026-11-13" + "17:00" becomes "Friday the 13th at 5 PM".
+ * Never ISO: sheets and Vale both show this, never the raw stamps.
+ */
+export function formatNaturalDateTime(day: string, time: string): string {
+  const parsed = parseYmd(day);
+  if (parsed === null || !isCalendarDay(parsed) || !TIME_RE.test(time)) {
+    return `${day} ${time}`;
+  }
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Bogota",
+    weekday: "long",
+  }).format(new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day, 12)));
+  return `${weekday} the ${ordinal(parsed.day)} at ${hour12(time)}`;
+}
+
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 
