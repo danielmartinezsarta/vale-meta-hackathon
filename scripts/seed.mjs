@@ -148,14 +148,14 @@ for (const service of seed.services) {
 for (const note of seed.demo_notes ?? []) {
   const clientId = clientIds.get(note.client);
   if (clientId === undefined) continue;
-  const kind = note.kind === "health" ? "health" : "general";
+  const kind = note.kind === "health_note" || note.kind === "health" ? "health_note" : "note";
   const existing = db.prepare("SELECT id FROM notes WHERE client_id = ? AND kind = ?").get(clientId, kind);
   if (!existing) {
     db.prepare("INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES (?, ?, ?, ?)").run(
       clientId,
       note.text,
       kind,
-      note.private === true || kind === "health" ? 1 : 0,
+      note.private === true || kind === "health_note" ? 1 : 0,
     );
   }
 }
