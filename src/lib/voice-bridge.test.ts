@@ -499,7 +499,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     browser.close(1000, "test done");
   });
 
-  it("treats a tap wake frame like the name on a cold window", async () => {
+  it("a tap wake frame no longer opens the window", async () => {
     const agent = vi.fn(fakeAgent());
     finalTranscript = "close the session";
     const browser = new FakeBrowser();
@@ -521,10 +521,13 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     browser.peerMessage(JSON.stringify({ type: "endStream" }));
     await vi.waitFor(() => {
       expect(
-        browser.frames().some((frame) => frame.type === "reply"),
+        browser.frames().some((frame) => frame.type === "ignored"),
       ).toBe(true);
     });
-    expect(agent).toHaveBeenCalledTimes(1);
+    expect(agent).not.toHaveBeenCalled();
+    expect(
+      browser.frames().some((frame) => frame.type === "reply"),
+    ).toBe(false);
     browser.close(1000, "test done");
   });
 
