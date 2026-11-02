@@ -230,7 +230,6 @@ function ensureColumn(db: ValeDb, table: string, column: string, definition: str
 /** Add columns that older databases predate. Idempotent. */
 export function migrateDatabase(db: ValeDb): void {
   ensureColumn(db, "sessions", "photo_path", "TEXT");
-  ensureColumn(db, "appointments", "reference_photo_ref", "TEXT");
 }
 
 /** Create tables and insert the invented seed. Idempotent. */

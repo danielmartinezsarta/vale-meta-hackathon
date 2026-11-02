@@ -69,7 +69,7 @@ function seedReadySession(dir: string): { sessionId: number; appointmentId: numb
   const appointmentId = Number(
     db
       .prepare(
-        "INSERT INTO appointments (client_id, service_id, day, time, reference_photo_ref) VALUES (1, 1, '2026-11-03', '10:00', ?)",
+        "INSERT INTO appointments (client_id, service_id, day, time, reference_photo) VALUES (1, 1, '2026-11-03', '10:00', ?)",
       )
       .run(refPath).lastInsertRowid,
   );
