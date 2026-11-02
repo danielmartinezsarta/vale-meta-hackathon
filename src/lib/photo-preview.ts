@@ -74,7 +74,8 @@ function previewError(code: string, message: string): Error {
  * Nails-only edit prompt for the two-image form. The first image is the
  * before photo to edit; the second image is the appointment reference
  * design source. Keeps hand, skin, ring, background, light and framing
- * identical, and keeps the sparkle watermark mark visible (never crop it).
+ * identical. The sparkle mark is drawn by the UI from aiPreview, so the
+ * prompt never asks the model for any mark.
  * There is intentionally no mask parameter: the model finds the nails.
  */
 export function buildPreviewPrompt(
@@ -87,8 +88,6 @@ export function buildPreviewPrompt(
     "The first image is the before photo to edit; the second image is the appointment reference design.",
     "Apply the reference design onto the before nails, only inside the nails.",
     "Keep hand, skin, ring, background, light and framing identical to the before photo.",
-    "Keep the sparkle watermark mark fully visible; do not crop or cover it.",
-    "Keep the small sparkle watermark mark in the bottom-right corner fully visible; do not crop, move, or cover it.",
   ].join(" ");
 }
 
