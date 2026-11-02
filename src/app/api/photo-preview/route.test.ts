@@ -9,7 +9,7 @@ import {
   previewsDir,
   sessionPhotosDir,
 } from "@/lib/session-photo";
-import { appendPreviewCost } from "@/lib/photo-preview";
+import { appendPreviewCost, PREVIEW_ENDPOINT } from "@/lib/photo-preview";
 import { POST } from "./route";
 
 const savedPhotoDir = process.env.VALE_PHOTO_DIR;
@@ -83,12 +83,72 @@ const PREVIEW_PAYLOAD = {
   usage: { input_tokens: 10, output_tokens: 20 },
 };
 
+interface BoxSpec {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  w: number;
+  h: number;
+}
+
+const FIVE_BOXES: BoxSpec[] = [
+  { x1: 0, y1: 0, x2: 100, y2: 100, w: 1000, h: 1000 },
+  { x1: 200, y1: 100, x2: 300, y2: 200, w: 1000, h: 1000 },
+  { x1: 400, y1: 200, x2: 500, y2: 300, w: 1000, h: 1000 },
+  { x1: 600, y1: 300, x2: 700, y2: 400, w: 1000, h: 1000 },
+  { x1: 800, y1: 400, x2: 900, y2: 500, w: 1000, h: 1000 },
+];
+
+const FOUR_BOXES: BoxSpec[] = FIVE_BOXES.slice(0, 4);
+
+const SHIFTED_BOXES: BoxSpec[] = FIVE_BOXES.map((box, index) =>
+  index === 2
+    ? { ...box, x1: box.x1 + 300, x2: box.x2 + 300 }
+    : { ...box },
+);
+
+function boxText(boxes: BoxSpec[]): string {
+  return (
+    boxes
+      .map((box) => `nails <|box;x1=${box.x1};y1=${box.y1};x2=${box.x2};y2=${box.y2};w=${box.w};h=${box.h}|>`)
+      .join(" ") + " done"
+  );
+}
+
+function samResponse(text: string): Response {
+  return jsonResponse({
+    id: "sam-1",
+    output: [{ type: "message", content: [{ type: "output_text", text }] }],
+  });
+}
+
+/**
+ * Dispatching stub: Image endpoint calls get the preview payload, every
+ * other call (SAM segmentation) gets the next queued box text. Returns the
+ * mock so tests can count Image calls by endpoint.
+ */
+function stubFlows(samTexts: string[]) {
+  let samCalls = 0;
+  const fetchMock = vi.fn(async (url: unknown, _init?: RequestInit) => {
+    if (String(url) === PREVIEW_ENDPOINT) return jsonResponse(PREVIEW_PAYLOAD);
+    const text = samTexts[Math.min(samCalls, samTexts.length - 1)];
+    samCalls += 1;
+    return samResponse(text);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function imageCallCount(fetchMock: ReturnType<typeof stubFlows>): number {
+  return fetchMock.mock.calls.filter((call) => String(call[0]) === PREVIEW_ENDPOINT).length;
+}
+
 describe("POST /api/photo-preview", () => {
-  it("makes one two-image call and returns the JSON shape", async () => {
+  it("makes one two-image call and returns checks with secondCall false", async () => {
     useTmpPhotos();
     const { sessionId } = seedReadySession(photoDir);
-    const fetchMock = vi.fn(async (_url: unknown, _init?: RequestInit) => jsonResponse(PREVIEW_PAYLOAD));
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubFlows([boxText(FIVE_BOXES), boxText(FIVE_BOXES)]);
     const res = await POST(previewRequest(sessionId));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
@@ -98,14 +158,72 @@ describe("POST /api/photo-preview", () => {
       estimatedCostUsd: 0.1,
       aiPreview: true,
       disclaimer: "AI preview, the real result may vary",
+      preCheck: { nailCount: 5, boxes: FIVE_BOXES },
+      postCheck: { nailCount: 5, matched: true },
+      secondCall: false,
     });
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const sent = (fetchMock.mock.calls[0][1] as unknown as RequestInit).body as FormData;
+    expect(imageCallCount(fetchMock)).toBe(1);
+    const imageCall = fetchMock.mock.calls.find((call) => String(call[0]) === PREVIEW_ENDPOINT);
+    const sent = (imageCall?.[1] as unknown as RequestInit).body as FormData;
     expect(sent.getAll("image")).toHaveLength(2);
     expect(existsSync(join(previewsDir(), `preview_${sessionId}.png`))).toBe(true);
     const lines = readFileSync(previewCostLogPath(), "utf8").trim().split("\n");
     expect(lines).toHaveLength(1);
     expect((JSON.parse(lines[0]) as { costUsd: number }).costUsd).toBe(0.1);
+  });
+
+  it("returns 422 with zero Image calls when the pre-check sees 4 nails", async () => {
+    useTmpPhotos();
+    const { sessionId } = seedReadySession(photoDir);
+    const fetchMock = stubFlows([boxText(FOUR_BOXES)]);
+    const res = await POST(previewRequest(sessionId));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({
+      error: "I need a photo with all five nails visible.",
+      code: "E-NO-NAILS",
+      sam: { nailCount: 4, boxes: FOUR_BOXES },
+    });
+    expect(imageCallCount(fetchMock)).toBe(0);
+  });
+
+  it("runs exactly one more Image call on post-check mismatch and returns secondCall true", async () => {
+    useTmpPhotos();
+    const { sessionId } = seedReadySession(photoDir);
+    const fetchMock = stubFlows([
+      boxText(FIVE_BOXES),
+      boxText(SHIFTED_BOXES),
+      boxText(FIVE_BOXES),
+    ]);
+    const res = await POST(previewRequest(sessionId));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(
+      expect.objectContaining({
+        ok: true,
+        postCheck: { nailCount: 5, matched: true },
+        secondCall: true,
+      }),
+    );
+    expect(imageCallCount(fetchMock)).toBe(2);
+  });
+
+  it("never exceeds 2 Image calls even when the retry still mismatches", async () => {
+    useTmpPhotos();
+    const { sessionId } = seedReadySession(photoDir);
+    const fetchMock = stubFlows([
+      boxText(FIVE_BOXES),
+      boxText(SHIFTED_BOXES),
+      boxText(SHIFTED_BOXES),
+    ]);
+    const res = await POST(previewRequest(sessionId));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(
+      expect.objectContaining({
+        ok: true,
+        postCheck: { nailCount: 5, matched: false },
+        secondCall: true,
+      }),
+    );
+    expect(imageCallCount(fetchMock)).toBe(2);
   });
 
   it("rejects unknown sessions with E-NO-SESSION without calling the model", async () => {
@@ -170,13 +288,12 @@ describe("POST /api/photo-preview", () => {
       { inputTokens: 0, outputTokens: 0, elapsedMs: 1, costUsd: 2.0 },
       previewCostLogPath(),
     );
-    const fetchMock = vi.fn(async () => jsonResponse(PREVIEW_PAYLOAD));
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubFlows([boxText(FIVE_BOXES)]);
     const res = await POST(previewRequest(sessionId));
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual(
       expect.objectContaining({ code: "E-BUDGET" }),
     );
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(imageCallCount(fetchMock)).toBe(0);
   });
 });
