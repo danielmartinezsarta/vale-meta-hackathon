@@ -63,6 +63,5 @@ export async function POST(request: Request): Promise<Response> {
     sessionId,
     slot,
     photoUrl: `/api/photos?file=${encodeURIComponent(name)}`,
-    photoPath,
   });
 }
