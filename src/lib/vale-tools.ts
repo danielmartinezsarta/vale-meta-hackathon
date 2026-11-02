@@ -213,7 +213,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "client_card_show",
-    description: "Show the full client card: contact, visits with photos, upcoming appointments. A health alert shows on screen only, never spoken.",
+    description: "Show the full client card: contact, visits and notes. A health alert shows on screen only, never spoken.",
     parameters: {
       type: "object",
       properties: { name: { type: "string", description: "Client name, approximate is fine." } },
@@ -1409,7 +1409,14 @@ export function createAppointment(
   return {
     ok: true,
     message,
-    data: { appointment_id: id, day: resolved.day, time: resolved.time, off_hours: reasons.length > 0 },
+    data: {
+      appointment_id: id,
+      client: client.row.name,
+      service: service.row.name,
+      day: resolved.day,
+      time: resolved.time,
+      off_hours: reasons.length > 0,
+    },
   };
 }
 
@@ -1538,7 +1545,13 @@ export function moveAppointment(
   return {
     ok: true,
     message: language === "en" ? `Moved: ${current.client} ${natural}.` : `Movida: ${current.client} ${natural}.`,
-    data: { appointment_id: current.id, day: resolved.day, time: resolved.time },
+    data: {
+      appointment_id: current.id,
+      client: current.client,
+      service: current.service,
+      day: resolved.day,
+      time: resolved.time,
+    },
   };
 }
 

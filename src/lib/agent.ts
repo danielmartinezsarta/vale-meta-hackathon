@@ -168,6 +168,65 @@ export function sessionContext(db: ValeDb, now = new Date()): string {
 }
 
 /** One history turn as a Responses input message. */
+/**
+ * Tool call to UI contract keys. The contract owns widget.ts: this maps
+ * each 018 tool to the dispatch key, args and data it renders. Tools
+ * without a sheet map to null; the agenda speaks and bubbles only.
+ */
+function contractWidgetFor(
+  tool: string,
+  args: Record<string, unknown>,
+  data: unknown,
+): { tool: string; args: Record<string, unknown>; data: unknown } | null {
+  const info = (data ?? {}) as Record<string, unknown>;
+  switch (tool) {
+    case "goal_show":
+      return { tool: "goal_progress", args: {}, data };
+    case "client_card_show": {
+      const card = (info.card ?? {}) as { id?: unknown; name?: unknown; notes?: unknown };
+      const notes = Array.isArray(card.notes) ? card.notes : [];
+      return {
+        tool: "find_client",
+        args: { client_name: typeof card.name === "string" ? card.name : "" },
+        data: {
+          id: card.id,
+          name: card.name,
+          notes: notes.map((note) => {
+            const entry = (note ?? {}) as { kind?: unknown; text?: unknown };
+            return { kind: entry.kind === "health_note" ? "health" : "general", text: entry.text };
+          }),
+        },
+      };
+    }
+    case "client_note_add":
+      return {
+        tool: "add_note",
+        args: { ...args, kind: args.kind === "health_note" ? "health" : "general" },
+        data: null,
+      };
+    case "session_quote":
+      return { tool: "quote_price", args: {}, data };
+    case "agenda_create_appointment":
+      if (typeof info.appointment_id !== "number") return null;
+      return {
+        tool: "create_appointment",
+        args: { client_name: info.client, service_name: info.service, day: info.day, time: info.time },
+        data: null,
+      };
+    case "agenda_move_appointment":
+      if (typeof info.appointment_id !== "number") return null;
+      return {
+        tool: "move_appointment",
+        args: { client_name: info.client, service_name: info.service, day: info.day, time: info.time },
+        data: null,
+      };
+    case "session_close":
+      return { tool: "close_session", args: {}, data };
+    default:
+      return null;
+  }
+}
+
 function historyItem(turn: HistoryTurn): Record<string, unknown> {
   // The API takes input_text on user messages and output_text on assistant
   // ones (probed 2026-10-31: input_text on assistant is a 400); the role
@@ -560,14 +619,17 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
         };
       } else clearPendingAction(slotKey);
     } else {
-      // The screen card mirrors the tool call, never the reply text.
-      const card = buildWidget(
+      // The screen card mirrors the tool call, never the reply text. Tool
+      // names map to the UI contract keys; tools without a sheet map null.
+      const mapped = contractWidgetFor(
         call.name,
         parsed,
         (toolResult as { data?: unknown }).data ?? null,
-        db,
       );
-      if (card) widget = card;
+      if (mapped) {
+        const card = buildWidget(mapped.tool, mapped.args, mapped.data, db);
+        if (card) widget = card;
+      }
       // A quoted total waits for Accept: the yes registers it, like any
       // other proposal. Stored on success, never on a doubt.
       const proposal = buildPendingActions(db, call.name, parsed, toolResult);
