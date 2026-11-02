@@ -33,6 +33,7 @@ import {
 import { uiStrings } from "@/lib/vale-ui";
 import type { Widget } from "@/lib/widget";
 import { AwakeScreen, type AwakeBubble } from "@/components/AwakeScreen";
+import { SessionScreen } from "@/components/SessionScreen";
 import { VoiceDebugView } from "@/components/VoiceDebugView";
 import { useScreenMode } from "@/components/useScreenMode";
 
@@ -1501,6 +1502,37 @@ export function TapToTalk({
     if (turn.reply?.trim()) {
       bubbles.push({ id: `turn-${turn.id}-vale`, text: turn.reply, from: "vale" });
     }
+  }
+
+  const session = board?.session ?? null;
+  const photoType = (type: "before" | "final") => {
+    try {
+      window.dispatchEvent(new CustomEvent("photo:type", { detail: { type } }));
+    } catch {
+      /* photo flows listen for this; no listener yet is fine */
+    }
+  };
+
+  if (session) {
+    return (
+      <SessionScreen
+        mode={mode}
+        robotState={valeUiState}
+        level={valeUiState === "listening" ? level : undefined}
+        bubbles={bubbles}
+        widget={widget}
+        language={language}
+        session={session}
+        muted={muted}
+        notice={notice}
+        alert={alert}
+        onToggleMute={toggleMute}
+        onSleep={sleep}
+        onPhotoType={photoType}
+        onCloseWidget={() => showWidget(null)}
+        onVote={(vote) => castVoteRef.current(vote)}
+      />
+    );
   }
 
   return (
