@@ -120,6 +120,23 @@ describe("buildWidget (typed payloads per kind)", () => {
     }
   });
 
+  it("fills the card health block from the store past the masked feed", () => {
+    const store = {
+      prepare: (sql: string) =>
+        sql.includes("FROM notes")
+          ? { get: () => null, all: () => [{ text: "Allergic to monomer" }] }
+          : { get: () => null, all: () => [] },
+    };
+    expect(
+      buildWidget(
+        "find_client",
+        {},
+        { id: 186, name: "David", notes: [{ kind: "health", text: null, masked: true }] },
+        store,
+      )?.data,
+    ).toMatchObject({ healthNotes: ["Allergic to monomer"] });
+  });
+
   it("returns no sheet for the day plan and session open", () => {
     expect(buildWidget("list_today", {}, { appointments: [] }, NO_DB)).toBeNull();
     expect(buildWidget("next_appointment", {}, {}, NO_DB)).toBeNull();

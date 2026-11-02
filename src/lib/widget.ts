@@ -285,6 +285,19 @@ function contactOf(
   }
 }
 
+/** Health text is screen-only: the tool feed stays masked for the model. */
+function healthNotesOf(db: CardStore | undefined, id: number): string[] {
+  if (!db) return [];
+  try {
+    const rows = db
+      .prepare("SELECT text FROM notes WHERE client_id = ? AND kind = 'health' ORDER BY id")
+      .all(id) as { text?: unknown }[];
+    return rows.map((row) => text(row.text)).filter((line) => line !== "");
+  } catch {
+    return [];
+  }
+}
+
 /** Latest visits first; the card shows three and counts the rest. */
 function visitsOf(
   db: CardStore | undefined,
@@ -342,6 +355,12 @@ function buildCard(
       .filter((line): line is string => typeof line === "string" && line !== "");
   const contact = id === null ? null : contactOf(db, id);
   const history = id === null ? { visits: [], visitsMore: 0 } : visitsOf(db, id);
+  const health =
+    id === null
+      ? strings("health")
+      : [...healthNotesOf(db, id), ...strings("health")].filter(
+          (line, index, lines) => lines.indexOf(line) === index,
+        );
   return {
     kind: "client_card",
     title: widgetTitle("client_card"),
@@ -354,7 +373,7 @@ function buildCard(
       email: contact?.email ?? null,
       visits: history.visits,
       visitsMore: history.visitsMore,
-      healthNotes: strings("health"),
+      healthNotes: health,
       noteTags: strings("general"),
     },
   };
