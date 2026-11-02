@@ -3,6 +3,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { BRAND } from "@/lib/brand-tokens";
 import { homeVars } from "@/lib/vale-theme";
+import { PhoneFrame } from "@/components/PhoneFrame";
 import { useScreenMode } from "@/components/useScreenMode";
 import type { ValeLanguage } from "@/lib/vale-language";
 import type { HomeData } from "@/lib/home-data";
@@ -175,12 +176,14 @@ export function HomeScreen({
   });
   const pct = data?.goal ? Math.min(100, Math.max(0, data.goal.pct)) : 0;
 
+  const vars = homeVars(mode);
   return (
-    <div
-      className={`${styles.vs} ${menuOpen ? styles.open : ""}`}
-      style={homeVars(mode) as CSSProperties}
-    >
-      <div className={styles.bg} aria-hidden="true" />
+    <PhoneFrame background={vars["--vs-bg"]}>
+      <div
+        className={`${styles.vs} ${menuOpen ? styles.open : ""}`}
+        style={vars as CSSProperties}
+      >
+        <div className={styles.bg} aria-hidden="true" />
       <header className={styles.top}>
         <Wordmark />
       </header>
@@ -358,8 +361,9 @@ export function HomeScreen({
               ES
             </label>
           </fieldset>
-        </nav>
+          </nav>
+        </div>
       </div>
-    </div>
+    </PhoneFrame>
   );
 }

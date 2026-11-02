@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type CSSProperties } from "react";
 import { BRAND } from "@/lib/brand-tokens";
+import { PhoneFrame } from "@/components/PhoneFrame";
 import { leftBearing } from "@/lib/text-metrics";
 import styles from "./SplashScreen.module.css";
 
@@ -84,6 +85,7 @@ export function SplashScreen({ onDone, lang = "en", holdMs = 400, className }: P
   }, [holdMs]);
 
   return (
+    <PhoneFrame background={BRAND.color.night}>
     <div
       className={`${styles.splash} ${className ?? ""}`}
       role="img"
@@ -104,6 +106,7 @@ export function SplashScreen({ onDone, lang = "en", holdMs = 400, className }: P
         </div>
       </div>
     </div>
+    </PhoneFrame>
   );
 }
 
