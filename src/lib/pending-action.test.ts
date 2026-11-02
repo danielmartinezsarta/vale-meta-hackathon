@@ -7,6 +7,7 @@ import {
   isConfirmYes,
   isRefusalNo,
   pendingConfirmTitle,
+  quoteAcceptSessionId,
   runPendingActions,
   peekPendingAction,
   setPendingAction,
@@ -75,13 +76,13 @@ describe("pending action", () => {
     expect(
       buildPendingActions(
         db,
-        "log_supply_use",
+        "session_log_supply",
         { name: "Brillo lunar" },
         { ok: false, pendingCreate: "Brillo lunar" },
       ),
     ).toEqual([
       {
-        tool: "log_supply_use",
+        tool: "session_log_supply",
         args: { name: "Brillo lunar", confirm_create: true },
       },
     ]);
@@ -92,14 +93,14 @@ describe("pending action", () => {
     expect(
       buildPendingActions(
         db,
-        "open_session",
+        "session_open",
         { client_name: "Vera", service_name: "Gel removal" },
         { ok: false },
       ),
     ).toEqual([
-      { tool: "create_client", args: { name: "Vera" } },
+      { tool: "client_create", args: { name: "Vera" } },
       {
-        tool: "open_session",
+        tool: "session_open",
         args: { client_name: "Vera", service_name: "Gel removal" },
       },
     ]);
@@ -111,7 +112,7 @@ describe("pending action", () => {
     expect(
       buildPendingActions(
         db,
-        "open_session",
+        "session_open",
         { client_name: "Vera", service_name: "Corte espacial" },
         { ok: false },
       ),
@@ -120,19 +121,90 @@ describe("pending action", () => {
     expect(
       buildPendingActions(
         db,
-        "log_supply_use",
+        "session_log_supply",
         { name: "Brillo lunar" },
         { ok: false, pendingCreate: "Brillo lunar" },
       ),
     ).toBeUndefined();
     // A close-session doubt proposes nothing.
     expect(
-      buildPendingActions(db, "close_session", {}, { ok: false }),
+      buildPendingActions(db, "session_close", {}, { ok: false }),
     ).toBeUndefined();
   });
 
+  it("stores the Accept behind a successful quote (9.2)", () => {
+    const db = freshTestDb();
+    openSession(db, { client_name: "Ana", service_name: "Gel removal" });
+    const open = getOpenSession(db);
+    expect(
+      buildPendingActions(
+        db,
+        "session_quote",
+        {},
+        { ok: true, pendingAccept: { amount: 45, session_id: open?.id } },
+      ),
+    ).toEqual([{ tool: "session_quote_accept", args: { amount: 45, session_id: open?.id } }]);
+    // No Accept, no proposal.
+    expect(buildPendingActions(db, "session_quote", {}, { ok: true })).toBeUndefined();
+    expect(quoteAcceptSessionId([])).toBeNull();
+    expect(
+      quoteAcceptSessionId([{ tool: "session_quote_accept", args: { amount: 45, session_id: 7 } }]),
+    ).toBe(7);
+    db.close();
+  });
+
+  it("stores the confirmed move behind a move doubt (9.2)", () => {
+    const db = freshTestDb();
+    expect(
+      buildPendingActions(
+        db,
+        "agenda_move_appointment",
+        { client_name: "Ana" },
+        {
+          ok: false,
+          pendingMove: { client_name: "Ana", new_day: "2026-11-14", new_time: "17:00" },
+        },
+      ),
+    ).toEqual([
+      {
+        tool: "agenda_move_appointment",
+        args: { client_name: "Ana", new_day: "2026-11-14", new_time: "17:00", confirm_move: true },
+      },
+    ]);
+    db.close();
+  });
+
+  it("stores the confirmed cancel behind a cancel doubt (9.2)", () => {
+    const db = freshTestDb();
+    expect(
+      buildPendingActions(
+        db,
+        "agenda_cancel_appointment",
+        { client_name: "Ana" },
+        { ok: false, pendingCancel: { appointment_id: 9 } },
+      ),
+    ).toEqual([
+      {
+        tool: "agenda_cancel_appointment",
+        args: { appointment_id: 9, confirm_cancel: true },
+      },
+    ]);
+    db.close();
+  });
+
+  it("never stores an appointment proposal: booking asks nothing (decision 2)", () => {
+    const db = freshTestDb();
+    expect(
+      buildPendingActions(db, "agenda_create_appointment", { client_name: "Ana" }, { ok: true }),
+    ).toBeUndefined();
+    expect(
+      buildPendingActions(db, "agenda_create_appointment", { client_name: "Ana" }, { ok: false }),
+    ).toBeUndefined();
+    db.close();
+  });
+
   it("takes once, then expires with the attention window", () => {
-    const actions = [{ tool: "find_client", args: { name: "Ana" } }];
+    const actions = [{ tool: "client_card_show", args: { name: "Ana" } }];
     setPendingAction("pend-take", actions);
     expect(takePendingAction("pend-take")).toEqual(actions);
     expect(takePendingAction("pend-take")).toBeUndefined();
@@ -149,13 +221,13 @@ describe("pending action", () => {
   it("runs the combined proposal: client created and session open", () => {
     const db = freshTestDb();
     const executed = runPendingActions(db, "pend-run", [
-      { tool: "create_client", args: { name: "Vera" } },
+      { tool: "client_create", args: { name: "Vera" } },
       {
-        tool: "open_session",
+        tool: "session_open",
         args: { client_name: "Vera", service_name: "Gel removal" },
       },
     ]);
-    expect(executed.toolUsed).toBe("open_session");
+    expect(executed.toolUsed).toBe("session_open");
     expect(executed.text).toContain("Vera registrada");
     expect(executed.text).toContain("Sesión abierta");
     const clients = db
@@ -172,13 +244,13 @@ describe("pending action", () => {
   it("stops at the first failing step", () => {
     const db = freshTestDb();
     const executed = runPendingActions(db, "pend-partial", [
-      { tool: "create_client", args: { name: "Noa" } },
+      { tool: "client_create", args: { name: "Noa" } },
       {
-        tool: "open_session",
+        tool: "session_open",
         args: { client_name: "Noa", service_name: "Corte espacial" },
       },
     ]);
-    expect(executed.toolUsed).toBe("open_session");
+    expect(executed.toolUsed).toBe("session_open");
     expect(executed.text).toContain("Noa registrada");
     const open = db
       .prepare("SELECT id FROM sessions WHERE ended_at IS NULL")
@@ -191,9 +263,9 @@ describe("pending action", () => {
     expect(
       pendingConfirmTitle(
         [
-          { tool: "create_client", args: { name: "Ana" } },
+          { tool: "client_create", args: { name: "Ana" } },
           {
-            tool: "open_session",
+            tool: "session_open",
             args: { client_name: "Ana", service_name: "Gel refill" },
           },
         ],
@@ -202,31 +274,49 @@ describe("pending action", () => {
     ).toBe("Open session with Ana for Gel refill?");
     expect(
       pendingConfirmTitle(
-        [{ tool: "log_supply_use", args: { name: "Top coat" } }],
+        [{ tool: "session_log_supply", args: { name: "Top coat" } }],
         "en",
       ),
     ).toBe("Log Top coat?");
     expect(
       pendingConfirmTitle(
         [
-          { tool: "create_client", args: { name: "Ana" } },
+          { tool: "client_create", args: { name: "Ana" } },
           {
-            tool: "open_session",
+            tool: "session_open",
             args: { client_name: "Ana", service_name: "Gel refill" },
           },
         ],
         "es",
       ),
     ).toBe("¿Abro sesión con Ana de Gel refill?");
+    expect(
+      pendingConfirmTitle(
+        [{ tool: "session_quote_accept", args: { amount: 45, session_id: 3 } }],
+        "en",
+      ),
+    ).toBe("Register the payment?");
+    expect(
+      pendingConfirmTitle(
+        [{ tool: "agenda_move_appointment", args: { client_name: "Ana" } }],
+        "en",
+      ),
+    ).toBe("Move Ana's appointment?");
+    expect(
+      pendingConfirmTitle(
+        [{ tool: "agenda_cancel_appointment", args: { appointment_id: 9 } }],
+        "en",
+      ),
+    ).toBe("Cancel the appointment?");
     expect(pendingConfirmTitle([], "en")).toBe("Should I save it?");
   });
 
   it("peeks without consuming and forgets stale proposals", () => {
-    setPendingAction("pend-peek", [{ tool: "create_client", args: { name: "Noa" } }], 1000);
+    setPendingAction("pend-peek", [{ tool: "client_create", args: { name: "Noa" } }], 1000);
     expect(peekPendingAction("pend-peek", 2000)).toBe(true);
     expect(takePendingAction("pend-peek", 2000)).toHaveLength(1);
     expect(peekPendingAction("pend-peek", 2000)).toBe(false);
-    setPendingAction("pend-peek-stale", [{ tool: "create_client", args: { name: "Noa" } }], 1000);
+    setPendingAction("pend-peek-stale", [{ tool: "client_create", args: { name: "Noa" } }], 1000);
     expect(peekPendingAction("pend-peek-stale", 1000 + 60_000)).toBe(false);
     expect(takePendingAction("pend-peek-stale", 1000 + 60_000)).toBeUndefined();
   });
@@ -236,7 +326,7 @@ describe("pending action", () => {
     openSession(db, { client_name: "Ana", service_name: "Gel refill" });
     const proposal = buildPendingActions(
       db,
-      "open_session",
+      "session_open",
       { client_name: "Chloe", service_name: "Gel refill" },
       {
         ok: false,
@@ -244,10 +334,10 @@ describe("pending action", () => {
       },
     );
     expect(proposal).toEqual([
-      { tool: "close_session", args: {} },
-      { tool: "create_client", args: { name: "Chloe" } },
+      { tool: "session_close", args: {} },
+      { tool: "client_create", args: { name: "Chloe" } },
       {
-        tool: "open_session",
+        tool: "session_open",
         args: { client_name: "Chloe", service_name: "Gel refill" },
       },
     ]);
@@ -256,7 +346,7 @@ describe("pending action", () => {
     );
     setPendingAction("pend-switch", proposal ?? []);
     const executed = runPendingActions(db, "pend-switch", takePendingAction("pend-switch") ?? []);
-    expect(executed.toolUsed).toBe("open_session");
+    expect(executed.toolUsed).toBe("session_open");
     const open = getOpenSession(db);
     expect(open?.client_id).toBeGreaterThan(0);
     const name = db.prepare("SELECT name FROM clients WHERE id = ?").get(open?.client_id ?? -1) as { name: string };

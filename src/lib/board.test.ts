@@ -17,10 +17,10 @@ describe("board snapshot", () => {
 
   it("shows the open session, its card and the list", () => {
     const db = freshTestDb();
-    runValeTool(db, "open_session", { client_name: "Ana", service_name: "Retiro de gel" });
-    runValeTool(db, "add_note", { client_name: "Ana", text: "prefiere viernes" });
-    runValeTool(db, "add_note", { client_name: "Ana", text: "onicolisis", kind: "health" });
-    runValeTool(db, "add_to_shopping_list", { item_name: "lima" });
+    runValeTool(db, "session_open", { client_name: "Ana", service_name: "Retiro de gel" });
+    runValeTool(db, "client_note_add", { client_name: "Ana", text: "prefiere viernes" });
+    runValeTool(db, "client_note_add", { client_name: "Ana", text: "onicolisis", kind: "health" });
+    runValeTool(db, "shopping_add", { item_name: "lima" });
 
     const board = getBoard(db);
     expect(board.session?.clientName).toBe("Ana");
@@ -39,8 +39,8 @@ describe("board snapshot", () => {
   it("keeps the last touched card after the session closes", () => {
     const db = freshTestDb();
     db.prepare("DELETE FROM notes").run();
-    runValeTool(db, "open_session", { client_name: "Ana", service_name: "Retiro de gel" });
-    runValeTool(db, "close_session", { products_used: [] });
+    runValeTool(db, "session_open", { client_name: "Ana", service_name: "Retiro de gel" });
+    runValeTool(db, "session_close", { products_used: [] });
     const board = getBoard(db);
     expect(board.session).toBeNull();
     expect(board.card).toBeNull();

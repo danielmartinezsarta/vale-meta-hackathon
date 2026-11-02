@@ -4,28 +4,43 @@ import { freshTestDb } from "./db";
 import { PRICING } from "./db";
 import { quotePrice } from "./quote";
 import seedData from "./seed-data.json";
+import { bogotaDay } from "./natural-date";
 import {
   VALE_TOOLS,
+  acceptQuote,
   addNote,
   addStock,
   addToShoppingList,
+  cancelAppointment,
   closeSession,
   createAppointment,
   createClient,
+  createReminder,
   findClient,
+  getToolDetails,
   goalProgress,
+  isQuoteAwaiting,
   listToday,
   localDay,
+  localTime,
   logSupplyUse,
   matchAliased,
   matchOne,
   moveAppointment,
   nextAppointment,
+  offHoursReasons,
   openSession,
+  quoteSession,
   readShoppingList,
   readStock,
+  rejectQuote,
+  removeFromShoppingList,
   runValeTool,
   setStock,
+  showAgenda,
+  showClientCard,
+  showService,
+  showWidget,
   undoLastWrite,
 } from "./vale-tools";
 
@@ -35,31 +50,46 @@ function openAna(db: ReturnType<typeof freshTestDb>) {
 }
 
 describe("tool definitions", () => {
-  it("exposes the 8 HACK-002 tools plus undo and the 9 HACK-003 tools", () => {
+  it("exposes the demo path plus support tools, nothing else", () => {
     const names = VALE_TOOLS.map((tool) => tool.name).sort();
     expect(names).toEqual(
       [
-        "add_note",
-        "add_stock",
-        "add_to_shopping_list",
-        "close_session",
-        "create_appointment",
-        "create_client",
-        "find_client",
-        "goal_progress",
-        "list_today",
-        "log_supply_use",
-        "move_appointment",
-        "next_appointment",
-        "open_session",
-        "quote_price",
-        "read_shopping_list",
-        "read_stock",
-        "set_stock",
-        "undo_last_write",
+        "agenda_create_appointment",
+        "agenda_show",
+        "client_card_show",
+        "client_create",
+        "goal_show",
+        "session_close",
+        "session_log_supply",
+        "session_open",
+        "session_quote",
+        "stock_set",
+        "tool_get_details",
+        "undo_last",
+        "widget_show",
       ].sort(),
     );
     for (const tool of VALE_TOOLS) expect(tool.type).toBe("function");
+  });
+
+  it("keeps booking and card lookups internal-only", () => {
+    const names = VALE_TOOLS.map((tool) => tool.name);
+    for (const internal of [
+      "client_note_add",
+      "agenda_move_appointment",
+      "agenda_cancel_appointment",
+      "agenda_get_next",
+      "agenda_create_reminder",
+      "shopping_add",
+      "shopping_show",
+      "shopping_remove",
+      "service_show",
+      "stock_show_low",
+      "stock_add",
+      "session_quote_accept",
+    ]) {
+      expect(names).not.toContain(internal);
+    }
   });
 });
 
@@ -103,7 +133,7 @@ describe("sessions", () => {
     expect(refused.ok).toBe(false);
     expect(refused.message).toContain("already an open session");
     expect(refused.message).toContain("Ana");
-    expect(refused.message).toContain("Do not call close_session yet");
+    expect(refused.message).toContain("Do not call session_close yet");
     db.close();
   });
 
@@ -116,6 +146,35 @@ describe("sessions", () => {
   });
 });
 
+describe("session_open with only a client (9.5)", () => {
+  it("resolves the service from today's appointment", () => {
+    const db = freshTestDb();
+    // "Start a session with Daniel", "Daniel is here",
+    // "my client Daniel is getting near": the client alone is enough.
+    const opened = openSession(db, { client_name: "Daniel" });
+    expect(opened.ok).toBe(true);
+    expect(opened.message).toContain("Daniel");
+    const session = db
+      .prepare(
+        `SELECT s.name AS service FROM sessions
+         JOIN services s ON s.id = sessions.service_id
+         WHERE ended_at IS NULL`,
+      )
+      .get() as { service: string };
+    expect(session.service).toBe("Semi-permanent manicure");
+    db.close();
+  });
+
+  it("asks for the service when nothing is booked today", () => {
+    const db = freshTestDb();
+    createClient(db, { name: "Vera" });
+    const asked = openSession(db, { client_name: "Vera" }, "en");
+    expect(asked.ok).toBe(false);
+    expect(asked.message).toContain("Which service for Vera?");
+    db.close();
+  });
+});
+
 describe("find_client", () => {
   it("finds by approximate name and asks when ambiguous", () => {
     const db = freshTestDb();
@@ -123,6 +182,33 @@ describe("find_client", () => {
     expect(found.ok).toBe(true);
     expect(found.card?.name).toBe("Ana");
     expect(findClient(db, { name: "nadie" }).ok).toBe(false);
+    db.close();
+  });
+});
+
+describe("client_card_show (1.1)", () => {
+  it("opens the full sheet without speaking health", () => {
+    const db = freshTestDb();
+    const card = showClientCard(db, { name: "Daniel" }, "en");
+    expect(card.ok).toBe(true);
+    const data = card.data as {
+      card: {
+        name: string;
+        phone: string;
+        health_alert: boolean;
+        visits: { service: string; photo: string }[];
+        upcoming: { service: string; day: string; time: string }[];
+      };
+    };
+    expect(data.card.name).toBe("Daniel");
+    expect(data.card.phone).toBe("+1-555-0101");
+    expect(data.card.health_alert).toBe(true);
+    expect(data.card.upcoming[0].service).toBe("Semi-permanent manicure");
+    expect(data.card.visits[0].photo).toContain("demo-visit-daniel");
+    // The alert rides the screen only: nothing health-related is spoken.
+    expect(JSON.stringify(card)).not.toContain("latex");
+    expect(card.message).not.toContain("latex");
+    expect(card.message).not.toContain("allergy");
     db.close();
   });
 });
@@ -152,7 +238,7 @@ describe("add_note", () => {
   it("never lets private text reach the model context", () => {
     const db = freshTestDb();
     const secret = "onicocriptosis severa inventada xyz";
-    const result = runValeTool(db, "add_note", { client_name: "Ana", text: secret, kind: "health" });
+    const result = runValeTool(db, "client_note_add", { client_name: "Ana", text: secret, kind: "health" });
     expect(result.ok).toBe(true);
     // Everything this tool hands back toward the model: result + public card.
     const card = findClient(db, { name: "Ana" });
@@ -179,6 +265,23 @@ describe("shopping list", () => {
     const read = readShoppingList(db);
     expect(read.message).toContain("Nail file");
     expect(addToShoppingList(db, { item_name: "cohetes" }).ok).toBe(false);
+    db.close();
+  });
+
+  it("removes an item and undoes the removal", () => {
+    const db = freshTestDb();
+    db.prepare("DELETE FROM reminder_items").run();
+    db.prepare("DELETE FROM shopping_list").run();
+    db.prepare("DELETE FROM reminders").run();
+    addToShoppingList(db, { item_name: "lima" });
+    const removed = removeFromShoppingList(db, { item_name: "Lima" }, "en");
+    expect(removed.ok).toBe(true);
+    expect(removed.message).toBe("Nail file removed from the list.");
+    expect(readShoppingList(db).message).toBe("La lista está vacía.");
+    expect(undoLastWrite(db).ok).toBe(true);
+    expect(readShoppingList(db).message).toContain("Nail file");
+    expect(removeFromShoppingList(db, { item_name: "Lima" }).ok).toBe(true);
+    expect(removeFromShoppingList(db, { item_name: "Lima" }).ok).toBe(false);
     db.close();
   });
 });
@@ -283,35 +386,34 @@ function expectedQuote(serviceName: string): { final: number; margin: number } {
   return { final: breakdown.finalPrice, margin: breakdown.marginEarned };
 }
 
-describe("quote_price", () => {
-  it("matches five hand-computed prices with a spoken breakdown", () => {
+describe("session_quote", () => {
+  it("matches five hand-computed prices with a screen-only breakdown", () => {
     const db = freshTestDb();
     // Hand-computed finals live in quote.test.ts for the October 2026
     // reference month (22 weekday days); here the tool must agree with
     // the same math in whatever month the suite runs.
     const names = ["semipermanente", "Gel refill", "acrílico", "diseño", "pedicura"];
     for (const name of names) {
-      const quoted = runValeTool(db, "quote_price", { service_name: name });
+      const quoted = runValeTool(db, "session_quote", { service_name: name }, "en");
       expect(quoted.ok).toBe(true);
       const data = quoted.data as { service: string; final_price_usd: number; margin_earned_usd: number };
       const expected = expectedQuote(data.service);
       expect(data.final_price_usd).toBe(expected.final);
       expect(data.margin_earned_usd).toBeCloseTo(expected.margin, 5);
-      expect(quoted.message).toContain("insumos");
-      expect(quoted.message).toContain("tiempo");
-      expect(quoted.message).toContain("fijos");
-      expect(quoted.message).toContain("margen 30%");
-      expect(quoted.message).toContain(`${expected.final} USD`);
+      // The voice only points at the sheet: the totals never reach it.
+      expect(quoted.message).toContain("on screen");
+      expect(quoted.message).not.toContain(String(expected.final));
+      expect((quoted as { pendingAccept?: { amount: number } }).pendingAccept).toBeUndefined();
     }
     db.close();
   });
 
   it("rejects unknown services and supplies without inventing", () => {
     const db = freshTestDb();
-    const badService = runValeTool(db, "quote_price", { service_name: "Cohetes" });
+    const badService = runValeTool(db, "session_quote", { service_name: "Cohetes" });
     expect(badService.ok).toBe(false);
     expect(badService.message).toContain("No encuentro");
-    const badSupply = runValeTool(db, "quote_price", {
+    const badSupply = runValeTool(db, "session_quote", {
       service_name: "retiro",
       supply_names: ["Cohetes"],
     });
@@ -325,23 +427,71 @@ describe("quote_price", () => {
   it("uses the open session minutes for its own service", () => {
     const db = freshTestDb();
     openSession(db, { client_name: "Ana", service_name: "Gel removal" });
-    const quoted = runValeTool(db, "quote_price", { service_name: "retiro" });
+    const quoted = runValeTool(db, "session_quote", { service_name: "retiro" });
     expect(quoted.ok).toBe(true);
     expect((quoted.data as { minutes: number }).minutes).toBe(1);
-    const other = runValeTool(db, "quote_price", { service_name: "semipermanente" });
+    const other = runValeTool(db, "session_quote", { service_name: "semipermanente" });
     expect((other.data as { minutes: number }).minutes).toBe(60);
     db.close();
   });
 
   it("understands English and Spanish names alike", () => {
     const db = freshTestDb();
-    const english = runValeTool(db, "quote_price", { service_name: "Acrylic full set" });
-    const spanish = runValeTool(db, "quote_price", { service_name: "Set completo de acrílico" });
+    const english = runValeTool(db, "session_quote", { service_name: "Acrylic full set" });
+    const spanish = runValeTool(db, "session_quote", { service_name: "Set completo de acrílico" });
     expect(english.ok).toBe(true);
     expect(spanish.ok).toBe(true);
     expect((english.data as { final_price_usd: number }).final_price_usd).toBe(
       (spanish.data as { final_price_usd: number }).final_price_usd,
     );
+    db.close();
+  });
+
+  it("Accept registers the suggested total and leaves the session open (decision 1)", () => {
+    const db = freshTestDb();
+    openSession(db, { client_name: "Ana", service_name: "Gel removal" });
+    const quoted = quoteSession(db, {}, "en");
+    expect(quoted.ok).toBe(true);
+    const pending = (quoted as { pendingAccept?: { amount: number; session_id: number } }).pendingAccept;
+    expect(pending?.amount).toBeGreaterThan(0);
+    expect(pending?.session_id).toBeGreaterThan(0);
+    const accepted = acceptQuote(db, { amount: pending?.amount, session_id: pending?.session_id }, "en");
+    expect(accepted.ok).toBe(true);
+    expect(accepted.message).toBe("Payment registered.");
+    expect(accepted.message).not.toContain(String(pending?.amount));
+    const rows = db.prepare("SELECT amount_usd FROM payments").all() as { amount_usd: number }[];
+    expect(rows).toEqual([{ amount_usd: pending?.amount }]);
+    // Booking talk asserts this shape; nothing closes the session.
+    const open = db.prepare("SELECT id FROM sessions WHERE ended_at IS NULL").get() as { id: number };
+    expect(open.id).toBe(pending?.session_id);
+    db.close();
+  });
+
+  it("Reject waits for the spoken amount, which registers instead", () => {
+    const db = freshTestDb();
+    openSession(db, { client_name: "Ana", service_name: "Gel removal" });
+    const sessionId = (db.prepare("SELECT id FROM sessions WHERE ended_at IS NULL").get() as { id: number }).id;
+    const rejected = rejectQuote(db, sessionId, "en");
+    expect(rejected.ok).toBe(true);
+    expect(rejected.message).toBe("Tell me the amount and I'll register it.");
+    expect((rejected.data as { awaiting: string }).awaiting).toBe("amount");
+    expect(isQuoteAwaiting(sessionId)).toBe(true);
+    const paid = quoteSession(db, { amount: 35 }, "en");
+    expect(paid.ok).toBe(true);
+    expect(paid.message).toBe("Payment registered.");
+    const rows = db.prepare("SELECT amount_usd FROM payments").all() as { amount_usd: number }[];
+    expect(rows).toEqual([{ amount_usd: 35 }]);
+    expect(isQuoteAwaiting(sessionId)).toBe(false);
+    // The session stays open through the whole flow.
+    const open = db.prepare("SELECT id FROM sessions WHERE ended_at IS NULL").get() as { id: number };
+    expect(open.id).toBe(sessionId);
+    db.close();
+  });
+
+  it("refuses a stray amount with no quote waiting", () => {
+    const db = freshTestDb();
+    openAna(db);
+    expect(quoteSession(db, { amount: 35 }, "en").ok).toBe(false);
     db.close();
   });
 });
@@ -350,7 +500,7 @@ describe("bilingual matching", () => {
   it("matches canonical, Spanish and alias names to one supply", () => {
     const db = freshTestDb();
     for (const query of ["Top coat", "Sellador", "top", "sellador"]) {
-      const result = runValeTool(db, "set_stock", { name: query, qty: 5 });
+      const result = runValeTool(db, "stock_set", { name: query, qty: 5 });
       expect(result.ok).toBe(true);
     }
     expect(matchAliased([{ id: 1, name: "Lima", es: "", aliases: [] }], "zzz").kind).toBe("none");
@@ -365,8 +515,11 @@ describe("appointments", () => {
       service_name: "retiro",
       day: localDay(),
       time,
-      confirm_off_hours: true,
     });
+  }
+
+  function bogotaPlus(minutes: number): string {
+    return localTime(new Date(Date.now() + minutes * 60000));
   }
 
   it("answers what is today and who is next, including an empty day", () => {
@@ -374,19 +527,34 @@ describe("appointments", () => {
     expect(listToday(db).message).toContain("Daniel 15:00");
     db.prepare("DELETE FROM appointments").run();
     expect(listToday(db).message).toBe("No tienes nada hoy.");
-    const inAnHour = new Date(Date.now() + 60 * 60000);
-    const inTwoHours = new Date(Date.now() + 120 * 60000);
-    const pad = (value: number): string => String(value).padStart(2, "0");
-    const timeOf = (when: Date): string => `${pad(when.getHours())}:${pad(when.getMinutes())}`;
-    expect(bookToday(db, "Ana", timeOf(inAnHour)).ok).toBe(true);
-    expect(bookToday(db, "Sofia", timeOf(inTwoHours)).ok).toBe(true);
+    const inAnHour = bogotaPlus(60);
+    const inTwoHours = bogotaPlus(120);
+    expect(bookToday(db, "Ana", inAnHour).ok).toBe(true);
+    expect(bookToday(db, "Sofia", inTwoHours).ok).toBe(true);
     const today = listToday(db);
     expect(today.ok).toBe(true);
-    expect(today.message).toContain(`Ana ${timeOf(inAnHour)}`);
-    expect(today.message).toContain(`Sofia ${timeOf(inTwoHours)}`);
+    expect(today.message).toContain(`Ana ${inAnHour}`);
+    expect(today.message).toContain(`Sofia ${inTwoHours}`);
     const next = nextAppointment(db);
     expect(next.ok).toBe(true);
-    expect(next.message).toBe(`Sigue Ana a las ${timeOf(inAnHour)}.`);
+    expect(next.message).toBe(`Sigue Ana a las ${inAnHour}.`);
+    db.close();
+  });
+
+  it("books from natural words on the Bogota calendar (req 7)", () => {
+    const db = freshTestDb();
+    const booked = createAppointment(
+      db,
+      { client_name: "Ana", service_name: "retiro", when: "tomorrow at three PM" },
+      "en",
+    );
+    expect(booked.ok).toBe(true);
+    const data = booked.data as { day: string; time: string };
+    expect(data.time).toBe("15:00");
+    expect(data.day).toBe(localDay(new Date(Date.now() + 24 * 3600000)));
+    expect(booked.message).toContain("Ana");
+    expect(booked.message).toContain("for Gel removal");
+    expect(booked.message).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     db.close();
   });
 
@@ -430,7 +598,6 @@ describe("appointments", () => {
         service_name: "retiro",
         day: "2026-11-31",
         time: "18:00",
-        confirm_off_hours: true,
       },
       "en",
     );
@@ -441,7 +608,6 @@ describe("appointments", () => {
       service_name: "retiro",
       day: "2025-02-29",
       time: "18:00",
-      confirm_off_hours: true,
     });
     expect(feb29.ok).toBe(false);
     const feb29Leap = createAppointment(
@@ -451,7 +617,6 @@ describe("appointments", () => {
         service_name: "retiro",
         day: "2024-02-29",
         time: "18:00",
-        confirm_off_hours: true,
       },
       "en",
     );
@@ -482,14 +647,203 @@ describe("appointments", () => {
     const db = freshTestDb();
     db.prepare("DELETE FROM appointments").run();
     bookToday(db, "Ana", "10:00");
-    const moved = moveAppointment(db, { client_name: "Ana", new_day: localDay(), new_time: "12:00" });
+    const moved = moveAppointment(
+      db,
+      { client_name: "Ana", new_day: localDay(), new_time: "12:00", confirm_move: true },
+    );
     expect(moved.ok).toBe(true);
-    expect(moved.message).toContain("12:00");
+    expect(moved.message).toContain("12 PM");
     expect(undoLastWrite(db).ok).toBe(true);
     expect(listToday(db).message).toContain("10:00");
     expect(undoLastWrite(db).message).toContain("Deshecho");
     expect(listToday(db).message).toBe("No tienes nada hoy.");
     db.close();
+  });
+
+  it("asks first on a move, then moves on yes (decision 2)", () => {
+    const db = freshTestDb();
+    db.prepare("DELETE FROM appointments").run();
+    bookToday(db, "Ana", "10:00");
+    const asked = moveAppointment(db, { client_name: "Ana", new_day: localDay(), new_time: "12:00" });
+    expect(asked.ok).toBe(false);
+    expect(asked.pendingMove).toEqual({ client_name: "Ana", new_day: localDay(), new_time: "12:00" });
+    expect(listToday(db).message).toContain("10:00");
+    db.close();
+  });
+
+  it("keeps the original time when only the date is corrected (9.4)", () => {
+    const db = freshTestDb();
+    createClient(db, { name: "Vera" });
+    createAppointment(db, { client_name: "Vera", service_name: "retiro", day: localDay(), time: "10:00" });
+    // "no, it's for next Friday": the date moves, the 10:00 stays.
+    const corrected = moveAppointment(db, { client_name: "Vera", new_when: "next Friday" }, "en");
+    expect(corrected.ok).toBe(false);
+    expect(corrected.pendingMove?.new_time).toBe("10:00");
+    expect(corrected.pendingMove?.new_day).not.toBe(localDay());
+    const saved = moveAppointment(
+      db,
+      { client_name: "Vera", new_when: "next Friday", confirm_move: true },
+      "en",
+    );
+    expect(saved.ok).toBe(true);
+    expect((saved.data as { time: string }).time).toBe("10:00");
+    db.close();
+  });
+});
+
+describe("off-hours saving (decision 2)", () => {
+  it("saves off-hours bookings directly and marks them", () => {
+    const db = freshTestDb();
+    const seeded = (db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number }).n;
+    const saturday = createAppointment(db, {
+      client_name: "Ana",
+      service_name: "retiro",
+      day: "2026-10-31",
+      time: "10:00",
+    });
+    expect(saturday.ok).toBe(true);
+    expect((saturday.data as { off_hours: boolean }).off_hours).toBe(true);
+    expect(saturday.message).toContain("fuera de horario");
+    const count = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
+    expect(count.n).toBe(seeded + 1);
+    expect(undoLastWrite(db).ok).toBe(true);
+    db.close();
+  });
+
+  it("counts 17:00 as in-hours", () => {
+    expect(offHoursReasons("2026-10-29", "17:00")).toEqual([]);
+    expect(offHoursReasons("2026-10-29", "17:01")).toHaveLength(1);
+    expect(offHoursReasons("2026-10-29", "10:00")).toEqual([]);
+    expect(offHoursReasons("2026-10-31", "10:00")).toHaveLength(1);
+  });
+
+  it("books quietly inside hours on a weekday", () => {
+    const db = freshTestDb();
+    const booked = createAppointment(db, {
+      client_name: "Ana",
+      service_name: "retiro",
+      day: "2026-10-29",
+      time: "10:00",
+    });
+    expect(booked.ok).toBe(true);
+    expect(booked.message.startsWith("Guardada")).toBe(true);
+    expect((booked.data as { off_hours: boolean }).off_hours).toBe(false);
+    db.close();
+  });
+});
+
+describe("agenda_show (0.2, X.1)", () => {
+  it("shows today with appointments and reminders, voice only (9.6)", () => {
+    const db = freshTestDb();
+    const shown = showAgenda(db, { range: "today" }, "en");
+    expect(shown.ok).toBe(true);
+    expect(shown.message).toContain("Today:");
+    expect(shown.message).toContain("Daniel at 3 PM for Semi-permanent manicure");
+    expect(shown.message).toContain("Reminders:");
+    expect(shown.message).toContain("Buy acetone");
+    expect(shown.message).toContain("cleaning company");
+    const data = shown.data as { appointments: unknown[]; reminders: unknown[] };
+    expect(data.appointments).toHaveLength(3);
+    expect(data.reminders).toHaveLength(2);
+    db.close();
+  });
+
+  it("shows a date, the week and a range", () => {
+    const db = freshTestDb();
+    const week = showAgenda(db, { range: "week" }, "en");
+    expect(week.ok).toBe(true);
+    expect(week.message).toContain("Daniel");
+    expect(week.message).toContain("Ana");
+    const today = localDay();
+    const date = showAgenda(db, { range: "date", day: today }, "en");
+    expect(date.ok).toBe(true);
+    expect((date.data as { appointments: { client: string }[] }).appointments.every((row) => row.client !== "Ana")).toBe(true);
+    const range = showAgenda(db, { range: "range", from: today, to: today }, "en");
+    expect(range.ok).toBe(true);
+    expect(range.message).toContain("Daniel");
+    expect(showAgenda(db, { range: "someday" }, "en").ok).toBe(false);
+    db.close();
+  });
+});
+
+describe("agenda_create_reminder", () => {
+  it("saves a reminder linked to shopping supplies and undoes it", () => {
+    const db = freshTestDb();
+    const saved = createReminder(db, { text: "Buy more acetone", items: ["Acetona"] }, "en");
+    expect(saved.ok).toBe(true);
+    expect(saved.message).toBe("Reminder saved.");
+    const shown = showAgenda(db, { range: "today" }, "en");
+    expect(shown.message).toContain("Buy more acetone");
+    expect(undoLastWrite(db).ok).toBe(true);
+    const after = showAgenda(db, { range: "today" }, "en");
+    expect(after.message).not.toContain("Buy more acetone");
+    expect(createReminder(db, { text: "   " }, "en").ok).toBe(false);
+    db.close();
+  });
+});
+
+describe("agenda_cancel_appointment", () => {
+  it("asks first, then cancels and undoes", () => {
+    const db = freshTestDb();
+    const seeded = (db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number }).n;
+    const asked = cancelAppointment(db, { client_name: "Ana" }, "en");
+    expect(asked.ok).toBe(false);
+    expect(typeof asked.pendingCancel?.appointment_id).toBe("number");
+    const done = cancelAppointment(
+      db,
+      { appointment_id: asked.pendingCancel?.appointment_id, confirm_cancel: true },
+      "en",
+    );
+    expect(done.ok).toBe(true);
+    expect(done.message).toContain("Cancelled");
+    const count = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
+    expect(count.n).toBe(seeded - 1);
+    expect(undoLastWrite(db).ok).toBe(true);
+    const back = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
+    expect(back.n).toBe(seeded);
+    db.close();
+  });
+});
+
+describe("service_show and support tools", () => {
+  it("shows the service without speaking the price", () => {
+    const db = freshTestDb();
+    const shown = showService(db, { service_name: "acrílico" }, "en");
+    expect(shown.ok).toBe(true);
+    expect((shown.data as { list_price_usd: number }).list_price_usd).toBeGreaterThan(0);
+    expect(shown.message).not.toContain("USD");
+    const list = showService(db, {}, "en");
+    expect((list.data as { services: unknown[] }).services.length).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("shows the shopping list and the open session on demand", () => {
+    const db = freshTestDb();
+    const list = showWidget(db, { name: "shopping" }, "en");
+    expect(list.ok).toBe(true);
+    expect((list.data as { items: string[] }).items).toContain("Acetone");
+    expect(showWidget(db, { name: "session" }, "en").ok).toBe(false);
+    openAna(db);
+    expect(showWidget(db, { name: "session" }, "en").ok).toBe(true);
+    expect(showWidget(db, { name: "caja" }, "en").ok).toBe(false);
+    db.close();
+  });
+
+  it("details one tool at a time", () => {
+    const details = getToolDetails({ name: "session_quote" }, "en");
+    expect(details.ok).toBe(true);
+    expect((details.data as { parameters: unknown }).parameters).toBeTruthy();
+    expect(getToolDetails({ name: "session_quote_accept" }, "en").ok).toBe(true);
+    expect(getToolDetails({ name: "cohetes" }, "en").ok).toBe(false);
+  });
+});
+
+describe("salon clock (America/Bogota)", () => {
+  it("reads today and now on one clock", () => {
+    // 04:30 UTC is 23:30 the day before in Bogota (no DST there).
+    expect(localDay(new Date("2026-11-02T04:30:00.000Z"))).toBe("2026-11-01");
+    expect(localTime(new Date("2026-11-02T04:30:00.000Z"))).toBe("23:30");
+    expect(localDay()).toBe(bogotaDay(new Date()));
   });
 });
 
@@ -619,69 +973,6 @@ describe("goal_progress", () => {
       margin_earned: number | null;
     };
     expect(row.margin_earned).toBeNull();
-    db.close();
-  });
-});
-
-describe("off-hours warning", () => {
-  it("asks before booking on weekends or outside 9-17, and writes nothing until yes", () => {
-    const db = freshTestDb();
-    const saturday = createAppointment(db, {
-      client_name: "Ana",
-      service_name: "retiro",
-      day: "2026-10-31",
-      time: "10:00",
-    });
-    expect(saturday.ok).toBe(false);
-    expect(saturday.message.startsWith("Ojo,")).toBe(true);
-    expect(saturday.message).toContain("fin de semana");
-    expect(saturday.message).toContain("¿La guardo igual?");
-    expect(saturday.pendingOffHours).toBe(true);
-    const early = createAppointment(db, {
-      client_name: "Sofia",
-      service_name: "retiro",
-      day: "2026-10-29",
-      time: "08:00",
-    });
-    expect(early.ok).toBe(false);
-    expect(early.message).toContain("fuera de 9 a 17");
-    const both = createAppointment(db, {
-      client_name: "Paola",
-      service_name: "retiro",
-      day: "2026-10-31",
-      time: "18:00",
-    });
-    expect(both.ok).toBe(false);
-    expect(both.message).toContain("fin de semana y queda fuera de 9 a 17");
-    const seeded = (db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number }).n;
-    expect(seeded).toBe(4);
-    const confirmed = createAppointment(db, {
-      client_name: "Ana",
-      service_name: "retiro",
-      day: "2026-10-31",
-      time: "10:00",
-      confirm_off_hours: true,
-    });
-    expect(confirmed.ok).toBe(true);
-    expect(confirmed.message).toContain("Cita guardada");
-    expect((confirmed.data as { off_hours: boolean }).off_hours).toBe(true);
-    const after = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
-    expect(after.n).toBe(5);
-    expect(undoLastWrite(db).ok).toBe(true);
-    db.close();
-  });
-
-  it("books quietly inside hours on a weekday", () => {
-    const db = freshTestDb();
-    const booked = createAppointment(db, {
-      client_name: "Ana",
-      service_name: "retiro",
-      day: "2026-10-29",
-      time: "10:00",
-    });
-    expect(booked.ok).toBe(true);
-    expect(booked.message.startsWith("Cita guardada")).toBe(true);
-    expect((booked.data as { off_hours: boolean }).off_hours).toBe(false);
     db.close();
   });
 });

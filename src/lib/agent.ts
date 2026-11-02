@@ -2,9 +2,9 @@ import {
   VALE_TOOLS,
   clientLabel,
   getOpenSession,
-  localDay,
   runValeTool,
 } from "./vale-tools";
+import { bogotaDay } from "./natural-date";
 import { DEFAULT_USER_NAME, getDb, userName, type HistoryTurn, type ValeDb } from "./db";
 import { DEFAULT_LANGUAGE, clarifyText, type ValeLanguage } from "./vale-language";
 import {
@@ -37,15 +37,17 @@ const SPOKEN_BASE = [
   "Keep every reply to about 25 words at most: direct, no filler, and never end with a question unless you are asking for confirmation or for missing information.",
   "You can: open sessions with a timer, save notes on the client card (health notes stay private), keep the shopping list, register clients and supplies, quote prices and keep the agenda. Use them to act.",
   "Never invent names, prices or addresses, and never claim a write happened without calling its tool. Say it is done only after the tool succeeds.",
-  "Some tools show a screen card: goal_progress, list_today, next_appointment, add_note, create_appointment and quote_price. When a screen card shows, say one short line pointing at it (for example Here's your goal on screen.) and never read its numbers aloud; earnings and goal amounts stay on the screen only. Otherwise say every part of the breakdown.",
-  "Reads (find_client, read_shopping_list, quote_price, goal_progress, list_today, next_appointment, read_stock) run at once.",
+  "Some tools show a screen card: goal_show, agenda_show, client_card_show, client_note_add, agenda_create_appointment, session_quote, session_close and widget_show. When a screen card shows, say one short line pointing at it (for example Here's your goal on screen.) and never read its numbers aloud. Money, health notes and the goal stay on the screen only: the voice only says the card is on screen.",
+  "Reads (agenda_show, client_card_show, goal_show, widget_show, tool_get_details) run at once.",
+  "Book directly and save notes, sessions, supplies and shopping at once: the booking saves even off hours, and undo_last fixes a wrong write. Only the quote and what moves or deletes ask first: a yes registers the payment, moves the booking or cancels it.",
+  "A client alone opens their session: Start a session with Daniel calls session_open with the client, and today's appointment names the service. Resolve natural dates (next Friday at 5 PM) with the agenda tools on the America/Bogota calendar; never invent one, and when the user corrects only the date, keep the original time.",
   "Only ask first when in doubt: unknown or ambiguous names, unknown supplies. Then say what you would do in one sentence and ask the confirmation question (Should I save it?), and wait for the user to say yes before calling.",
   "Greet briefly and varied when there is no request, without asking for data. When the client or service is missing, ask briefly and naturally, naming what you already have.",
   "If the request is outside nails (hair, makeup), say so plainly and steer back to nails.",
   "Health notes: confirm briefly and never repeat the health text.",
   "If a date does not exist (November 31st), propose the nearest valid day at the same time, say the correction plainly, and ask for confirmation before writing.",
   "A yes only executes the proposal from your immediately previous reply; if that reply asked an open question with no concrete proposal, ask what to confirm instead of writing.",
-  "A refused write is never a license to do the opposite: if a session is already open, call open_session anyway - its refusal tells you what to ask, and the yes runs the switch.",
+  "A refused write is never a license to do the opposite: if a session is already open, call session_open anyway - its refusal tells you what to ask, and the yes runs the switch.",
 ].join(" ");
 
 /** Output line: the only part of the prompt that changes per language. */
@@ -185,17 +187,21 @@ function historyItem(turn: HistoryTurn): Record<string, unknown> {
 
 /** Tools that complete a write when they report ok. */
 const WRITE_TOOLS = new Set([
-  "open_session",
-  "close_session",
-  "add_note",
-  "create_client",
-  "add_to_shopping_list",
-  "log_supply_use",
-  "undo_last_write",
-  "create_appointment",
-  "move_appointment",
-  "set_stock",
-  "add_stock",
+  "session_open",
+  "session_close",
+  "session_log_supply",
+  "session_quote_accept",
+  "client_create",
+  "client_note_add",
+  "shopping_add",
+  "shopping_remove",
+  "agenda_create_appointment",
+  "agenda_move_appointment",
+  "agenda_cancel_appointment",
+  "agenda_create_reminder",
+  "stock_set",
+  "stock_add",
+  "undo_last",
 ]);
 
 /**
@@ -477,7 +483,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     buildInstructions(language),
     ...(openQuestion ? [YES_TO_OPEN_QUESTION] : []),
     buildStateFacts(
-      localDay(),
+      bogotaDay(new Date()),
       options.userName ?? userName(db),
       slotContext(slotKey, language),
       sessionContext(db),
@@ -562,6 +568,13 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
         db,
       );
       if (card) widget = card;
+      // A quoted total waits for Accept: the yes registers it, like any
+      // other proposal. Stored on success, never on a doubt.
+      const proposal = buildPendingActions(db, call.name, parsed, toolResult);
+      if (proposal) {
+        setPendingAction(slotKey, proposal);
+        storedThisTurn = true;
+      }
     }
     updateSlotsFromTool(
       slotKey,
@@ -573,6 +586,16 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     if (toolResult.ok && WRITE_TOOLS.has(call.name)) {
       clearPendingAction(slotKey);
       // A successful write answers itself: no second model round.
+      text = toolResult.message;
+      break;
+    }
+    if (toolResult.ok && call.name === "session_quote") {
+      // The quote answers itself with no second round: its amounts never
+      // reach the voice. A registered amount retires any stale proposal;
+      // the fresh quote keeps the Accept one stored above.
+      const paid =
+        ((toolResult as { data?: unknown }).data as { paid_amount_usd?: unknown } | undefined)?.paid_amount_usd !== undefined;
+      if (paid) clearPendingAction(slotKey);
       text = toolResult.message;
       break;
     }

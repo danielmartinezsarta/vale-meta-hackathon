@@ -204,12 +204,12 @@ describe("conversation turns", () => {
   it("returns the last turns in order for one client only", () => {
     const db = freshTestDb();
     recordTurn(db, "c1", "user", "Vale, open a session for Emma");
-    recordTurn(db, "c1", "vale", "Which service for Emma?", "find_client");
+    recordTurn(db, "c1", "vale", "Which service for Emma?", "client_card_show");
     recordTurn(db, "c2", "user", "Vale, hi");
     const turns = recentTurns(db, "c1", 20);
     expect(turns).toEqual([
       { role: "user", text: "Vale, open a session for Emma", tool: null },
-      { role: "vale", text: "Which service for Emma?", tool: "find_client" },
+      { role: "vale", text: "Which service for Emma?", tool: "client_card_show" },
     ]);
     db.close();
   });
