@@ -278,7 +278,7 @@ describe("agent turn with tools", () => {
           bodies.push(JSON.parse((init as { body: string }).body) as Record<string, unknown>);
           if (bodies.length === 1) {
             return sseResponse([
-              toolCall("resp_1", "client_note_add", { client_name: "Ana", text: "onicolisis", kind: "health" }, "call_1"),
+              toolCall("resp_1", "client_note_add", { client_name: "Ana", text: "onicolisis", kind: "health_note" }, "call_1"),
             ]);
           }
           return sseResponse([spoken("resp_2", "Nota privada guardada.")]);
@@ -705,7 +705,7 @@ describe("closed reply language", () => {
             toolCall(
               "resp_h",
               "client_note_add",
-              { client_name: "Ana", text: "onicólisis", kind: "health" },
+              { client_name: "Ana", text: "onicólisis", kind: "health_note" },
               "call_h",
             ),
           ]);

@@ -19,7 +19,7 @@ describe("board snapshot", () => {
     const db = freshTestDb();
     runValeTool(db, "session_open", { client_name: "Ana", service_name: "Retiro de gel" });
     runValeTool(db, "client_note_add", { client_name: "Ana", text: "prefiere viernes" });
-    runValeTool(db, "client_note_add", { client_name: "Ana", text: "onicolisis", kind: "health" });
+    runValeTool(db, "client_note_add", { client_name: "Ana", text: "onicolisis", kind: "health_note" });
     runValeTool(db, "shopping_add", { item_name: "lima" });
 
     const board = getBoard(db);
@@ -29,7 +29,7 @@ describe("board snapshot", () => {
     expect(board.card?.name).toBe("Ana");
     expect(board.list).toEqual(["Acetone", "Foil wraps", "Cotton pads", "Nail file"]);
 
-    const health = board.card?.notes.find((note) => note.kind === "health");
+    const health = board.card?.notes.find((note) => note.kind === "health_note");
     expect(health?.masked).toBe(true);
     expect(health?.text).toBeNull();
     expect(JSON.stringify(board)).not.toContain("onicolisis");

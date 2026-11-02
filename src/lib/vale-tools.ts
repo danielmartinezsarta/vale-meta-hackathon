@@ -236,7 +236,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "undo_last",
-    description: "Undo the most recent write. Call it when the user says undo it (or deshazlo).",
+    description: "Undo the most recent write. Call it when the user says undo it (or deshazlo), and also for delete that note, remove that note, borra esa nota or elimina la nota: those remove the last saved note.",
     parameters: noParams,
   },
   {
@@ -529,6 +529,10 @@ export function showClientCard(db: ValeDb, args: { name?: unknown }, language: V
     found.row.id,
     bogotaDay(new Date()),
   );
+  // Health notes ride first on the card, then the rest in saved order.
+  const ordered = [...notes].sort(
+    (a, b) => (a.kind === "health_note" ? 0 : 1) - (b.kind === "health_note" ? 0 : 1),
+  );
   const card: FullClientCard = {
     id: found.row.id,
     name: found.row.name,
@@ -536,8 +540,8 @@ export function showClientCard(db: ValeDb, args: { name?: unknown }, language: V
     phone: contact.phone,
     email: contact.email,
     birthday: contact.birthday,
-    notes,
-    health_alert: notes.some((note) => note.kind === "health"),
+    notes: ordered,
+    health_alert: ordered.some((note) => note.kind === "health_note"),
     visits,
     upcoming,
   };
@@ -555,16 +559,16 @@ export function addNote(db: ValeDb, args: { client_name?: unknown; text?: unknow
   const clientName = typeof args.client_name === "string" ? args.client_name : "";
   const text = typeof args.text === "string" ? args.text.trim() : "";
   if (text === "") return { ok: false, message: "La nota está vacía." };
-  const kind = args.kind === "health" ? "health" : "general";
+  const kind = args.kind === "health_note" || args.kind === "health" ? "health_note" : "note";
   const found = matchOne(allClients(db), clientName);
   if (found.kind === "none") return { ok: false, message: `No encuentro a "${clientName}".` };
   if (found.kind === "ambiguous") return { ok: false, message: ambiguousMessage(found.options) };
   const result = db
     .prepare("INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES (?, ?, ?, ?)")
-    .run(found.row.id, text, kind, kind === "health" ? 1 : 0);
+    .run(found.row.id, text, kind, kind === "health_note" ? 1 : 0);
   logWrite(db, "client_note_add", "notes", Number(result.lastInsertRowid));
   // The result never carries the note text back: health text must not re-enter the model context.
-  if (kind === "health") return { ok: true, message: language === "en" ? "Private note saved." : "Nota privada guardada.", data: { note_id: Number(result.lastInsertRowid), private: true } };
+  if (kind === "health_note") return { ok: true, message: language === "en" ? "Private note saved." : "Nota privada guardada.", data: { note_id: Number(result.lastInsertRowid), private: true } };
   return { ok: true, message: language === "en" ? `Note saved on ${found.row.name}'s card.` : `Nota guardada en la ficha de ${found.row.name}.`, data: { note_id: Number(result.lastInsertRowid), private: false } };
 }
 
@@ -719,7 +723,8 @@ export function getToolDetails(args: { name?: unknown }, language: ValeLanguage 
   // Internal helpers answer details too, but say so: the model calls them
   // only through a proposal, never directly.
   const internal: Record<string, string> = {
-    client_note_add: "Save a note on the client card. Internal: call it only when the request names a client and a note.",
+    client_note_add: "Save a one-line note on the client card immediately, no confirmation. Kind is note or health_note (allergies and similar health topics, stays private). If the client is unknown, register them with client_create first, then save.",
+
     agenda_move_appointment: "Move an appointment. Asks first: the refusal carries the confirm question and a yes moves it.",
     agenda_cancel_appointment: "Cancel an appointment. Asks first: the refusal carries the confirm question and a yes cancels it.",
     agenda_get_next: "Next appointment today. Internal: only when asked who is next.",
@@ -907,9 +912,21 @@ export function undoLastWrite(db: ValeDb, language: ValeLanguage = "es"): ToolRe
       db.prepare("UPDATE sessions SET ended_at = NULL, duration_s = NULL, margin_earned = NULL WHERE id = ?").run(entry.row_id);
       break;
     }
-    case "client_note_add":
+    case "client_note_add": {
+      const note = db.prepare("SELECT text, kind, private_for_glimmer FROM notes WHERE id = ?").get(entry.row_id) as
+        | { text: string; kind: string; private_for_glimmer: number }
+        | undefined;
       db.prepare("DELETE FROM notes WHERE id = ?").run(entry.row_id);
+      // The reply names the removed text, unless it was private: health
+      // text never reaches the voice. Either way the write is consumed.
+      if (note && note.private_for_glimmer !== 1 && note.kind !== "health_note" && note.kind !== "health") {
+        const label = UNDO_LABELS[language][entry.action] ?? entry.action;
+        const prefix = language === "en" ? "Undone: " : "Deshecho: ";
+        db.prepare("UPDATE write_log SET undone = 1 WHERE id = ?").run(entry.id);
+        return { ok: true, message: `${prefix}${label} "${note.text}".` };
+      }
       break;
+    }
     case "shopping_add":
       db.prepare("DELETE FROM shopping_list WHERE id = ?").run(entry.row_id);
       break;

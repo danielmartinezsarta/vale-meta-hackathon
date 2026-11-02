@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   PRIVATE_NOTE_LABEL,
   freshTestDb,
@@ -72,7 +73,7 @@ describe("demo seed (HACK-018)", () => {
     const db = freshTestDb();
     const daniel = db.prepare("SELECT id FROM clients WHERE name = ?").get("Daniel") as { id: number };
     const notes = getPublicNotes(db, daniel.id);
-    const health = notes.find((note) => note.kind === "health")!;
+    const health = notes.find((note) => note.kind === "health_note")!;
     expect(health.masked).toBe(true);
     expect(health.text).toBeNull();
     expect(JSON.stringify(notes)).not.toContain("latex");
@@ -171,31 +172,65 @@ describe("private health notes", () => {
     db.prepare("INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES (?, ?, ?, ?)").run(
       ana.id,
       "onicolisis en el pulgar derecho",
-      "health",
+      "health_note",
       1,
     );
     db.prepare("INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES (?, ?, ?, ?)").run(
       ana.id,
       "prefiere cita los viernes",
-      "general",
+      "note",
       0,
     );
 
-    const stored = db.prepare("SELECT private_for_glimmer FROM notes WHERE kind = 'health'").get() as {
+    const stored = db.prepare("SELECT private_for_glimmer FROM notes WHERE kind = 'health_note'").get() as {
       private_for_glimmer: number;
     };
     expect(stored.private_for_glimmer).toBe(1);
 
     const notes = getPublicNotes(db, ana.id);
     expect(notes).toHaveLength(2);
-    const health = notes.find((note) => note.kind === "health")!;
+    const health = notes.find((note) => note.kind === "health_note")!;
     expect(health.masked).toBe(true);
     expect(health.text).toBeNull();
     expect(JSON.stringify(notes)).not.toContain("onicolisis");
-    const general = notes.find((note) => note.kind === "general")!;
+    const general = notes.find((note) => note.kind === "note")!;
     expect(general.masked).toBe(false);
     expect(general.text).toBe("prefiere cita los viernes");
     expect(PRIVATE_NOTE_LABEL.length).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("migrates legacy general/health kinds to note/health_note", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE clients (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)");
+    db.exec("INSERT INTO clients (name) VALUES ('Ana')");
+    db.exec(`CREATE TABLE notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  text TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'general' CHECK (kind IN ('general', 'health')),
+  private_for_glimmer INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+)`);
+    db.exec("INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES (1, 'Likes neon colors', 'general', 0)");
+    db.exec("INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES (1, 'Allergic to monomer', 'health', 0)");
+    seedDatabase(db);
+    const rows = db.prepare("SELECT kind, private_for_glimmer FROM notes ORDER BY id").all() as {
+      kind: string;
+      private_for_glimmer: number;
+    }[];
+    expect(rows.slice(0, 2)).toEqual([
+      { kind: "note", private_for_glimmer: 0 },
+      { kind: "health_note", private_for_glimmer: 1 },
+    ]);
+    // New writes pass the rebuilt CHECK.
+    const ana = db.prepare("SELECT id FROM clients WHERE name = 'Ana'").get() as { id: number };
+    db.prepare("INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES (?, ?, ?, ?)").run(
+      ana.id,
+      "He likes neon colors",
+      "note",
+      0,
+    );
     db.close();
   });
 });

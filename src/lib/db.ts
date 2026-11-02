@@ -27,7 +27,7 @@ export const PRIVATE_NOTE_LABEL = "nota privada 🔒";
 
 export interface PublicNote {
   id: number;
-  kind: "general" | "health";
+  kind: "note" | "health_note";
   /** Null when the note is private: the text is never exposed. */
   text: string | null;
   masked: boolean;
@@ -262,6 +262,7 @@ export function seedDatabase(db: ValeDb): void {
   ensureColumn(db, "supplies", "price_per_product_usd", "REAL NOT NULL DEFAULT 0");
   ensureColumn(db, "appointments", "reference_photo", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "sessions", "margin_earned", "REAL");
+  migrateNoteKinds(db);
 
   const seed = seedData as unknown as {
     clients: SeedClient[];
@@ -364,6 +365,38 @@ function tableCount(db: ValeDb, table: string): number {
 }
 
 /**
+ * Note kinds are only note and health_note: migrate the old general/health
+ * values, and rebuild the table when its CHECK still names them (SQLite
+ * keeps the old CHECK on existing files, which would reject new writes).
+ */
+function migrateNoteKinds(db: ValeDb): void {
+  const def = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'notes'").get() as
+    | { sql: string }
+    | undefined;
+  if (def && def.sql.includes("'general'")) {
+    db.exec(`CREATE TABLE notes_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id INTEGER NOT NULL REFERENCES clients(id),
+  text TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'health_note')),
+  private_for_glimmer INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+)`);
+    db.exec(`INSERT INTO notes_new (id, client_id, text, kind, private_for_glimmer, created_at)
+  SELECT id, client_id, text,
+    CASE kind WHEN 'general' THEN 'note' WHEN 'health' THEN 'health_note' ELSE kind END,
+    CASE WHEN kind = 'health' THEN 1 ELSE private_for_glimmer END,
+    created_at
+  FROM notes`);
+    db.exec("DROP TABLE notes");
+    db.exec("ALTER TABLE notes_new RENAME TO notes");
+    return;
+  }
+  db.exec("UPDATE notes SET kind = 'note' WHERE kind = 'general'");
+  db.exec("UPDATE notes SET kind = 'health_note', private_for_glimmer = 1 WHERE kind = 'health'");
+}
+
+/**
  * Demo health notes (Daniel's test allergy). Seeded without the write log so
  * undo_last only ever reverts the user's own writes.
  */
@@ -374,12 +407,12 @@ function seedDemoNotes(db: ValeDb, notes: SeedDemoNote[], clientIds: Map<string,
   for (const note of notes) {
     const clientId = clientIds.get(note.client);
     if (clientId === undefined) continue;
-    const kind = note.kind === "health" ? "health" : "general";
+    const kind = note.kind === "health_note" || note.kind === "health" ? "health_note" : "note";
     const existing = db
       .prepare("SELECT id FROM notes WHERE client_id = ? AND kind = ?")
       .get(clientId, kind) as { id: number } | undefined;
     if (existing) continue;
-    addNote.run(clientId, note.text, kind, note.private === true || kind === "health" ? 1 : 0);
+    addNote.run(clientId, note.text, kind, note.private === true || kind === "health_note" ? 1 : 0);
   }
 }
 
@@ -541,10 +574,11 @@ function toPublicNote(row: {
   text: string;
   private_for_glimmer: number;
 }): PublicNote {
-  const masked = row.private_for_glimmer === 1 || row.kind === "health";
+  const kind = row.kind === "health_note" || row.kind === "health" ? "health_note" : "note";
+  const masked = row.private_for_glimmer === 1 || kind === "health_note";
   return {
     id: row.id,
-    kind: row.kind === "health" ? "health" : "general",
+    kind,
     text: masked ? null : row.text,
     masked,
   };

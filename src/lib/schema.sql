@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   client_id INTEGER NOT NULL REFERENCES clients(id),
   text TEXT NOT NULL,
-  kind TEXT NOT NULL DEFAULT 'general' CHECK (kind IN ('general', 'health')),
+  kind TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note', 'health_note')),
   private_for_glimmer INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

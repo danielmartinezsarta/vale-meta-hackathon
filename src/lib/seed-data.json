@@ -20,7 +20,7 @@
     { "name": "Ana", "sex": "female", "phone": "+1-555-0104", "email": "ana@example.com", "birthday": "1996-05-30" }
   ],
   "demo_notes": [
-    { "client": "Daniel", "kind": "health", "private": true, "text": "Test allergy (demo only): reacts to latex gloves." }
+    { "client": "Daniel", "kind": "health_note", "private": true, "text": "Test allergy (demo only): reacts to latex gloves." }
   ],
   "demo_appointments": [
     { "client": "Daniel", "service": "Semi-permanent manicure", "day": "today", "time": "15:00", "reference_photo": "demo-ref-daniel-autumn-01" },

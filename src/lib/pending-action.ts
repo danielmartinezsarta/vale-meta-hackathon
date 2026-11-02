@@ -76,13 +76,6 @@ export function pendingConfirmTitle(
       return en ? `Open session with ${client}?` : `¿Abro sesión con ${client}?`;
     }
   }
-  const note = find("client_note_add");
-  if (note) {
-    const client = clean(note.client_name);
-    if (client !== undefined) {
-      return en ? `Save note for ${client}?` : `¿Guardo nota para ${client}?`;
-    }
-  }
   const supply = find("session_log_supply");
   if (supply) {
     const name = clean(supply.name);
@@ -258,23 +251,6 @@ export function buildPendingActions(
           {
             tool: "session_open",
             args: { client_name: client, service_name: service },
-          },
-        ];
-      }
-      return undefined;
-    }
-    if (toolName === "client_note_add") {
-      const client = clean(args.client_name);
-      if (
-        client !== undefined &&
-        clean(args.text) !== undefined &&
-        matchOne(allClients(db), client).kind === "none"
-      ) {
-        return [
-          { tool: "client_create", args: { name: client } },
-          {
-            tool: "client_note_add",
-            args: { client_name: client, text: args.text, kind: args.kind ?? "general" },
           },
         ];
       }
