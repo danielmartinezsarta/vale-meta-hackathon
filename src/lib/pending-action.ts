@@ -57,11 +57,11 @@ export function pendingConfirmTitle(
     const action = actions.find((entry) => entry.tool === tool);
     return action ? action.args : null;
   };
-  const open = find("open_session");
+  const open = find("session_open");
   if (open) {
     const client = clean(open.client_name);
     const service = clean(open.service_name);
-    const closes = actions.some((entry) => entry.tool === "close_session");
+    const closes = actions.some((entry) => entry.tool === "session_close");
     if (client !== undefined && service !== undefined) {
       if (closes) {
         return en
@@ -76,19 +76,34 @@ export function pendingConfirmTitle(
       return en ? `Open session with ${client}?` : `¿Abro sesión con ${client}?`;
     }
   }
-  const note = find("add_note");
+  const note = find("client_note_add");
   if (note) {
     const client = clean(note.client_name);
     if (client !== undefined) {
       return en ? `Save note for ${client}?` : `¿Guardo nota para ${client}?`;
     }
   }
-  const supply = find("log_supply_use");
+  const supply = find("session_log_supply");
   if (supply) {
     const name = clean(supply.name);
     if (name !== undefined) {
       return en ? `Log ${name}?` : `¿Registro ${name}?`;
     }
+  }
+  const accept = find("session_quote_accept");
+  if (accept) {
+    return en ? "Register the payment?" : "¿Registro el pago?";
+  }
+  const move = find("agenda_move_appointment");
+  if (move) {
+    const client = clean(move.client_name);
+    if (client !== undefined) {
+      return en ? `Move ${client}'s appointment?` : `¿Muevo la cita de ${client}?`;
+    }
+  }
+  const cancel = find("agenda_cancel_appointment");
+  if (cancel) {
+    return en ? "Cancel the appointment?" : "¿Cancelo la cita?";
   }
   return en ? "Should I save it?" : "¿Lo guardo?";
 }
@@ -128,6 +143,17 @@ export function clearPendingAction(key: string): void {
  * are stored: the yes that follows must run without asking anything else.
  * Anything else clears the slot instead of leaving a stale proposal.
  */
+/**
+ * The session behind a stored Accept proposal, if any. Touch and voice
+ * Reject both consult this: the sheet stays open and waits for the amount.
+ */
+export function quoteAcceptSessionId(actions: PendingAction[]): number | null {
+  const accept = actions.find((entry) => entry.tool === "session_quote_accept");
+  if (!accept) return null;
+  const sessionId = accept.args.session_id;
+  return typeof sessionId === "number" ? sessionId : null;
+}
+
 export function buildPendingActions(
   db: ValeDb,
   toolName: string,
@@ -136,12 +162,31 @@ export function buildPendingActions(
     ok: boolean;
     pendingCreate?: unknown;
     pendingSessionSwitch?: unknown;
+    pendingAccept?: unknown;
+    pendingMove?: unknown;
+    pendingCancel?: unknown;
   },
 ): PendingAction[] | undefined {
+  // A quoted total waits for Accept: the yes registers it, a no waits for
+  // the spoken amount. Stored on success, like every other proposal.
+  if (toolResult.ok && toolName === "session_quote") {
+    const pending = toolResult.pendingAccept as
+      | { amount?: unknown; session_id?: unknown }
+      | undefined;
+    if (typeof pending?.amount === "number" && typeof pending?.session_id === "number") {
+      return [
+        {
+          tool: "session_quote_accept",
+          args: { amount: pending.amount, session_id: pending.session_id },
+        },
+      ];
+    }
+    return undefined;
+  }
   if (!toolResult.ok) {
     // A live session blocks the requested open: a yes closes it first.
     // Unknown clients join the same yes; the open re-validates the service.
-    if (toolName === "open_session") {
+    if (toolName === "session_open") {
       const target = toolResult.pendingSessionSwitch as
         | { client_name?: unknown; service_name?: unknown }
         | undefined;
@@ -152,25 +197,54 @@ export function buildPendingActions(
         service !== undefined &&
         matchOne(allServices(db), service).kind === "match"
       ) {
-        const steps: PendingAction[] = [{ tool: "close_session", args: {} }];
+        const steps: PendingAction[] = [{ tool: "session_close", args: {} }];
         if (matchOne(allClients(db), client).kind === "none") {
-          steps.push({ tool: "create_client", args: { name: client } });
+          steps.push({ tool: "client_create", args: { name: client } });
         }
         steps.push({
-          tool: "open_session",
+          tool: "session_open",
           args: { client_name: client, service_name: service },
         });
         return steps;
       }
     }
-    if (toolName === "log_supply_use") {
+    if (toolName === "session_log_supply") {
       const name = clean(toolResult.pendingCreate);
       if (name !== undefined && getOpenSession(db) !== null) {
-        return [{ tool: "log_supply_use", args: { name, confirm_create: true } }];
+        return [{ tool: "session_log_supply", args: { name, confirm_create: true } }];
       }
       return undefined;
     }
-    if (toolName === "open_session") {
+    if (toolName === "agenda_move_appointment") {
+      const pending = toolResult.pendingMove as
+        | { client_name?: unknown; new_day?: unknown; new_time?: unknown }
+        | undefined;
+      const client = clean(pending?.client_name);
+      const day = clean(pending?.new_day);
+      const time = clean(pending?.new_time);
+      if (client !== undefined && day !== undefined && time !== undefined) {
+        return [
+          {
+            tool: "agenda_move_appointment",
+            args: { client_name: client, new_day: day, new_time: time, confirm_move: true },
+          },
+        ];
+      }
+      return undefined;
+    }
+    if (toolName === "agenda_cancel_appointment") {
+      const pending = toolResult.pendingCancel as { appointment_id?: unknown } | undefined;
+      if (typeof pending?.appointment_id === "number") {
+        return [
+          {
+            tool: "agenda_cancel_appointment",
+            args: { appointment_id: pending.appointment_id, confirm_cancel: true },
+          },
+        ];
+      }
+      return undefined;
+    }
+    if (toolName === "session_open") {
       const client = clean(args.client_name);
       const service = clean(args.service_name);
       if (
@@ -180,16 +254,16 @@ export function buildPendingActions(
         matchOne(allServices(db), service).kind === "match"
       ) {
         return [
-          { tool: "create_client", args: { name: client } },
+          { tool: "client_create", args: { name: client } },
           {
-            tool: "open_session",
+            tool: "session_open",
             args: { client_name: client, service_name: service },
           },
         ];
       }
       return undefined;
     }
-    if (toolName === "add_note") {
+    if (toolName === "client_note_add") {
       const client = clean(args.client_name);
       if (
         client !== undefined &&
@@ -197,9 +271,9 @@ export function buildPendingActions(
         matchOne(allClients(db), client).kind === "none"
       ) {
         return [
-          { tool: "create_client", args: { name: client } },
+          { tool: "client_create", args: { name: client } },
           {
-            tool: "add_note",
+            tool: "client_note_add",
             args: { client_name: client, text: args.text, kind: args.kind ?? "general" },
           },
         ];

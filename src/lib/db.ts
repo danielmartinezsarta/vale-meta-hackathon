@@ -2,6 +2,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
+import { bogotaDay } from "./natural-date";
 import seedData from "./seed-data.json";
 import { quotePrice, type PricingConfig } from "./quote";
 
@@ -174,14 +175,15 @@ function schemaSql(): string {
 }
 
 /**
- * Local YYYY-MM-DD shifted by a day offset. Duplicated from vale-tools
- * (which imports this module for PRICING, so importing back would cycle).
+ * Bogota YYYY-MM-DD shifted by a day offset. Same salon clock as the
+ * tools, so a seeded "today" is the tools' today on every machine.
  */
 function seedDay(offsetDays = 0): string {
-  const when = new Date();
-  when.setDate(when.getDate() + offsetDays);
+  const [year, month, day] = bogotaDay(new Date()).split("-").map(Number);
+  const base = new Date(Date.UTC(year, month - 1, day, 12));
+  const next = new Date(base.getTime() + offsetDays * 86_400_000);
   const pad = (value: number): string => String(value).padStart(2, "0");
-  return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`;
+  return `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-${pad(next.getUTCDate())}`;
 }
 
 /** Resolve a demo day marker ("today", "tomorrow") to a local YYYY-MM-DD. */
