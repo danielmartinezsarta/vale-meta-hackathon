@@ -360,9 +360,9 @@ export function TapToTalk({
   const runSession = useCallback(
     async (stream: MediaStream): Promise<void> => {
       sessionRef.current = true;
-      // Tapping talk opens the window like naming Vale does (server notes
-      // the same wake frame on the conversation socket).
-      lastExecuteAtRef.current = Date.now();
+      // The tap no longer opens the window (the server ignores the wake
+      // frame for attention): the mirror restarts only on her replies and
+      // heard names, exactly the events the server notes.
       valeStoreRef.current.set("listening");
       // One capture for the whole session; VAD events delimit turns.
       let resolveSession: (() => void) | null = null;

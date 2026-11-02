@@ -1109,9 +1109,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         clientId = control.client;
         return;
       }
-      // Tapping talk opens the window like naming Vale does.
+      // The tap announces the mic, nothing more: it must not open the
+      // window, or the first unnamed phrase of a fresh conversation would
+      // execute. The phrase earns the window by naming her (or a reply
+      // opens it), and the gate below judges the rest.
       if (control.type === "wake") {
-        noteAttention(clientId);
         return;
       }
       // Field diagnostics: capture, AudioContext, tab visibility, speech
