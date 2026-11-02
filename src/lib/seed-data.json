@@ -1,6 +1,20 @@
 {
   "_note": "All names, prices and data below are invented for the hackathon demo. No real client data. Canonical names are English (demo); Spanish goes in 'es'.",
-  "_photoRefsTBD": ["ali-3pm-reference", "ali-last-service"],
+  "david": {
+    "client": "David",
+    "appointment": {
+      "service": "Semi-permanent manicure",
+      "time": "15:00",
+      "reference_photo_ref": "seed-assets/david-appointment-reference.jpg"
+    },
+    "last_session": {
+      "service": "Nail art (per design)",
+      "started_at": "2026-10-24T15:00:00.000Z",
+      "ended_at": "2026-10-24T16:30:00.000Z",
+      "photo_path": "seed-assets/david-last-service.jpg"
+    },
+    "note": "Matte dark gray base with white HO HO HO lettering and small snowflake details, matte finish."
+  },
   "currency": "USD",
   "pricing": {
     "monthly_goal_usd": 2500,
