@@ -10,7 +10,7 @@ import type {
 import type { Board } from "@/lib/board";
 import { hasVisibleContent, type Turn } from "@/lib/turn-view";
 import { parseSseStream } from "@/lib/sse";
-import { namesVale } from "@/lib/wake";
+import { namesVale, shouldCutPhrase, windowMs } from "@/lib/wake";
 import {
   isSpeaking,
   setVoiceEngine,
@@ -152,6 +152,16 @@ export function TapToTalk({
   useEffect(() => {
     widgetRef.current = widget;
   }, [widget]);
+  // Client-side mirror of the server attention window: the tap, her replies
+  // and heard names restart it, exactly the events the server notes. It only
+  // ever keeps a phrase on the wire; the server gate owns every discard.
+  const boardRef = useRef<Board | null>(null);
+  useEffect(() => {
+    boardRef.current = board;
+  }, [board]);
+  const lastExecuteAtRef = useRef(0);
+  /** Remainder of a cut phrase drains here until the pause; never transcribed. */
+  const droppedRef = useRef(false);
   // Single source of truth for what Vale is doing; the indicator mirrors it.
   const valeStoreRef = useRef(createValeState());
   const [valeUiState, setValeUiState] = useState<ValeState>("idle");
@@ -338,6 +348,9 @@ export function TapToTalk({
   const runSession = useCallback(
     async (stream: MediaStream): Promise<void> => {
       sessionRef.current = true;
+      // Tapping talk opens the window like naming Vale does (server notes
+      // the same wake frame on the conversation socket).
+      lastExecuteAtRef.current = Date.now();
       valeStoreRef.current.set("listening");
       // One capture for the whole session; VAD events delimit turns.
       let resolveSession: (() => void) | null = null;
@@ -542,6 +555,7 @@ export function TapToTalk({
         const id = turnIdRef.current++;
         currentId = id;
         posted = false;
+        droppedRef.current = false;
         pending.length = 0;
         turnPeakRef.current = 0;
         turnMutedMsRef.current = 0;
@@ -565,6 +579,49 @@ export function TapToTalk({
           { id, interim: "", final: null, reply: null },
         ]);
         if (arm) armQuiet();
+      };
+
+      // A heard name restarts the mirrored window, like the server notes it.
+      const noteHeardName = (text: string) => {
+        if (namesVale(text)) lastExecuteAtRef.current = Date.now();
+      };
+
+      // Unaddressed chatter never rides to the model: past the opening
+      // words, with no session and the window closed, the phrase is cut
+      // here and its remainder drains until the pause. A phrase that names
+      // her is never cut; the server gate owns that verdict.
+      const maybeCutUnaddressed = (id: number, text: string) => {
+        noteHeardName(text);
+        if (!sessionRef.current || posted || droppedRef.current) return;
+        if (id !== currentId) return;
+        const sessionOpen = boardRef.current?.session != null;
+        const windowOpen =
+          Date.now() - lastExecuteAtRef.current < windowMs(sessionOpen);
+        if (!shouldCutPhrase({ text, sessionOpen, windowOpen })) return;
+        droppedRef.current = true;
+        posted = true;
+        const transport = transports.get(id);
+        if (transport) {
+          transport.failed = true;
+          const socket = transport.socket;
+          transport.socket = null;
+          if (socket) {
+            socketsRef.current.delete(socket);
+            try {
+              socket.close();
+            } catch {
+              /* already closed */
+            }
+          }
+        }
+        // Voice was present: the silence streak must not bill this turn.
+        silentStreakRef.current = 0;
+        removeTurn(id);
+        try {
+          console.log(`[cut] unaddressed phrase cut (${text.slice(0, 64)})`);
+        } catch {
+          /* logging never breaks capture */
+        }
       };
 
       // A failed turn ends the session so the user can tap to retry.
@@ -612,6 +669,7 @@ export function TapToTalk({
             if (typeof message.transcript !== "string") return;
             if ((message as { final?: unknown }).final === true) {
               finalReceivedRef.current.add(id);
+              noteHeardName(message.transcript);
               // An empty final never wipes a shown interim: the done path
               // prunes contentless rows, and a row with interim text stays
               // as heard instead of blanking.
@@ -621,11 +679,13 @@ export function TapToTalk({
               }
             } else {
               patchTurn(id, { interim: message.transcript });
+              maybeCutUnaddressed(id, message.transcript);
             }
             break;
           case "reply-delta":
             if (typeof message.text !== "string") return;
             // Append fragments and voice complete sentences at once.
+            lastExecuteAtRef.current = Date.now();
             {
               const next = `${repliesRef.current.get(id) ?? ""}${message.text}`;
               repliesRef.current.set(id, next);
@@ -639,6 +699,7 @@ export function TapToTalk({
             break;
           case "reply":
             if (typeof message.text !== "string") return;
+            lastExecuteAtRef.current = Date.now();
             // Deltas already voiced this turn: only flush the tail.
             if (!mutedOutRef.current) {
               if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
@@ -651,6 +712,7 @@ export function TapToTalk({
           case "board": {
             const board = (message as { board?: unknown }).board;
             if (board && typeof board === "object") {
+              lastExecuteAtRef.current = Date.now();
               setBoard(board as Board);
             }
             break;
@@ -963,12 +1025,16 @@ export function TapToTalk({
               return;
             }
             await parseSseStream(response.body, {
-              onInterim: (transcript) => patchTurn(id, { interim: transcript }),
+              onInterim: (transcript) => {
+                patchTurn(id, { interim: transcript });
+                maybeCutUnaddressed(id, transcript);
+              },
               onFinal: (transcript) => {
                 // The turn ends at `done`; reply/notice/error follow on this stream.
                 // An empty final never wipes a shown interim: the done path
                 // prunes contentless rows instead.
                 finalReceivedRef.current.add(id);
+                noteHeardName(transcript);
                 if (transcript.trim() !== "") {
                   silentStreakRef.current = 0;
                   patchTurn(id, { final: transcript, interim: "" });
@@ -980,12 +1046,14 @@ export function TapToTalk({
               },
               onReplyDelta: (text) => {
                 // Append fragments and voice complete sentences at once.
+                lastExecuteAtRef.current = Date.now();
                 const next = `${repliesRef.current.get(id) ?? ""}${text}`;
                 repliesRef.current.set(id, next);
                 patchTurn(id, { reply: next });
                 if (!mutedOutRef.current) speakStream(text, languageRef.current);
               },
               onReply: (text) => {
+                lastExecuteAtRef.current = Date.now();
                 // Deltas already voiced this turn: only flush the tail.
                 if (!mutedOutRef.current) {
                   if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
@@ -994,7 +1062,10 @@ export function TapToTalk({
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
               },
-              onBoard: (next) => setBoard(next),
+              onBoard: (next) => {
+                lastExecuteAtRef.current = Date.now();
+                setBoard(next);
+              },
               onWidget: (next) => handleWidget(next),
               onIgnored: () => patchTurn(id, { ignored: true }),
               onNotice: (message, code) => {
@@ -1058,6 +1129,7 @@ export function TapToTalk({
       // a JSON turn when no socket is open. Either way it equals a spoken vote.
       const castVote = (vote: "yes" | "no") => {
         if (!sessionRef.current) return;
+        lastExecuteAtRef.current = Date.now();
         const payload = JSON.stringify({ type: "vote", vote });
         try {
           if (
@@ -1192,6 +1264,8 @@ export function TapToTalk({
           },
           onFrame: (frame) => {
             if (!sessionRef.current) return;
+            // A cut phrase drains here until the pause: no frames, no meter.
+            if (droppedRef.current) return;
             // Strict turns: while she speaks, nothing is captured. The
             // capture pause usually drops these first; this guards the gap
             // before the next watch tick lands.
@@ -1243,12 +1317,19 @@ export function TapToTalk({
             valeStoreRef.current.set("listening");
             window.clearTimeout(quietTimerRef.current);
             // A new utterance after a posted turn opens the next turn on the same capture.
-            if (posted) openTurn(false);
+            // After a cut the remainder is still draining: wait for the pause.
+            if (posted && !droppedRef.current) openTurn(false);
             // Without a conversation socket, open one per turn so the
             // ~0.9 s handshake hides inside the utterance.
             if (!convOpen) openTurnSocket(currentId);
           },
           onSpeechEnd: (utterance?: UtteranceStats) => {
+            // The pause after a cut: the remainder drained, open fresh.
+            if (droppedRef.current && sessionRef.current) {
+              openTurn(false);
+              armQuiet();
+              return;
+            }
             if (!sessionRef.current || posted) return;
             posted = true;
             // Delivery accounting for this utterance (blocks lost under

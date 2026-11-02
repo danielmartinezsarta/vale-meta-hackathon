@@ -57,6 +57,41 @@ export function namesVale(transcript: string, words: string[] = wakeWords()): bo
     .some((token) => words.includes(normalizeWakeText(token)));
 }
 
+/**
+ * Live words before an unnamed phrase is cut client-side (~2 s of speech).
+ * Past this many words the ASR revision risk is low: the opening words the
+ * server gate reads are already stable.
+ */
+export const EARLY_CUT_WORDS = 6;
+
+/**
+ * Client-side twin of the server wake gate for unaddressed chatter: with no
+ * session open and the attention window closed, a phrase that runs past the
+ * opening words without naming Vale is cut now instead of riding to the
+ * model. A phrase that names her is never cut, however long it runs, and a
+ * session or an open window disables the cut entirely.
+ */
+export function shouldCutPhrase(options: {
+  text: string;
+  sessionOpen: boolean;
+  windowOpen: boolean;
+}): boolean {
+  if (options.sessionOpen || options.windowOpen) return false;
+  const words = options.text
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word !== "");
+  if (words.length < EARLY_CUT_WORDS) return false;
+  // Anywhere, not just the opening words: a long order that names her late
+  // stays on the wire and the server gate (which owns the true window)
+  // decides. Only chatter that never names her is cut here.
+  const tokens = normalizeWakeText(options.text)
+    .split(" ")
+    .filter((token) => token !== "");
+  const known = new Set(wakeWords());
+  return !tokens.some((token) => known.has(token));
+}
+
 /** Client key for the attention window: first forwarded IP or direct peer. */
 export function requestClientIp(request: Request): string {
   const first = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();

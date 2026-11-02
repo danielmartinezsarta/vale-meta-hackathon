@@ -8,6 +8,7 @@ import {
   namesVale,
   requestClientId,
   sanitizeClientId,
+  shouldCutPhrase,
   wakeWords,
 } from "./wake";
 
@@ -258,5 +259,54 @@ describe("language gate (gate:idioma)", () => {
     expect(
       checkWake("vale abre sesion con Ana", "ip-lang-es", 1000, false, "es"),
     ).toMatchObject({ execute: true, gate: "nombre" });
+  });
+});
+
+describe("shouldCutPhrase (client-side early cut)", () => {
+  it("cuts a long unnamed phrase with no session and a closed window", () => {
+    expect(
+      shouldCutPhrase({
+        text: "I was talking to my neighbor about the appointment",
+        sessionOpen: false,
+        windowOpen: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("waits for the opening words before judging", () => {
+    expect(
+      shouldCutPhrase({
+        text: "I was talking",
+        sessionOpen: false,
+        windowOpen: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("never cuts a phrase that names her, however long", () => {
+    expect(
+      shouldCutPhrase({
+        text: "please book my neighbor Ana for a gel removal tomorrow Vale",
+        sessionOpen: false,
+        windowOpen: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldCutPhrase({
+        text: "Vale please book my neighbor Ana for a gel removal tomorrow",
+        sessionOpen: false,
+        windowOpen: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("stays off with a session open or the window open", () => {
+    const text = "I was talking to my neighbor about the appointment";
+    expect(
+      shouldCutPhrase({ text, sessionOpen: true, windowOpen: false }),
+    ).toBe(false);
+    expect(
+      shouldCutPhrase({ text, sessionOpen: false, windowOpen: true }),
+    ).toBe(false);
   });
 });
