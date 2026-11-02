@@ -40,8 +40,9 @@ describe("buildPreviewPrompt", () => {
     expect(prompt).toContain("ring");
     expect(prompt).toContain("background");
     expect(prompt).toContain("framing identical");
-    expect(prompt).toContain("sparkle");
-    expect(prompt).toContain("bottom-right");
+    expect(prompt).not.toContain("sparkle");
+    expect(prompt).not.toContain("watermark");
+    expect(prompt).not.toContain("mark");
   });
 });
 

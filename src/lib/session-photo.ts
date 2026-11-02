@@ -6,7 +6,7 @@
 // Invented demo data only; no real client data.
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import type { ValeDb } from "./db";
 
 // Core stays in ./nails; the slot module is the single photo-flow surface.
@@ -30,9 +30,35 @@ export function sessionPhotoPath(
   baseDir?: string,
 ): string {
   return join(
-    baseDir ?? join(process.cwd(), "data", "session-photos"),
+    baseDir ?? sessionPhotosDir(),
     `${slot}_${sessionId}.jpg`,
   );
+}
+
+/**
+ * Photo storage root. VALE_PHOTO_DIR overrides it (absolute, or relative
+ * to the working directory) so tests use a tmp dir and never touch
+ * data/session-photos or data/previews. Same pattern as VALE_DB_PATH.
+ */
+export function photoRoot(): string {
+  const override = process.env.VALE_PHOTO_DIR?.trim();
+  if (override) return isAbsolute(override) ? override : join(process.cwd(), override);
+  return join(process.cwd(), "data");
+}
+
+/** Session slot photos live here: pre_<id>.jpg, post_<id>.jpg, ref_<id>.jpg. */
+export function sessionPhotosDir(): string {
+  return join(photoRoot(), "session-photos");
+}
+
+/** Generated previews live here: preview_<id>.png. Served by /api/photos. */
+export function previewsDir(): string {
+  return join(photoRoot(), "previews");
+}
+
+/** Cost log for the preview route; next to the photos so tests stay hermetic. */
+export function previewCostLogPath(): string {
+  return join(photoRoot(), "preview-cost.jsonl");
 }
 
 function isPhotoSlot(slot: string): slot is PhotoSlot {
