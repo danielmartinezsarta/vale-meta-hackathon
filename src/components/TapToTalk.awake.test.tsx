@@ -112,6 +112,56 @@ describe("awake screen (VoiceRobot, bubbles, sheets)", () => {
     expect(screen.getByText("Vale:")).toBeTruthy();
   });
 
+  it("never shows ignored turns on the screen, not even as a label", async () => {
+    stubGetUserMedia();
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      const frame = new Int16Array(960).fill(4000);
+      window.setTimeout(() => {
+        callbacks.onSpeechStart();
+        for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
+        callbacks.onSpeechEnd();
+      }, 0);
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
+    });
+    const encoder = new TextEncoder();
+    const raw =
+      `event: interim\ndata: {"transcript":"background chat"}\n\n` +
+      `event: final\ndata: {"transcript":"background chat here","audioProcessedMs":800}\n\n` +
+      `event: ignored\ndata: {}\n\n` +
+      `event: done\ndata: {}\n\n`;
+    const bytes = encoder.encode(raw);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          body: {
+            getReader: () => {
+              let step = 0;
+              return {
+                read: async () => {
+                  step += 1;
+                  if (step === 1) return { done: false, value: bytes };
+                  return { done: true, value: undefined };
+                },
+                releaseLock: () => {},
+              };
+            },
+          },
+        }),
+      ),
+    );
+    render(<TapToTalk autoStart />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Hi, I'm Vale")).toBeTruthy();
+    });
+    // The ignored phrase leaves no bubble, no label, no partial text.
+    expect(screen.queryByText("background chat here")).toBeNull();
+    expect(screen.queryByText("background chat")).toBeNull();
+    expect(screen.queryByText("ignored (no name)")).toBeNull();
+  });
+
   it("keeps at most three bubbles, dropping the oldest", async () => {
     stubGetUserMedia();
     driveTurns(

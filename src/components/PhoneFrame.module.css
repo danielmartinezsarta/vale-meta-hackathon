@@ -1,0 +1,15 @@
+/* Demo phone column: every screen centers in 390-430 px, and the gutters
+   reuse the screen background so wide viewports show no bands or cuts. */
+.frame {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.col {
+  position: relative;
+  width: min(430px, 100%);
+  height: 100dvh;
+  overflow: hidden;
+}

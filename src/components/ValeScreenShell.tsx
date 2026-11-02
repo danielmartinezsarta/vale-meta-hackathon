@@ -2,6 +2,7 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { VoiceRobot } from "@/components/VoiceRobot";
+import { PhoneFrame } from "@/components/PhoneFrame";
 import { valeVars, type HomeMode } from "@/lib/vale-theme";
 import type { ValeState } from "@/lib/vale-state";
 import type { Widget } from "@/lib/widget";
@@ -14,8 +15,6 @@ export interface ScreenBubble {
   id: string;
   text: string;
   from: "user" | "vale";
-  ignored?: boolean;
-  ignoredTag?: string;
 }
 
 /**
@@ -65,10 +64,12 @@ export function ValeScreenShell({
   onVote: (vote: "yes" | "no") => void;
 }) {
   const visible = bubbles.slice(-3);
+  const vars = valeVars(mode);
   return (
+    <PhoneFrame background={vars["--aw-bg"]}>
     <div
       className={`${styles.aw} ${frameClassName ?? ""}`}
-      style={valeVars(mode) as CSSProperties}
+      style={vars as CSSProperties}
     >
       <div className={styles.awbg} aria-hidden="true" />
 
@@ -117,23 +118,17 @@ export function ValeScreenShell({
       </div>
 
       <ol className={styles.chat} role="log" aria-label="Conversation" aria-live="polite">
-        {visible.map((bubble) =>
-          bubble.ignored ? (
-            <li key={bubble.id} className={styles.msgignored}>
-              {bubble.text} <small>{bubble.ignoredTag}</small>
-            </li>
-          ) : (
-            <li
-              key={bubble.id}
-              className={`${styles.msg} ${bubble.from === "user" ? styles.msguser : styles.msgvale}`}
-            >
-              <span className={styles.sronly}>
-                {bubble.from === "user" ? "You:" : "Vale:"}
-              </span>{" "}
-              {bubble.text}
-            </li>
-          ),
-        )}
+        {visible.map((bubble) => (
+          <li
+            key={bubble.id}
+            className={`${styles.msg} ${bubble.from === "user" ? styles.msguser : styles.msgvale}`}
+          >
+            <span className={styles.sronly}>
+              {bubble.from === "user" ? "You:" : "Vale:"}
+            </span>{" "}
+            {bubble.text}
+          </li>
+        ))}
       </ol>
 
       {below}
@@ -150,5 +145,6 @@ export function ValeScreenShell({
 
       {alert && <div role="alert">{alert}</div>}
     </div>
+    </PhoneFrame>
   );
 }

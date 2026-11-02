@@ -1535,21 +1535,12 @@ export function TapToTalk({
 
   // Dialogue bubbles for the awake screen: the user line grows in its own
   // bubble, Vale's reply grows with the deltas; the screen shows the last 3.
+  // Ignored turns never reach the screens (not even as a label): they stay
+  // visible only in the debug view, which reads the turns directly.
   const bubbles: AwakeBubble[] = [];
   for (const turn of turns) {
+    if (turn.ignored) continue;
     const text = turn.final ?? turn.interim;
-    if (turn.ignored) {
-      if (text.trim() !== "") {
-        bubbles.push({
-          id: `turn-${turn.id}-ignored`,
-          text,
-          from: "user",
-          ignored: true,
-          ignoredTag: ui.ignoredTag,
-        });
-      }
-      continue;
-    }
     if (text.trim() !== "") {
       bubbles.push({ id: `turn-${turn.id}-user`, text, from: "user" });
     }
