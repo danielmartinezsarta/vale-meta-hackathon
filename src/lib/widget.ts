@@ -14,10 +14,17 @@ export type WidgetKind =
   | "breakdown"
   | "confirm";
 
+/**
+ * Bottom-sheet size, carried in the widget type. "half" rises to mid-screen
+ * with Vale visible behind; "full" covers the screen.
+ */
+export type WidgetSize = "half" | "full";
+
 export interface Widget {
   kind: WidgetKind;
   title: string;
   lines: string[];
+  size: WidgetSize;
 }
 
 function moneyUsd(value: unknown): string {
@@ -57,6 +64,7 @@ export function buildWidget(
       const pct = Math.round((earned / goal) * 100);
       return {
         kind: "meta",
+        size: "half",
         title: en ? "Month goal" : "Meta del mes",
         lines: [
           en
@@ -81,6 +89,7 @@ export function buildWidget(
       });
       return {
         kind: "agenda",
+        size: "half",
         title: tool === "list_today" ? (en ? "Today" : "Hoy") : en ? "Next" : "Sigue",
         lines:
           lines.length > 0
@@ -92,6 +101,7 @@ export function buildWidget(
       if (info.private === true) {
         return {
           kind: "note",
+          size: "half",
           title: en ? "Private note saved." : "Nota privada guardada.",
           lines: [],
         };
@@ -99,6 +109,7 @@ export function buildWidget(
       const client = text(args.client_name);
       return {
         kind: "note",
+        size: "half",
         title:
           client !== ""
             ? en
@@ -122,6 +133,7 @@ export function buildWidget(
       if (line === "") return null;
       return {
         kind: "appointment",
+        size: "half",
         title: en ? "Appointment" : "Cita",
         lines: [line],
       };
@@ -129,8 +141,10 @@ export function buildWidget(
     case "quote_price": {
       const service = text(info.service) || text(args.service_name);
       if (service === "") return null;
+      // Money stays on screen in a half sheet; Vale never says it aloud.
       return {
         kind: "breakdown",
+        size: "half",
         title: service,
         lines: [
           en

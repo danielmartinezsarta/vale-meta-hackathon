@@ -821,7 +821,12 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       usage: { inputTokens: 100, outputTokens: 20 },
       toolUsed: "goal_progress",
       firstTokenMs: 50,
-      widget: { kind: "meta", title: "Month goal", lines: ["120.00 USD of 600.00 USD (20%)"] },
+      widget: {
+        kind: "meta",
+        title: "Month goal",
+        lines: ["120.00 USD of 600.00 USD (20%)"],
+        size: "half",
+      },
     });
     try {
       const browser = new FakeBrowser();

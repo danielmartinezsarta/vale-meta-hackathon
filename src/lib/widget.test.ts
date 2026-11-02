@@ -14,6 +14,7 @@ describe("buildWidget (tool-derived screen cards)", () => {
       kind: "meta",
       title: "Month goal",
       lines: ["120.00 USD of 600.00 USD (20%)"],
+      size: "half",
     });
   });
 
@@ -33,16 +34,27 @@ describe("buildWidget (tool-derived screen cards)", () => {
       kind: "agenda",
       title: "Today",
       lines: ["16:00 — Ana"],
+      size: "half",
     });
     expect(
       buildWidget("list_today", {}, { appointments: [] }, "en"),
-    ).toEqual({ kind: "agenda", title: "Today", lines: ["Nothing on the books."] });
+    ).toEqual({
+      kind: "agenda",
+      title: "Today",
+      lines: ["Nothing on the books."],
+      size: "half",
+    });
   });
 
   it("shows private notes without text and booking details with them", () => {
     expect(
       buildWidget("add_note", { client_name: "Ana" }, { private: true }, "en"),
-    ).toEqual({ kind: "note", title: "Private note saved.", lines: [] });
+    ).toEqual({
+      kind: "note",
+      title: "Private note saved.",
+      lines: [],
+      size: "half",
+    });
     expect(
       buildWidget(
         "create_appointment",
@@ -54,6 +66,7 @@ describe("buildWidget (tool-derived screen cards)", () => {
       kind: "appointment",
       title: "Appointment",
       lines: ["Ana 2026-11-03 16:00"],
+      size: "half",
     });
   });
 
@@ -80,7 +93,41 @@ describe("buildWidget (tool-derived screen cards)", () => {
         "Fixed 2.00 USD",
         "Total 45.00 USD",
       ],
+      size: "half",
     });
+  });
+
+  it("opens every widget as a half sheet", () => {
+    const widgets = [
+      buildWidget(
+        "goal_progress",
+        {},
+        { earned_usd: 120, goal_usd: 600 },
+        "en",
+      ),
+      buildWidget("list_today", {}, { appointments: [] }, "en"),
+      buildWidget("add_note", { client_name: "Ana" }, {}, "en"),
+      buildWidget(
+        "create_appointment",
+        { client_name: "Ana", day: "2026-11-03", time: "16:00" },
+        {},
+        "en",
+      ),
+      buildWidget(
+        "quote_price",
+        { service_name: "Gel refill" },
+        {
+          service: "Gel refill",
+          supplies_cost: 8.5,
+          time_cost: 30,
+          fixed_share: 2,
+          final_price_usd: 45,
+        },
+        "en",
+      ),
+    ];
+    expect(widgets.length).toBeGreaterThan(0);
+    for (const widget of widgets) expect(widget?.size).toBe("half");
   });
 
   it("returns null for tools with nothing to show", () => {

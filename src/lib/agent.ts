@@ -550,6 +550,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
           kind: "confirm",
           title: pendingConfirmTitle(proposal, language),
           lines: [],
+          size: "half",
         };
       } else clearPendingAction(slotKey);
     } else {

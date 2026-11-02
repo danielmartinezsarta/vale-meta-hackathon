@@ -785,6 +785,7 @@ describe("closed reply language", () => {
       kind: "confirm",
       title: "Open session with Vera for Gel removal?",
       lines: [],
+      size: "half",
     });
     clearPendingAction("pend-agent-widget");
   });
