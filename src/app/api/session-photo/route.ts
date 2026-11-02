@@ -1,7 +1,11 @@
 // Server-side only. Stores one session slot photo from multipart upload.
 // Request slots before|after|reference map to lib slots pre|post|ref.
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { getDb } from "@/lib/db";
+import { buildNailMosaic, describeMosaic, segmentNails } from "@/lib/nails";
 import {
+  previewsDir,
   sessionPhotosDir,
   session_photo_save,
   type PhotoSlot,
@@ -58,10 +62,47 @@ export async function POST(request: Request): Promise<Response> {
     return fail("E-STORE", "Photo could not be stored.", 500);
   }
   const name = photoPath.split("/").pop() ?? "";
-  return Response.json({
-    ok: true,
-    sessionId,
-    slot,
-    photoUrl: `/api/photos?file=${encodeURIComponent(name)}`,
-  });
+  const photoUrl = `/api/photos?file=${encodeURIComponent(name)}`;
+  const key = process.env.META_API_KEY?.trim() ?? "";
+  if (!key) {
+    return fail("E-NO-KEY", "Missing META_API_KEY.", 500);
+  }
+  let sam: { nailCount: number; boxes: Awaited<ReturnType<typeof segmentNails>> };
+  try {
+    const boxes = await segmentNails(key, dataUrl);
+    sam = { nailCount: boxes.length, boxes };
+  } catch {
+    return fail("E-SAM", "Nail analysis failed.", 500);
+  }
+  const nailsFound = sam.nailCount === 5;
+  if (slot !== "post") {
+    return Response.json({
+      ok: true,
+      sessionId,
+      slot,
+      photoUrl,
+      sam,
+      checks: { nailsFound, nailsExpected: 5, mosaic: false },
+    });
+  }
+  try {
+    const mosaic = await buildNailMosaic(bytes, sam.boxes);
+    const description = await describeMosaic(key, mosaic);
+    const mosaicName = `mosaic_${sessionId}.png`;
+    const dir = previewsDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, mosaicName), mosaic);
+    return Response.json({
+      ok: true,
+      sessionId,
+      slot,
+      photoUrl,
+      sam,
+      mosaicUrl: `/api/photos?file=${encodeURIComponent(mosaicName)}`,
+      description,
+      checks: { nailsFound, nailsExpected: 5, mosaic: true },
+    });
+  } catch {
+    return fail("E-SAM", "Nail analysis failed.", 500);
+  }
 }

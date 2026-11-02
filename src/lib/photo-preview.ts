@@ -1,6 +1,7 @@
 // Server-side only: Muse Image photo preview. Never import from client code.
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { NailBox } from "./nails";
 
 export const PREVIEW_MODEL = "muse-image-1.0";
 export const PREVIEW_ENDPOINT = "https://api.meta.ai/v1/images/edits";
@@ -89,6 +90,39 @@ export function buildPreviewPrompt(
     "Apply the reference design onto the before nails, only inside the nails.",
     "Keep hand, skin, ring, background, light and framing identical to the before photo.",
   ].join(" ");
+}
+
+/**
+ * True when both sets hold exactly 5 boxes and every after-box center
+ * lands within tolerancePct percent of image size of some before-box
+ * center, matched greedily without reuse. Centers compare against the
+ * before box's own w/h as the image size.
+ */
+export function samBoxesMatch(
+  beforeBoxes: NailBox[],
+  afterBoxes: NailBox[],
+  tolerancePct = 15,
+): boolean {
+  if (beforeBoxes.length !== 5 || afterBoxes.length !== 5) return false;
+  const used = new Set<number>();
+  for (const after of afterBoxes) {
+    const afterCx = (after.x1 + after.x2) / 2;
+    const afterCy = (after.y1 + after.y2) / 2;
+    let hit = -1;
+    for (let i = 0; i < beforeBoxes.length; i++) {
+      if (used.has(i)) continue;
+      const before = beforeBoxes[i];
+      const dx = Math.abs(afterCx - (before.x1 + before.x2) / 2);
+      const dy = Math.abs(afterCy - (before.y1 + before.y2) / 2);
+      if (dx <= (tolerancePct / 100) * before.w && dy <= (tolerancePct / 100) * before.h) {
+        hit = i;
+        break;
+      }
+    }
+    if (hit === -1) return false;
+    used.add(hit);
+  }
+  return true;
 }
 
 export function defaultCostLogPath(cwd: string = process.cwd()): string {

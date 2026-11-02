@@ -10,9 +10,13 @@ import {
   sessionPhotoPath,
   sessionPhotosDir,
 } from "@/lib/session-photo";
-import { runPhotoPreview, type DesignSpec } from "@/lib/photo-preview";
+import { runPhotoPreview, samBoxesMatch, type DesignSpec } from "@/lib/photo-preview";
+import { segmentNails, type NailBox } from "@/lib/nails";
 
 export const runtime = "nodejs";
+
+/** Hard cap: at most two Image calls per request, no matter what. */
+const MAX_IMAGE_CALLS = 2;
 
 // The reference image carries the design; the text spec stays neutral.
 const PREVIEW_DESIGN: DesignSpec = {
@@ -88,25 +92,86 @@ export async function POST(request: Request): Promise<Response> {
   if (!reference) {
     return fail("E-NO-PHOTO", "No appointment reference photo.", 404);
   }
-  let result: Awaited<ReturnType<typeof runPhotoPreview>>;
+  const key = process.env.META_API_KEY?.trim();
+  if (!key) {
+    return fail("E-NO-KEY", "Missing META_API_KEY for photo preview.", 503);
+  }
+  const beforeMime = sniffMime(before);
+  const referenceMime = sniffMime(reference);
+  // Step 1: SAM pre-check on the before photo; no Image call unless all
+  // five nails are visible.
+  let beforeBoxes: NailBox[];
   try {
-    result = await runPhotoPreview(
-      {
-        beforePhoto: before,
-        mime: sniffMime(before),
-        referencePhoto: reference,
-        referenceMime: sniffMime(reference),
-        design: PREVIEW_DESIGN,
-        appointmentRef: `APT-${appointment.id}`,
-      },
-      { costLogPath: previewCostLogPath() },
+    beforeBoxes = await segmentNails(
+      key,
+      `data:${beforeMime};base64,${before.toString("base64")}`,
     );
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Photo preview failed.";
+    return fail("E-MODEL", message, 502);
+  }
+  if (beforeBoxes.length !== 5) {
+    return Response.json(
+      {
+        error: "I need a photo with all five nails visible.",
+        code: "E-NO-NAILS",
+        sam: { nailCount: beforeBoxes.length, boxes: beforeBoxes },
+      },
+      { status: 422 },
+    );
+  }
+  const previewInput = {
+    beforePhoto: before,
+    mime: beforeMime,
+    referencePhoto: reference,
+    referenceMime,
+    design: PREVIEW_DESIGN,
+    appointmentRef: `APT-${appointment.id}`,
+  };
+  const runImage = () => runPhotoPreview(previewInput, { costLogPath: previewCostLogPath() });
+  const checkResult = async (image: Buffer): Promise<NailBox[]> =>
+    segmentNails(key, `data:image/png;base64,${image.toString("base64")}`);
+  const imageError = (error: unknown): Response => {
     const code = (error as NodeJS.ErrnoException)?.code ?? "E-MODEL";
     const message = error instanceof Error ? error.message : "Photo preview failed.";
     if (code === "E-BUDGET") return fail(code, message, 429);
     if (code === "E-NO-KEY") return fail(code, message, 503);
     return fail(code, message, 502);
+  };
+  // Step 2: the single Image call.
+  let imageCalls = 0;
+  let result: Awaited<ReturnType<typeof runPhotoPreview>>;
+  try {
+    result = await runImage();
+    imageCalls += 1;
+  } catch (error) {
+    return imageError(error);
+  }
+  // Step 3: SAM post-check on the result.
+  let afterBoxes: NailBox[];
+  try {
+    afterBoxes = await checkResult(result.image);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Photo preview failed.";
+    return fail("E-MODEL", message, 502);
+  }
+  let matched = samBoxesMatch(beforeBoxes, afterBoxes);
+  let secondCall = false;
+  if (!matched && imageCalls < MAX_IMAGE_CALLS) {
+    try {
+      result = await runImage();
+      imageCalls += 1;
+      secondCall = true;
+    } catch (error) {
+      return imageError(error);
+    }
+    try {
+      afterBoxes = await checkResult(result.image);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Photo preview failed.";
+      return fail("E-MODEL", message, 502);
+    }
+    matched = samBoxesMatch(beforeBoxes, afterBoxes);
   }
   mkdirSync(previewsDir(), { recursive: true });
   writeFileSync(join(previewsDir(), `preview_${sessionId}.png`), result.image);
@@ -117,5 +182,8 @@ export async function POST(request: Request): Promise<Response> {
     estimatedCostUsd: result.estimatedCostUsd,
     aiPreview: true,
     disclaimer: result.disclaimer,
+    preCheck: { nailCount: beforeBoxes.length, boxes: beforeBoxes },
+    postCheck: { nailCount: afterBoxes.length, matched },
+    secondCall,
   });
 }
