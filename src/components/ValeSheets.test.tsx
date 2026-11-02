@@ -35,6 +35,12 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
     expect(screen.getByText("Allergic to monomer")).toBeTruthy();
     expect(screen.getByText("Oct 12, 2026")).toBeTruthy();
     expect(screen.getByText("+ 2 earlier visits")).toBeTruthy();
+    // No camera affordance until a visit carries real photos.
+    expect(
+      screen
+        .getByRole("button", { name: /open the photos of this visit/ })
+        .querySelector("svg"),
+    ).toBeNull();
     expect(screen.getByText("Always on time")).toBeTruthy();
   });
 

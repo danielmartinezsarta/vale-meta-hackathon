@@ -548,7 +548,6 @@ function CardBody({ data, onVisit }: { data: ClientCardData; onVisit?: (date: st
                 >
                   <span>{formatVisit(visit.date)}</span>
                   <span>{visit.service}</span>
-                  {CAM_ICON}
                 </button>
               ))}
               {data.visitsMore > 0 && <p className="aw-cc__more">+ {data.visitsMore} earlier visits</p>}
