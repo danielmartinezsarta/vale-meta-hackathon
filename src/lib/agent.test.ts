@@ -747,8 +747,12 @@ describe("closed reply language", () => {
       db: freshTestDb(),
     });
 
-    expect(result.widget?.kind).toBe("meta");
-    expect(result.widget?.lines).toHaveLength(1);
+    expect(result.widget).toEqual({
+      kind: "goal",
+      title: "Monthly goal",
+      size: "half",
+      data: { name: null, goal: 2500, earned: 0 },
+    });
     expect(result.text).toBe("Here is your goal.");
   });
 
@@ -784,8 +788,8 @@ describe("closed reply language", () => {
     expect(result.widget).toEqual({
       kind: "confirm",
       title: "Open session with Vera for Gel removal?",
-      lines: [],
       size: "half",
+      data: {},
     });
     clearPendingAction("pend-agent-widget");
   });

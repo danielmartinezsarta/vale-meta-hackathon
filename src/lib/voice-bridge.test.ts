@@ -1024,10 +1024,10 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       toolUsed: "goal_progress",
       firstTokenMs: 50,
       widget: {
-        kind: "meta",
-        title: "Month goal",
-        lines: ["120.00 USD of 600.00 USD (20%)"],
+        kind: "goal",
+        title: "Monthly goal",
         size: "half",
+        data: { name: null, goal: 600, earned: 120 },
       },
     });
     try {
@@ -1055,7 +1055,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       const widget = browser.frames().find((frame) => frame.type === "widget") as {
         widget?: { kind?: string };
       };
-      expect(widget.widget?.kind).toBe("meta");
+      expect(widget.widget?.kind).toBe("goal");
       browser.close(1000, "test done");
     } finally {
       finalTranscript = "vale, live from the bridge";

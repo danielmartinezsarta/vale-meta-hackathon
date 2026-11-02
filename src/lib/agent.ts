@@ -549,8 +549,8 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
         widget = {
           kind: "confirm",
           title: pendingConfirmTitle(proposal, language),
-          lines: [],
           size: "half",
+          data: {},
         };
       } else clearPendingAction(slotKey);
     } else {
@@ -559,7 +559,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
         call.name,
         parsed,
         (toolResult as { data?: unknown }).data ?? null,
-        language,
+        db,
       );
       if (card) widget = card;
     }

@@ -128,15 +128,15 @@ describe("confirm card (touch equals voice)", () => {
     ws.serverMessage({
       type: "widget",
       widget: {
-        kind: "meta",
-        title: "Month goal",
-        lines: ["120.00 USD of 600.00 USD (20%)"],
-        size: "half"
+        kind: "goal",
+        title: "Monthly goal",
+        size: "half",
+        data: { name: null, goal: 600, earned: 120 },
       },
     });
     await waitFor(() => {
-      expect(screen.getByText("Month goal")).toBeTruthy();
-      expect(screen.getByText("120.00 USD of 600.00 USD (20%)")).toBeTruthy();
+      expect(screen.getByText("Monthly goal")).toBeTruthy();
+      expect(screen.getByText("$600")).toBeTruthy();
     });
     expect(
       screen.queryByRole("button", { name: "Yes" }),
@@ -148,29 +148,29 @@ describe("confirm card (touch equals voice)", () => {
     ws.serverMessage({
       type: "widget",
       widget: {
-        kind: "agenda",
-        title: "Today",
-        lines: [],
+        kind: "price",
+        title: "Price",
         size: "half",
+        data: { service: "Manicure", extras: null, suggested: 35 },
       },
     });
     await waitFor(() => {
-      expect(screen.getByText("Today")).toBeTruthy();
+      expect(screen.getByText("Price")).toBeTruthy();
     });
     // A short close order with the sheet open dismisses the turn instead
     // of riding to the model.
     ws.serverMessage({
       type: "transcript",
-      transcript: "close the agenda",
+      transcript: "close the price",
       final: true,
     });
     await waitFor(() => {
       expect(ws.sentStrings()).toContain(
-        JSON.stringify({ type: "dismiss", transcript: "close the agenda" }),
+        JSON.stringify({ type: "dismiss", transcript: "close the price" }),
       );
     });
     await waitFor(() => {
-      expect(screen.queryByText("Today")).toBeNull();
+      expect(screen.queryByText("Price")).toBeNull();
     });
   });
 });

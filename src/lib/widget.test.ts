@@ -1,138 +1,140 @@
 import { describe, expect, it } from "vitest";
-import { buildWidget } from "./widget";
+import {
+  buildWidget,
+  formatDay,
+  formatMinutes,
+  formatVisit,
+  initials,
+  usdWhole,
+  widgetTitle,
+  WIDGET_SIZE,
+} from "./widget";
 
-describe("buildWidget (tool-derived screen cards)", () => {
-  it("shows the month goal with amounts the voice never reads", () => {
+const NO_DB = undefined;
+
+describe("buildWidget (typed payloads per kind)", () => {
+  it("stamps the fixed half/full size and English title per kind", () => {
+    expect(WIDGET_SIZE.client_card).toBe("full");
+    expect(WIDGET_SIZE.goal).toBe("half");
+    expect(WIDGET_SIZE.booked).toBe("half");
+    expect(WIDGET_SIZE.session_summary).toBe("full");
+    expect(widgetTitle("price")).toBe("Price");
+    expect(widgetTitle("note")).toBe("Note saved");
+  });
+
+  it("builds the goal payload from earned and target", () => {
     expect(
-      buildWidget(
-        "goal_progress",
-        {},
-        { earned_usd: 120, goal_usd: 600, month: "2026-10" },
-        "en",
-      ),
+      buildWidget("goal_progress", {}, { earned_usd: 120, goal_usd: 600 }, NO_DB),
     ).toEqual({
-      kind: "meta",
-      title: "Month goal",
-      lines: ["120.00 USD of 600.00 USD (20%)"],
+      kind: "goal",
+      title: "Monthly goal",
       size: "half",
+      data: { name: null, goal: 600, earned: 120 },
     });
   });
 
-  it("lists one line per appointment, or the empty day", () => {
+  it("builds the client card with health first, notes next", () => {
     expect(
       buildWidget(
-        "list_today",
+        "find_client",
         {},
         {
-          appointments: [
-            { client: "Ana", service: "Gel refill", day: "2026-10-31", time: "16:00" },
+          id: 1,
+          name: "David",
+          notes: [
+            { id: 1, kind: "general", text: "Always on time" },
+            { id: 2, kind: "health", text: "Allergic to monomer" },
+            { id: 3, kind: "health", text: null },
           ],
         },
-        "en",
+        NO_DB,
       ),
     ).toEqual({
-      kind: "agenda",
-      title: "Today",
-      lines: ["16:00 — Ana"],
-      size: "half",
-    });
-    expect(
-      buildWidget("list_today", {}, { appointments: [] }, "en"),
-    ).toEqual({
-      kind: "agenda",
-      title: "Today",
-      lines: ["Nothing on the books."],
-      size: "half",
+      kind: "client_card",
+      title: "Client card",
+      size: "full",
+      data: {
+        name: "David",
+        birthday: null,
+        sex: null,
+        phone: null,
+        email: null,
+        visits: [],
+        visitsMore: 0,
+        healthNotes: ["Allergic to monomer"],
+        noteTags: ["Always on time"],
+      },
     });
   });
 
-  it("shows private notes without text and booking details with them", () => {
+  it("builds health and regular notes from the call args", () => {
     expect(
-      buildWidget("add_note", { client_name: "Ana" }, { private: true }, "en"),
+      buildWidget("add_note", { client_name: "David", text: "Allergic to monomer", kind: "health" }, { ok: true }, NO_DB),
+    ).toEqual({
+      kind: "health_note",
+      title: "Health note",
+      size: "half",
+      data: { text: "Allergic to monomer", client: "David" },
+    });
+    expect(
+      buildWidget("add_note", { client_name: "David", text: "Likes neon colors" }, { ok: true }, NO_DB),
     ).toEqual({
       kind: "note",
-      title: "Private note saved.",
-      lines: [],
+      title: "Note saved",
       size: "half",
-    });
-    expect(
-      buildWidget(
-        "create_appointment",
-        { client_name: "Ana", day: "2026-11-03", time: "16:00" },
-        { appointment_id: 7 },
-        "en",
-      ),
-    ).toEqual({
-      kind: "appointment",
-      title: "Appointment",
-      lines: ["Ana 2026-11-03 16:00"],
-      size: "half",
+      data: { text: "Likes neon colors", client: "David" },
     });
   });
 
-  it("breaks the quote into screen lines", () => {
+  it("builds the price payload with null extras until priced", () => {
     expect(
       buildWidget(
         "quote_price",
-        { service_name: "Gel refill" },
-        {
-          service: "Gel refill",
-          supplies_cost: 8.5,
-          time_cost: 30,
-          fixed_share: 2,
-          final_price_usd: 45,
-        },
-        "en",
+        { service_name: "Gel manicure" },
+        { service: "Gel manicure", final_price_usd: 35 },
+        NO_DB,
       ),
     ).toEqual({
-      kind: "breakdown",
-      title: "Gel refill",
-      lines: [
-        "Supplies 8.50 USD",
-        "Time 30.00 USD",
-        "Fixed 2.00 USD",
-        "Total 45.00 USD",
-      ],
+      kind: "price",
+      title: "Price",
       size: "half",
+      data: { service: "Gel manicure", extras: null, suggested: 35 },
     });
   });
 
-  it("opens every widget as a half sheet", () => {
-    const widgets = [
-      buildWidget(
-        "goal_progress",
-        {},
-        { earned_usd: 120, goal_usd: 600 },
-        "en",
-      ),
-      buildWidget("list_today", {}, { appointments: [] }, "en"),
-      buildWidget("add_note", { client_name: "Ana" }, {}, "en"),
-      buildWidget(
-        "create_appointment",
-        { client_name: "Ana", day: "2026-11-03", time: "16:00" },
-        {},
-        "en",
-      ),
-      buildWidget(
-        "quote_price",
-        { service_name: "Gel refill" },
-        {
-          service: "Gel refill",
-          supplies_cost: 8.5,
-          time_cost: 30,
-          fixed_share: 2,
-          final_price_usd: 45,
-        },
-        "en",
-      ),
-    ];
-    expect(widgets.length).toBeGreaterThan(0);
-    for (const widget of widgets) expect(widget?.size).toBe("half");
+  it("builds the booked payload from the call args", () => {
+    const data = { appointment_id: 7, off_hours: false };
+    const args = {
+      client_name: "David",
+      service_name: "Gel manicure",
+      day: "2026-11-27",
+      time: "15:00",
+    };
+    for (const tool of ["create_appointment", "move_appointment"]) {
+      expect(buildWidget(tool, args, data, NO_DB)).toEqual({
+        kind: "booked",
+        title: "Appointment booked",
+        size: "half",
+        data: { client: "David", service: "Gel manicure", day: "2026-11-27", time: "15:00" },
+      });
+    }
   });
 
-  it("returns null for tools with nothing to show", () => {
-    expect(buildWidget("read_stock", {}, {}, "en")).toBeNull();
-    expect(buildWidget("quote_price", {}, {}, "en")).toBeNull();
-    expect(buildWidget("goal_progress", {}, {}, "en")).toBeNull();
+  it("returns no sheet for the day plan and session open", () => {
+    expect(buildWidget("list_today", {}, { appointments: [] }, NO_DB)).toBeNull();
+    expect(buildWidget("next_appointment", {}, {}, NO_DB)).toBeNull();
+    expect(buildWidget("open_session", {}, {}, NO_DB)).toBeNull();
+    expect(buildWidget("no_such_tool", {}, {}, NO_DB)).toBeNull();
+  });
+
+  it("formats money, days, visits, minutes, and initials Ali-style", () => {
+    expect(usdWhole(35)).toBe("$35");
+    expect(usdWhole(2000)).toBe("$2,000");
+    expect(formatDay("2026-11-27")).toBe("Friday, November 27");
+    expect(formatVisit("2026-10-12")).toBe("Oct 12, 2026");
+    expect(formatMinutes(72)).toBe("1h 12m");
+    expect(formatMinutes(6)).toBe("6m");
+    expect(initials("David")).toBe("D");
+    expect(initials("Ana Beltran")).toBe("AB");
   });
 });
