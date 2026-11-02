@@ -69,15 +69,15 @@ export async function POST(request: Request): Promise<Response> {
   }
   const appointment = db
     .prepare(
-      "SELECT id, reference_photo_ref FROM appointments WHERE client_id = ? AND service_id = ? ORDER BY id DESC LIMIT 1",
+      "SELECT id, reference_photo FROM appointments WHERE client_id = ? AND service_id = ? ORDER BY id DESC LIMIT 1",
     )
     .get(session.client_id, session.service_id) as
-    | { id: number; reference_photo_ref: string | null }
+    | { id: number; reference_photo: string | null }
     | undefined;
-  if (!appointment?.reference_photo_ref) {
+  if (!appointment?.reference_photo) {
     return fail("E-NO-PHOTO", "No appointment reference photo.", 404);
   }
-  const refValue = appointment.reference_photo_ref;
+  const refValue = appointment.reference_photo;
   let reference: Buffer | null = null;
   const dataMatch = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(refValue);
   if (dataMatch) {

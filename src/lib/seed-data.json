@@ -1,20 +1,5 @@
 {
   "_note": "All names, prices and data below are invented for the hackathon demo. No real client data. Canonical names are English (demo); Spanish goes in 'es'.",
-  "david": {
-    "client": "David",
-    "appointment": {
-      "service": "Semi-permanent manicure",
-      "time": "15:00",
-      "reference_photo_ref": "seed-assets/david-appointment-reference.jpg"
-    },
-    "last_session": {
-      "service": "Nail art (per design)",
-      "started_at": "2026-10-24T15:00:00.000Z",
-      "ended_at": "2026-10-24T16:30:00.000Z",
-      "photo_path": "seed-assets/david-last-service.jpg"
-    },
-    "note": "Matte dark gray base with white HO HO HO lettering and small snowflake details, matte finish."
-  },
   "currency": "USD",
   "pricing": {
     "monthly_goal_usd": 2500,
@@ -38,7 +23,7 @@
     { "client": "David", "kind": "health_note", "private": true, "text": "Test allergy (demo only): reacts to latex gloves." }
   ],
   "demo_appointments": [
-    { "client": "David", "service": "Semi-permanent manicure", "day": "today", "time": "15:00", "reference_photo": "demo-ref-david-autumn-01" },
+    { "client": "David", "service": "Semi-permanent manicure", "day": "today", "time": "15:00", "reference_photo": "seed-assets/david-appointment-reference.jpg" },
     { "client": "Sofia", "service": "Spa pedicure", "day": "today", "time": "17:00" },
     { "client": "Paola", "service": "Gel refill", "day": "today", "time": "19:00" },
     { "client": "Ana", "service": "Gel removal", "day": "tomorrow", "time": "16:00" }
@@ -48,7 +33,7 @@
     { "text": "Call the cleaning company to confirm the service", "kind": "call", "day": "today" }
   ],
   "demo_visits": [
-    { "client": "David", "service": "Semi-permanent manicure", "days_ago": 21, "photo": "demo-visit-david-01", "note": "Nude almond set (demo photo marker)." },
+    { "client": "David", "service": "Semi-permanent manicure", "days_ago": 21, "photo": "seed-assets/david-last-service.jpg", "note": "Matte dark gray base with white HO HO HO lettering and small snowflake details, matte finish." },
     { "client": "Sofia", "service": "Spa pedicure", "days_ago": 14, "photo": "demo-visit-sofia-01", "note": "Spa pedicure (demo photo marker)." },
     { "client": "Paola", "service": "Gel refill", "days_ago": 9, "photo": "demo-visit-paola-01", "note": "Gel refill (demo photo marker)." },
     { "client": "Ana", "service": "Gel removal", "days_ago": 5, "photo": "demo-visit-ana-01", "note": "Gel removal (demo photo marker)." }

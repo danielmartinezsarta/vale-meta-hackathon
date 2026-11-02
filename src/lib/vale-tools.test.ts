@@ -212,7 +212,7 @@ describe("client_card_show (1.1)", () => {
     expect(data.card.phone).toBe("+1-555-0101");
     expect(data.card.health_alert).toBe(true);
     expect(data.card.upcoming[0].service).toBe("Semi-permanent manicure");
-    expect(data.card.visits[0].photo).toContain("demo-visit-david");
+    expect(data.card.visits[0].photo).toBe("seed-assets/david-last-service.jpg");
     // The alert rides the screen only: nothing health-related is spoken.
     expect(JSON.stringify(card)).not.toContain("latex");
     expect(card.message).not.toContain("latex");
