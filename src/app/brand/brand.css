@@ -1,0 +1,130 @@
+.brand-page {
+  max-width: 430px;
+  margin: 0 auto;
+  padding: 40px 24px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+
+.brand-header h1 {
+  font-size: 34px;
+  line-height: 1.15;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.brand-header p {
+  margin: 0 0 20px;
+  color: var(--vale-text-secondary);
+  font-size: 20px;
+}
+
+.theme-switch {
+  display: flex;
+  gap: 8px;
+  background: var(--vale-card);
+  border: 1px solid var(--vale-border);
+  border-radius: 999px;
+  padding: 6px;
+}
+
+.theme-switch button {
+  flex: 1;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--vale-text-secondary);
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 12px;
+}
+
+.theme-switch button[aria-pressed="true"] {
+  background: var(--vale-blue);
+  color: var(--vale-mist);
+  font-weight: 600;
+}
+
+.brand-section h2 {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.brand-section > p {
+  margin: 0 0 16px;
+  color: var(--vale-text-secondary);
+  font-size: 18px;
+}
+
+.theme-card {
+  border: 1px solid var(--vale-border);
+  background: var(--vale-card);
+  border-radius: 20px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  margin-bottom: 16px;
+}
+
+.theme-card:last-child {
+  margin-bottom: 0;
+}
+
+.theme-card .caption {
+  font-size: 18px;
+  color: var(--vale-text-secondary);
+  margin: 0 0 12px;
+}
+
+.logo-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.icon-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.swatch {
+  border: 1px solid var(--vale-border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.swatch-chip {
+  height: 64px;
+  display: flex;
+  align-items: flex-end;
+  padding: 8px 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.swatch-label {
+  padding: 10px 12px;
+  background: var(--vale-card);
+}
+
+.swatch-label strong {
+  display: block;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.swatch-label span {
+  font-size: 15px;
+  color: var(--vale-text-secondary);
+}
