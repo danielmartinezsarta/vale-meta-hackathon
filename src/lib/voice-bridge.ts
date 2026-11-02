@@ -4,6 +4,7 @@ import { getDb, recentTurns, recordTurn, type HistoryTurn } from "./db";
 import { getBoard } from "./board";
 import {
   checkWake,
+  isBareNameCall,
   noteAttention,
   sanitizeClientId,
   type WakeVerdict,
@@ -16,12 +17,13 @@ import {
   isConfirmYes,
   isRefusalNo,
   peekPendingAction,
+  quoteAcceptSessionId,
   runPendingActions,
   takePendingAction,
 } from "./pending-action";
 import { getSlots } from "./slot-memory";
-import { getOpenSession } from "./vale-tools";
-import type { Widget } from "./widget";
+import { getOpenSession, rejectQuote } from "./vale-tools";
+import { buildWidget, type Widget } from "./widget";
 import {
   clarifyText,
   declineText,
@@ -651,6 +653,58 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     finish(1000, "turn-complete");
   };
 
+  // A no on the quote sheet rejects it: the sheet stays open waiting
+  // for the spoken amount, and the session stays open too. Shared by the
+  // touch vote and the spoken no.
+  const answerQuoteReject = async (
+    sessionId: number,
+    heard: string,
+    audioSeconds: number,
+    asrMs: number | null,
+    gate: WakeVerdict["gate"] | null,
+    sinceReplyS: number | null,
+  ): Promise<void> => {
+    const at = now();
+    const ts = new Date(at).toISOString();
+    const rejected = rejectQuote(getDb(), sessionId, turnLanguage);
+    recordTurn(getDb(), clientId, "user", heard);
+    recordTurn(getDb(), clientId, "vale", rejected.message, "session_quote");
+    sendJson(browser, { type: "reply", text: rejected.message });
+    noteAttention(clientId);
+    sendJson(browser, { type: "board", board: getBoard(getDb()) });
+    sendJson(browser, {
+      type: "widget",
+      widget: buildWidget(
+        "session_quote",
+        {},
+        (rejected as { data?: unknown }).data ?? null,
+        turnLanguage,
+      ),
+    });
+    logTurn({
+      language: turnLanguage,
+      ts,
+      transcript: heard,
+      ttftMs: Date.now() - at,
+      inputTokens: 0,
+      outputTokens: 0,
+      audioSeconds,
+      tool: "session_quote",
+      modelSkipped: true,
+      error: null,
+      ignored: false,
+      asrMs,
+      chain: "none",
+      key: clientId,
+      slots: slotSnapshot(),
+      gate,
+      sinceReplyS,
+      totalMs: Date.now() - at,
+    });
+    sendJson(browser, { type: "done" });
+    finish(1000, "turn-complete");
+  };
+
   // Touch on a confirm card: the exact equivalent of a spoken yes/no.
   // No model, no ASR: yes runs the stored writes, no declines them, and a
   // yes with nothing stored clarifies (never repeats the last write).
@@ -725,8 +779,13 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       finish(1000, "turn-complete");
       return;
     }
-    // A no: nothing writes, the card goes away.
-    clearPendingAction(clientId);
+    // A no on the quote sheet rejects it; any other no declines.
+    const stored = takePendingAction(clientId);
+    const quoteSession = quoteAcceptSessionId(stored ?? []);
+    if (quoteSession !== null) {
+      await answerQuoteReject(quoteSession, "no", 0, null, null, null);
+      return;
+    }
     await answerCanned("no", declineText(turnLanguage));
   };
 
@@ -782,9 +841,24 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         }
       }
       // A no to Vale's pending proposal discards it at once: the card goes
-      // away with a short decline, no model, no second question.
+      // away with a short decline, no model, no second question. A no on
+      // the quote sheet rejects it instead and waits for the amount.
       if (isRefusalNo(transcript) && peekPendingAction(clientId)) {
-        clearPendingAction(clientId);
+        const stored = takePendingAction(clientId);
+        const quoteSession = quoteAcceptSessionId(stored ?? []);
+        if (quoteSession !== null) {
+          await answerQuoteReject(
+            quoteSession,
+            transcript,
+            audioProcessedMs !== null
+              ? audioProcessedMs / 1000
+              : bufferedBytes / 48000,
+            asrMs,
+            verdict.gate,
+            verdict.sinceReplyS,
+          );
+          return;
+        }
         const declined = declineText(turnLanguage);
         recordTurn(getDb(), clientId, "vale", declined, null);
         sendJson(browser, { type: "reply", text: declined });
@@ -942,6 +1016,34 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         });
         const asrMs = endStreamAt === null ? null : speechEndAt - endStreamAt;
         emitModelLog(ASR_MODEL, asrMs, finalText);
+        // A bare name call stays silent and keeps listening in the same
+        // turn: answering here drops the words that follow (trial 9.1).
+        if (isBareNameCall(finalText)) {
+          noteAttention(clientId);
+          // Retire this Meta turn first: its close lands after the final
+          // and must not fail the turn we are still listening in.
+          metaGen += 1;
+          try {
+            meta.close();
+          } catch {
+            /* a fresh dial replaces it when the rest arrives */
+          }
+          gotFinal = false;
+          finalText = "";
+          audioProcessedMs = null;
+          endStreamAt = null;
+          bufferedBytes = 0;
+          pendingAudio.length = 0;
+          pendingEnd = false;
+          metaOpen = false;
+          metaDialPending = false;
+          sendJson(browser, {
+            type: "transcript",
+            transcript: message.transcript,
+            final: false,
+          });
+          return;
+        }
         if (finalText.trim() === "") {
           finishEmptyTurn(
             audioProcessedMs !== null
