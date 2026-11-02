@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   ended_at TEXT,
   duration_s INTEGER,
   margin_earned REAL,
-  privacy_notice_sent INTEGER NOT NULL DEFAULT 0
+  privacy_notice_sent INTEGER NOT NULL DEFAULT 0,
+  photo_path TEXT
 );
 CREATE TABLE IF NOT EXISTS session_supplies (
   session_id INTEGER NOT NULL REFERENCES sessions(id),
