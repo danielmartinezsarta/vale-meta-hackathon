@@ -11,7 +11,7 @@ describe("TapToTalk smoke", () => {
     const getUserMedia = vi.fn();
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
 
     const buttons = screen.getAllByRole("button");
     expect(buttons).toHaveLength(3);
@@ -31,7 +31,7 @@ describe("TapToTalk smoke", () => {
     const getUserMedia = vi.fn();
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
 
     expect(screen.queryByRole("button", { name: "ES" })).toBeNull();
     expect(screen.queryByRole("button", { name: "EN" })).toBeNull();

@@ -32,8 +32,9 @@ import {
 } from "@/lib/vale-language";
 import { uiStrings } from "@/lib/vale-ui";
 import type { Widget } from "@/lib/widget";
-import { VoiceControls } from "@/components/VoiceControls";
-import { WidgetCard } from "@/components/WidgetCard";
+import { AwakeScreen, type AwakeBubble } from "@/components/AwakeScreen";
+import { VoiceDebugView } from "@/components/VoiceDebugView";
+import { useScreenMode } from "@/components/useScreenMode";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
@@ -100,7 +101,15 @@ function countVoiced(frame: Int16Array): boolean {
   return frame.length > 0 && energy / frame.length > VOICE_ENERGY_THRESHOLD;
 }
 
-export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
+export function TapToTalk({
+  autoStart = false,
+  debug = false,
+  onSleep,
+}: {
+  autoStart?: boolean;
+  debug?: boolean;
+  onSleep?: () => void;
+} = {}) {
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -187,6 +196,64 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
     const stop = valeStoreRef.current.subscribe(setValeUiState);
     return stop;
   }, []);
+  // Mute Vale toggle: her voice never starts while muted; the reply text
+  // still grows in its bubble.
+  const [muted, setMuted] = useState(false);
+  const mutedOutRef = useRef(false);
+  const doneTimerRef = useRef(0);
+  const clearDoneTimer = useCallback(() => {
+    window.clearTimeout(doneTimerRef.current);
+    doneTimerRef.current = 0;
+  }, []);
+  useEffect(() => clearDoneTimer, [clearDoneTimer]);
+  // A turn that ends without audible speech falls back to listening: muted
+  // replies, short replies already settled, widgetless turns.
+  const settleToListening = useCallback(() => {
+    const state = valeStoreRef.current.get();
+    if (
+      (state === "thinking" || state === "done") &&
+      !isSpeaking() &&
+      sessionRef.current
+    ) {
+      valeStoreRef.current.set("listening");
+    }
+  }, []);
+  /** Wire widgets always carry a sheet size; older payloads default to half. */
+  const showWidget = useCallback((incoming: Widget | null) => {
+    if (incoming === null) {
+      setWidget(null);
+      return;
+    }
+    setWidget({ ...incoming, size: incoming.size === "full" ? "full" : "half" });
+  }, []);
+  /** A working tool shows done, then falls back ~1.5 s later; speech wins. */
+  const handleWidget = useCallback(
+    (incoming: unknown) => {
+      if (incoming !== null && !(incoming && typeof incoming === "object"))
+        return;
+      showWidget((incoming ?? null) as Widget | null);
+      if (incoming !== null && valeStoreRef.current.get() !== "speaking") {
+        clearDoneTimer();
+        valeStoreRef.current.set("done");
+        doneTimerRef.current = window.setTimeout(() => {
+          doneTimerRef.current = 0;
+          settleToListening();
+        }, 1500);
+      }
+    },
+    [showWidget, clearDoneTimer, settleToListening],
+  );
+  const toggleMute = useCallback(() => {
+    if (mutedOutRef.current) {
+      mutedOutRef.current = false;
+      setMuted(false);
+    } else {
+      mutedOutRef.current = true;
+      setMuted(true);
+      stopSpeaking("mute");
+    }
+  }, []);
+  // `sleep` (zzz) is defined after stopSession, which it calls.
 
   const clearSpeechWatch = useCallback(() => {
     window.clearInterval(speechWatchRef.current);
@@ -211,6 +278,7 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
   }, []);
 
   const stopSession = useCallback(() => {
+    clearDoneTimer();
     sessionRef.current = false;
     stopSpeaking("tap");
     clearCaptureWatch();
@@ -244,7 +312,13 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
     sessionEndRef.current?.();
     sessionEndRef.current = null;
     setStatus("idle");
-  }, [clearCaptureWatch, clearSpeechWatch]);
+  }, [clearCaptureWatch, clearSpeechWatch, clearDoneTimer]);
+
+  /** zzz: stop the session and return to the home screen. */
+  const sleep = useCallback(() => {
+    stopSession();
+    onSleep?.();
+  }, [stopSession, onSleep]);
 
   useEffect(() => stopSession, [stopSession]);
 
@@ -264,6 +338,7 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
 
   const endSessionWithAlert = useCallback(
     (message: string, code: string | null = null) => {
+      clearDoneTimer();
       sessionRef.current = false;
       clearCaptureWatch();
       controllersRef.current.forEach((controller) => {
@@ -302,13 +377,13 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
       sessionEndRef.current = null;
       clearSpeechWatch();
     },
-    [clearCaptureWatch, clearSpeechWatch],
+    [clearCaptureWatch, clearSpeechWatch, clearDoneTimer],
   );
 
   const runSession = useCallback(
     async (stream: MediaStream): Promise<void> => {
       sessionRef.current = true;
-      valeStoreRef.current.set("attentive");
+      valeStoreRef.current.set("listening");
       // One capture for the whole session; VAD events delimit turns.
       let resolveSession: (() => void) | null = null;
       const ended = new Promise<void>((resolve) => {
@@ -365,7 +440,7 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
             captureRef.current?.setPaused?.(false);
             // A turn posted while she settled already claimed the state.
             if (valeStoreRef.current.get() === "speaking") {
-              valeStoreRef.current.set("attentive");
+              valeStoreRef.current.set("listening");
             }
           }, SPEECH_RESUME_DELAY_MS);
         }
@@ -594,18 +669,23 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
               const next = `${repliesRef.current.get(id) ?? ""}${message.text}`;
               repliesRef.current.set(id, next);
               patchTurn(id, { reply: next });
-              valeStoreRef.current.set("speaking");
-              speakStream(message.text, languageRef.current);
+              // Muted: the text still grows, but her voice never starts.
+              if (!mutedOutRef.current) {
+                valeStoreRef.current.set("speaking");
+                speakStream(message.text, languageRef.current);
+              }
             }
             break;
           case "reply":
             if (typeof message.text !== "string") return;
             // Deltas already voiced this turn: only flush the tail.
-            if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
-            else speak(message.text, languageRef.current);
+            if (!mutedOutRef.current) {
+              if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
+              else speak(message.text, languageRef.current);
+              valeStoreRef.current.set("speaking");
+            }
             repliesRef.current.set(id, message.text);
             patchTurn(id, { reply: message.text });
-            valeStoreRef.current.set("speaking");
             break;
           case "board": {
             const board = (message as { board?: unknown }).board;
@@ -616,12 +696,7 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
           }
           case "widget": {
             const incoming = (message as { widget?: unknown }).widget;
-            if (
-              incoming === null ||
-              (incoming && typeof incoming === "object")
-            ) {
-              setWidget((incoming ?? null) as Widget | null);
-            }
+            handleWidget(incoming);
             break;
           }
           case "notice":
@@ -674,6 +749,7 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
             }
             settledTurnsRef.current.add(id);
             pruneIfEmpty(id);
+            settleToListening();
             // Fresh silence window, unless a newer turn is already collecting.
             if (id === currentId) armQuiet();
             break;
@@ -934,17 +1010,19 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
                 const next = `${repliesRef.current.get(id) ?? ""}${text}`;
                 repliesRef.current.set(id, next);
                 patchTurn(id, { reply: next });
-                speakStream(text, languageRef.current);
+                if (!mutedOutRef.current) speakStream(text, languageRef.current);
               },
               onReply: (text) => {
                 // Deltas already voiced this turn: only flush the tail.
-                if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
-                else speak(text, languageRef.current);
+                if (!mutedOutRef.current) {
+                  if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
+                  else speak(text, languageRef.current);
+                }
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
               },
               onBoard: (next) => setBoard(next),
-              onWidget: (next) => setWidget(next),
+              onWidget: (next) => handleWidget(next),
               onIgnored: () => patchTurn(id, { ignored: true }),
               onNotice: (message, code) => {
                 // E-VAD notices pass the silence gate; anything else shows directly.
@@ -956,6 +1034,7 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
                 if (!sessionRef.current) return;
                 settledTurnsRef.current.add(id);
                 pruneIfEmpty(id);
+                settleToListening();
                 // Fresh silence window, unless a newer turn is already collecting.
                 if (id === currentId) armQuiet();
               },
@@ -1183,7 +1262,7 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
             // Strict turns: speech only starts while she is silent (capture
             // runs muted otherwise), so there is nothing to interrupt and
             // her text stays put.
-            valeStoreRef.current.set("hearing");
+            valeStoreRef.current.set("listening");
             window.clearTimeout(quietTimerRef.current);
             // A new utterance after a posted turn opens the next turn on the same capture.
             if (posted) openTurn(false);
@@ -1313,6 +1392,8 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
       endSessionWithAlert,
       clearCaptureWatch,
       clientId,
+      handleWidget,
+      settleToListening,
     ],
   );
 
@@ -1373,139 +1454,71 @@ export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
     setEngine(next);
   }, [engine]);
 
+  const mode = useScreenMode();
+
+  if (debug) {
+    return (
+      <VoiceDebugView
+        status={status}
+        ui={ui}
+        language={language}
+        engine={engine}
+        level={level}
+        valeUiState={valeUiState}
+        turns={turns}
+        board={board}
+        widget={widget}
+        notice={notice}
+        alert={alert}
+        onTap={() => void handleTap()}
+        onToggleEngine={toggleEngine}
+        onSwitchLanguage={switchLanguage}
+        onVote={(vote) => castVoteRef.current(vote)}
+      />
+    );
+  }
+
+  // Dialogue bubbles for the awake screen: the user line grows in its own
+  // bubble, Vale's reply grows with the deltas; the screen shows the last 3.
+  const bubbles: AwakeBubble[] = [];
+  for (const turn of turns) {
+    const text = turn.final ?? turn.interim;
+    if (turn.ignored) {
+      if (text.trim() !== "") {
+        bubbles.push({
+          id: `turn-${turn.id}-ignored`,
+          text,
+          from: "user",
+          ignored: true,
+          ignoredTag: ui.ignoredTag,
+        });
+      }
+      continue;
+    }
+    if (text.trim() !== "") {
+      bubbles.push({ id: `turn-${turn.id}-user`, text, from: "user" });
+    }
+    if (turn.reply?.trim()) {
+      bubbles.push({ id: `turn-${turn.id}-vale`, text: turn.reply, from: "vale" });
+    }
+  }
+
   return (
-    <section>
-      <button
-        type="button"
-        onClick={handleTap}
-        disabled={status === "requesting"}
-      >
-        {status === "live"
-          ? ui.stop
-          : status === "requesting"
-            ? ui.waiting
-            : ui.tapToTalk}
-      </button>{" "}
-      <button
-        type="button"
-        onClick={toggleEngine}
-        aria-pressed={engine === "seamless"}
-        aria-label={
-          engine === "seamless"
-            ? "Use browser voice"
-            : "Use Seamless voice"
-        }
-        title={
-          engine === "seamless"
-            ? "Use browser voice"
-            : "Use Seamless voice"
-        }
-      >
-        <SpeakerIcon /> Voice: {engine === "seamless" ? "Seamless" : "browser"}
-      </button>{" "}
-      <fieldset>
-        <legend>{ui.language}</legend>{" "}
-        <label>
-          <input
-            type="radio"
-            aria-label="English"
-            name="vale-language"
-            value="en"
-            checked={language === "en"}
-            onChange={() => switchLanguage("en")}
-          />{" "}
-          EN
-        </label>{" "}
-        <label>
-          <input
-            type="radio"
-            aria-label="Español"
-            name="vale-language"
-            value="es"
-            checked={language === "es"}
-            onChange={() => switchLanguage("es")}
-          />{" "}
-          ES
-        </label>
-      </fieldset>{" "}
-      <VoiceControls language={language} />
-
-      {status === "live" && <LevelMeter level={level} />}
-
-      {status === "live" && <p role="status">{ui.valeState(valeUiState)}</p>}
-
-      {status === "live" &&
-        turns.every((turn) => !hasVisibleContent(turn)) &&
-        !notice && (
-          <p>{ui.listenHint}</p>
-        )}
-
-      <ol aria-label="Conversation turns">
-        {turns.filter(hasVisibleContent).map((turn) => (
-          <li
-            key={turn.id}
-            style={turn.ignored ? { opacity: 0.6 } : undefined}
-          >
-            {turn.ignored ? (
-              <p>
-                {turn.final ?? turn.interim}{" "}
-                <small>
-                  {ui.ignoredTag}
-                </small>
-              </p>
-            ) : (
-              <>
-                {(turn.final ?? turn.interim) !== "" && (
-                  <p>
-                    <strong>You:</strong> {turn.final ?? turn.interim}
-                  </p>
-                )}
-                {turn.reply && (
-                  <p>
-                    <strong>Vale:</strong> {turn.reply}
-                  </p>
-                )}
-              </>
-            )}
-          </li>
-        ))}
-      </ol>
-
-      <ValeBoard board={board} language={language} />
-
-      {widget && (
-        <WidgetCard
-          widget={widget}
-          language={language}
-          onVote={(vote) => castVoteRef.current(vote)}
-        />
-      )}
-
-      {notice && <p role="status">{notice}</p>}
-
-      {alert && <div role="alert">{alert}</div>}
-
-      {status === "blocked" && (
-        <div role="alert">
-          <p>{ui.micBlockedLead}</p>
-          <ul>
-            <li>
-              iPhone (Safari): open Settings &gt; Safari &gt; Microphone and
-              choose Allow, then come back and tap again.
-            </li>
-            <li>
-              Chrome: tap the lock (or tune) icon left of the address bar,
-              choose Microphone &gt; Allow, then tap again.
-            </li>
-          </ul>
-        </div>
-      )}
-
-      {status === "error" && !alert && (
-        <div role="alert">
-          <p>{ui.micError}</p>
-        </div>
-      )}
-    </section>
+    <AwakeScreen
+      mode={mode}
+      robotState={valeUiState}
+      level={valeUiState === "listening" ? level : undefined}
+      bubbles={bubbles}
+      widget={widget}
+      language={language}
+      muted={muted}
+      notice={notice}
+      alert={alert}
+      onToggleMute={toggleMute}
+      onSleep={sleep}
+      onCloseWidget={() => showWidget(null)}
+      onVote={(vote) => castVoteRef.current(vote)}
+    />
   );
 }
+

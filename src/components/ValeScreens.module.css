@@ -1,0 +1,256 @@
+/* Awake + session screens: Vale large, bubbles, sheets from below. */
+
+.aw {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 30px 14px 0;
+  background: var(--aw-bg);
+  color: var(--aw-fg);
+  font-family: var(--font-ui, "Hanken Grotesk"), system-ui, sans-serif;
+}
+
+.aw * {
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.aw h2,
+.aw p {
+  margin: 0;
+}
+
+.awbg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 92% 6%, var(--aw-t2), transparent 46%),
+    radial-gradient(circle at 4% 96%, var(--aw-t3), transparent 46%);
+}
+
+.awbg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(var(--aw-t1) 1.6px, transparent 2px);
+  background-size: 18px 18px;
+  -webkit-mask-image: linear-gradient(#000, transparent 85%);
+  mask-image: linear-gradient(#000, transparent 85%);
+}
+
+.abtn {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--aw-card);
+  border: 1px solid var(--aw-line);
+  color: var(--aw-fg);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 3px 10px rgba(20, 34, 79, 0.14);
+}
+
+.abtn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.aside {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.aclose {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 3;
+}
+
+.zzz {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  color: var(--aw-a1);
+  font-weight: 700;
+  font-size: 11px;
+  line-height: 1;
+  font-family: var(--font-ui, "Hanken Grotesk"), system-ui, sans-serif;
+}
+
+.zzz i {
+  font-style: normal;
+  display: block;
+}
+
+.zzz i:nth-child(1) {
+  font-size: 11px;
+  transform: translateY(5px);
+}
+
+.zzz i:nth-child(2) {
+  font-size: 15px;
+  transform: translateY(1px);
+}
+
+.zzz i:nth-child(3) {
+  font-size: 19px;
+  transform: translateY(-4px);
+}
+
+.slash {
+  display: none;
+}
+
+.mute[aria-pressed="true"] {
+  background: var(--aw-a3bg);
+  color: var(--aw-a3);
+  border-color: var(--aw-a3);
+}
+
+.mute[aria-pressed="true"] .slash {
+  display: inline;
+}
+
+.mute[aria-pressed="true"] .wave {
+  display: none;
+}
+
+.stage {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.robot {
+  width: 262px;
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.cap {
+  font-weight: 600;
+  font-size: 1.6rem;
+  line-height: 1.2;
+  text-align: center;
+  margin-top: -2px;
+}
+
+.sub {
+  color: var(--aw-muted);
+  font-size: 1.1rem;
+  line-height: 1.3;
+  text-align: center;
+}
+
+/* Conversation bubbles, at most three visible. */
+.chat {
+  position: relative;
+  width: 100%;
+  min-height: 122px;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+}
+
+.msg {
+  max-width: 82%;
+  padding: 8px 12px;
+  font-size: 0.88rem;
+  line-height: 1.3;
+  animation: pop 0.25s ease-out both;
+  overflow-wrap: break-word;
+}
+
+.msguser {
+  align-self: flex-end;
+  background: var(--aw-user);
+  color: #fff;
+  border-radius: 16px 16px 4px 16px;
+}
+
+.msgvale {
+  align-self: flex-start;
+  background: var(--aw-card);
+  color: var(--aw-fg);
+  border: 1px solid var(--aw-line);
+  border-radius: 16px 16px 16px 4px;
+}
+
+.msgignored {
+  align-self: center;
+  opacity: 0.6;
+  font-size: 0.78rem;
+  color: var(--aw-muted);
+}
+
+.sronly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Awake without a session: bigger robot, greeting text. */
+.idle .robot {
+  width: 288px;
+  max-width: none;
+}
+
+.idle .cap {
+  font-size: 1.1rem;
+  line-height: 1.4;
+  margin-top: -4px;
+}
+
+.idle .sub {
+  font-size: 0.85rem;
+  line-height: 1.3;
+}
+
+.idle .chat {
+  margin-top: 12px;
+}
+
+.idle .msg {
+  max-width: 90%;
+  font-size: 0.82rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg {
+    animation: none;
+  }
+}

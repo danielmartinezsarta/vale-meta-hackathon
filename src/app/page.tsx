@@ -37,7 +37,8 @@ export default function Home() {
 
   if (showSplash) return <SplashScreen onDone={() => setShowSplash(false)} />;
 
-  if (screen === "voice") return <TapToTalk autoStart />;
+  if (screen === "voice")
+    return <TapToTalk autoStart onSleep={() => setScreen("home")} />;
 
   return (
     <main>

@@ -88,7 +88,7 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {

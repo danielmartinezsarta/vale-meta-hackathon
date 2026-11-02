@@ -110,7 +110,7 @@ describe("interruption (fake-device fallback)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {
@@ -160,7 +160,7 @@ describe("interruption (fake-device fallback)", () => {
         "fetch",
         vi.fn(() => new Promise(() => {})),
       );
-      render(<TapToTalk />);
+      render(<TapToTalk debug />);
       fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
       await vi.advanceTimersByTimeAsync(0);
       expect(seen.length).toBeGreaterThan(0);

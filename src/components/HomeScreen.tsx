@@ -2,7 +2,8 @@
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { BRAND } from "@/lib/brand-tokens";
-import { homeVars, type HomeMode } from "@/lib/vale-theme";
+import { homeVars } from "@/lib/vale-theme";
+import { useScreenMode } from "@/components/useScreenMode";
 import { storeLanguage, type ValeLanguage } from "@/lib/vale-language";
 import type { HomeData } from "@/lib/home-data";
 import styles from "./HomeScreen.module.css";
@@ -84,16 +85,7 @@ export function HomeScreen({
   onWake: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [mode, setMode] = useState<HomeMode>("day");
-
-  useEffect(() => {
-    const query = window.matchMedia?.("(prefers-color-scheme: dark)");
-    if (!query) return;
-    const apply = () => setMode(query.matches ? "night" : "day");
-    apply();
-    query.addEventListener("change", apply);
-    return () => query.removeEventListener("change", apply);
-  }, []);
+  const mode = useScreenMode();
 
   useEffect(() => {
     if (!menuOpen) return;

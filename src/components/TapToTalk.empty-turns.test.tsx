@@ -55,7 +55,7 @@ describe("empty turns stay hidden (fix 1)", () => {
     const fetchMock = vi.fn(() => new Promise(() => {}));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {
@@ -99,7 +99,7 @@ describe("empty turns stay hidden (fix 1)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {

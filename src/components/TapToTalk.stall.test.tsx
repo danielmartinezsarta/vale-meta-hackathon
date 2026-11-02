@@ -50,7 +50,7 @@ async function tapToTalk() {
     vi.fn(() => new Promise(() => {})),
   );
   stubSession();
-  render(<TapToTalk />);
+  render(<TapToTalk debug />);
   fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
   // Flush the async getUserMedia continuation: advance(0) alone does not
   // commit the live render once the session owns more than one interval,

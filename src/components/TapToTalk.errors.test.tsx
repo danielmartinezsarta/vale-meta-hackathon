@@ -79,7 +79,7 @@ describe("plain-language errors (fake-device fallback)", () => {
       })) as unknown as typeof fetch,
     );
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
@@ -108,7 +108,7 @@ describe("plain-language errors (fake-device fallback)", () => {
       })) as unknown as typeof fetch,
     );
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
@@ -133,7 +133,7 @@ describe("plain-language errors (fake-device fallback)", () => {
       }) as unknown as typeof fetch,
     );
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
@@ -159,7 +159,7 @@ describe("plain-language errors (fake-device fallback)", () => {
       })) as unknown as typeof fetch,
     );
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);

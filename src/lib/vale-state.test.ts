@@ -8,18 +8,18 @@ describe("vale state", () => {
     expect(store.get()).toBe("idle");
     const seen: string[] = [];
     const stop = store.subscribe((state) => void seen.push(state));
-    store.set("hearing");
-    store.set("hearing");
+    store.set("listening");
+    store.set("listening");
     store.set("thinking");
     expect(store.get()).toBe("thinking");
-    expect(seen).toEqual(["hearing", "thinking"]);
+    expect(seen).toEqual(["listening", "thinking"]);
     stop();
     store.set("idle");
-    expect(seen).toEqual(["hearing", "thinking"]);
+    expect(seen).toEqual(["listening", "thinking"]);
   });
 
   it("a throwing view never breaks the state", () => {
-    const store = createValeState("attentive");
+    const store = createValeState("listening");
     store.subscribe(() => {
       throw new Error("view blew up");
     });

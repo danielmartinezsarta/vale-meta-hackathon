@@ -79,7 +79,7 @@ function burst() {
 }
 
 async function tap() {
-  render(<TapToTalk />);
+  render(<TapToTalk debug />);
   fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
   await vi.advanceTimersByTimeAsync(300);
 }
