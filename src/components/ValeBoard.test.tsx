@@ -9,8 +9,8 @@ const board: Board = {
   card: {
     name: "Ana Beltran",
     notes: [
-      { id: 1, kind: "general", text: "prefiere viernes", masked: false },
-      { id: 2, kind: "health", text: null, masked: true },
+      { id: 1, kind: "note", text: "prefiere viernes", masked: false },
+      { id: 2, kind: "health_note", text: null, masked: true },
     ],
   },
   list: ["Esmalte rojo"],

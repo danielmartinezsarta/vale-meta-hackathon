@@ -1020,7 +1020,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     const widgetAgent = async (): Promise<BridgeAgentResult> => ({
       text: "Here is your goal.",
       usage: { inputTokens: 100, outputTokens: 20 },
-      toolUsed: "goal_progress",
+      toolUsed: "goal_show",
       firstTokenMs: 50,
       widget: {
         kind: "goal",
@@ -1065,7 +1065,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     const agent = vi.fn(fakeAgent());
     const { setPendingAction } = await import("./pending-action");
     setPendingAction("conv-vote-yes", [
-      { tool: "create_client", args: { name: "VoteVera" } },
+      { tool: "client_create", args: { name: "VoteVera" } },
     ]);
     const browser = new FakeBrowser();
     attachVoiceBridge({
@@ -1137,7 +1137,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     const agent = vi.fn(fakeAgent());
     const { setPendingAction } = await import("./pending-action");
     setPendingAction("conv-vote-no", [
-      { tool: "create_client", args: { name: "VoteNoa" } },
+      { tool: "client_create", args: { name: "VoteNoa" } },
     ]);
     const browser = new FakeBrowser();
     attachVoiceBridge({
@@ -1705,6 +1705,139 @@ describe("bridge language frame", () => {
       expect(seen).toEqual(["en"]);
     } finally {
       finalTranscript = "vale, live from the bridge";
+    }
+  });
+});
+
+describe("bare name calls (trial 9.1)", () => {
+  it("stays silent on the name alone and answers the rest in the same turn", async () => {
+    const agent = vi.fn(fakeAgent("Booked for gel removal."));
+    finalTranscript = "valley";
+    const voiced = () => Buffer.from(new Int16Array(960).fill(4000).buffer);
+    const endStream = () => Buffer.from(JSON.stringify({ type: "endStream" }));
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser, agent);
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(voiced());
+      browser.peerMessage(endStream());
+      // The fragment is echoed back as a partial: Vale stays listening.
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "transcript" &&
+              frame.transcript === "valley" &&
+              frame.final === false,
+          ),
+        ).toBe(true);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(agent).not.toHaveBeenCalled();
+      expect(
+        browser.frames().some((frame) => frame.type === "reply"),
+      ).toBe(false);
+      expect(
+        browser.frames().some((frame) => frame.type === "done"),
+      ).toBe(false);
+      // The rest arrives in the same turn and gets the one reply.
+      finalTranscript = "5 PM for a gel removal";
+      browser.peerMessage(voiced());
+      browser.peerMessage(endStream());
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "reply"),
+        ).toBe(true);
+      });
+      expect(agent).toHaveBeenCalledTimes(1);
+      expect(
+        (agent.mock.calls[0][0] as { transcript: string }).transcript,
+      ).toBe("5 PM for a gel removal");
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "done"),
+        ).toBe(true);
+      });
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
+});
+
+describe("quote reject on the touch card (decision 1)", () => {
+  it("leaves the sheet open waiting for the amount on a no vote", async () => {
+    const agent = vi.fn(fakeAgent());
+    const { getDb } = await import("./db");
+    const { runValeTool } = await import("./vale-tools");
+    const { setPendingAction, clearPendingAction } = await import(
+      "./pending-action"
+    );
+    const db = getDb();
+    const opened = runValeTool(
+      db,
+      "session_open",
+      { client_name: "Ana", service_name: "Gel removal" },
+      "en",
+    );
+    expect(opened.ok).toBe(true);
+    const quoted = runValeTool(db, "session_quote", {}, "en");
+    const pending = (quoted as { pendingAccept?: { amount: number; session_id: number } })
+      .pendingAccept;
+    expect(pending?.amount).toBeGreaterThan(0);
+    const client = "conv-quote-reject";
+    setPendingAction(client, [
+      { tool: "session_quote_accept", args: { amount: pending?.amount, session_id: pending?.session_id } },
+    ]);
+    try {
+      const browser = new FakeBrowser();
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: client,
+        metaUrl: url,
+        runAgent: agent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(
+        Buffer.from(JSON.stringify({ type: "vote", vote: "no" })),
+      );
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "reply" &&
+              String(frame.text ?? "").includes("amount"),
+          ),
+        ).toBe(true);
+      });
+      expect(agent).not.toHaveBeenCalled();
+      const widget = browser.frames().find(
+        (frame) => frame.type === "widget",
+      ) as { widget?: { kind?: string; data?: Record<string, unknown> } | null };
+      expect(widget?.widget?.kind).toBe("price");
+      expect(widget?.widget?.data).toMatchObject({ suggested: pending?.amount });
+      // The reply never names the total.
+      for (const frame of browser.frames()) {
+        if (frame.type === "reply") {
+          expect(String(frame.text ?? "")).not.toContain(
+            String(pending?.amount),
+          );
+        }
+      }
+      clearPendingAction(client);
+      browser.close(1000, "test done");
+    } finally {
+      runValeTool(db, "session_close", { products_used: [] }, "en");
     }
   });
 });
