@@ -51,13 +51,15 @@ describe("POST /api/session-photo", () => {
       uploadRequest({ photo: PNG, sessionId: String(sessionId), slot: "before" }),
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toEqual({
       ok: true,
       sessionId,
       slot: "pre",
       photoUrl: `/api/photos?file=pre_${sessionId}.jpg`,
-      photoPath: join(dir, "session-photos", `pre_${sessionId}.jpg`),
     });
+    expect("photoPath" in body).toBe(false);
+    expect(JSON.stringify(body)).not.toContain(dir);
     expect(existsSync(join(dir, "session-photos", `pre_${sessionId}.jpg`))).toBe(true);
   });
 
