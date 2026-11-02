@@ -227,6 +227,11 @@ function ensureColumn(db: ValeDb, table: string, column: string, definition: str
   }
 }
 
+/** Add columns that older databases predate. Idempotent. */
+export function migrateDatabase(db: ValeDb): void {
+  ensureColumn(db, "sessions", "photo_path", "TEXT");
+}
+
 /** Create tables and insert the invented seed. Idempotent. */
 /** The user behind the voice: seeded, overridable with VALE_USER_NAME. */
 export const DEFAULT_USER_NAME = "Daniel";
@@ -248,6 +253,7 @@ export function userName(db: ValeDb): string {
 
 export function seedDatabase(db: ValeDb): void {
   db.exec(schemaSql());
+  migrateDatabase(db);
   ensureColumn(db, "clients", "sex", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "clients", "phone", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "clients", "email", "TEXT NOT NULL DEFAULT ''");

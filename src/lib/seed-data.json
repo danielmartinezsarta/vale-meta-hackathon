@@ -1,5 +1,6 @@
 {
   "_note": "All names, prices and data below are invented for the hackathon demo. No real client data. Canonical names are English (demo); Spanish goes in 'es'.",
+  "_photoRefsTBD": ["ali-3pm-reference", "ali-last-service"],
   "currency": "USD",
   "pricing": {
     "monthly_goal_usd": 2500,
