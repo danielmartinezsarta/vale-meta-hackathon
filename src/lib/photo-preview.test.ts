@@ -2,12 +2,14 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { NailBox } from "./nails";
 import {
   PREVIEW_USD_PER_IMAGE,
   appendPreviewCost,
   buildPreviewPrompt,
   readRunningTotal,
   runPhotoPreview,
+  samBoxesMatch,
   type DesignSpec,
 } from "./photo-preview";
 
@@ -43,6 +45,52 @@ describe("buildPreviewPrompt", () => {
     expect(prompt).not.toContain("sparkle");
     expect(prompt).not.toContain("watermark");
     expect(prompt).not.toContain("mark");
+  });
+});
+
+function nailBox(cx: number, cy: number): NailBox {
+  return { x1: cx - 50, y1: cy - 50, x2: cx + 50, y2: cy + 50, w: 1000, h: 1000 };
+}
+
+const FIVE_CENTERS: Array<[number, number]> = [
+  [50, 50],
+  [250, 150],
+  [450, 250],
+  [650, 350],
+  [850, 450],
+];
+
+describe("samBoxesMatch", () => {
+  it("matches identical 5-box sets", () => {
+    const before = FIVE_CENTERS.map(([x, y]) => nailBox(x, y));
+    const after = FIVE_CENTERS.map(([x, y]) => nailBox(x, y));
+    expect(samBoxesMatch(before, after)).toBe(true);
+  });
+
+  it("matches centers shifted within the default tolerance", () => {
+    const before = FIVE_CENTERS.map(([x, y]) => nailBox(x, y));
+    const after = FIVE_CENTERS.map(([x, y]) => nailBox(x + 100, y));
+    expect(samBoxesMatch(before, after)).toBe(true);
+  });
+
+  it("rejects a center shifted beyond the default tolerance", () => {
+    const before = FIVE_CENTERS.map(([x, y]) => nailBox(x, y));
+    const shifted = FIVE_CENTERS.map(([x, y]) => nailBox(x, y));
+    shifted[2] = nailBox(650, 250);
+    expect(samBoxesMatch(before, shifted)).toBe(false);
+  });
+
+  it("rejects 5 versus 4 boxes", () => {
+    const before = FIVE_CENTERS.map(([x, y]) => nailBox(x, y));
+    const after = FIVE_CENTERS.slice(0, 4).map(([x, y]) => nailBox(x, y));
+    expect(samBoxesMatch(before, after)).toBe(false);
+  });
+
+  it("honors an explicit tolerance", () => {
+    const before = FIVE_CENTERS.map(([x, y]) => nailBox(x, y));
+    const after = FIVE_CENTERS.map(([x, y]) => nailBox(x + 100, y));
+    expect(samBoxesMatch(before, after, 5)).toBe(false);
+    expect(samBoxesMatch(before, after, 15)).toBe(true);
   });
 });
 
