@@ -72,7 +72,7 @@ describe("agent prompt", () => {
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/no markdown/i);
     expect(SPOKEN_SYSTEM_PROMPT).toContain("Should I save it?");
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/never claim a write happened/i);
-    expect(SPOKEN_SYSTEM_PROMPT).toContain("Health notes: confirm briefly");
+    expect(SPOKEN_SYSTEM_PROMPT).toContain("Notes save at once, health notes stay private: confirm briefly");
     // How-to belongs to the tool, not the base: undo routing rides its description.
     const undo = VALE_TOOLS.find((tool) => tool.name === "undo_last");
     expect(undo?.description).toContain("deshazlo");

@@ -178,7 +178,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
     type: "function",
     name: "session_open",
     description:
-      "Open a nail session with a timer for a client. The service is optional: when it is missing, today's appointment for that client names it (for example Start a session with David, David is here, my client David is getting near). Call it right away when the request names a client, even when another session is already open: the refusal carries the switch question and a yes runs it.",
+      "Open a nail session with a timer for a client. The service is optional: when it is missing, today's appointment for that client names it (for example Start a session with David, my client David is getting near). Never for asking about a client: 'what do you have on X' shows the card, it never opens a session. Call it right away when the request names a client, even when another session is already open: the refusal carries the switch question and a yes runs it.",
     parameters: {
       type: "object",
       properties: {
@@ -213,11 +213,26 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "client_card_show",
-    description: "Show the full client card: contact, visits and notes. A health alert shows on screen only, never spoken.",
+    description: "Show the full client card: contact, visits and notes. Call it for 'X is here, what do I have on him' and 'what do you have on X': asking about a client shows the card, it never opens a session. A health alert shows on screen only, never spoken.",
     parameters: {
       type: "object",
       properties: { name: { type: "string", description: "Client name, approximate is fine." } },
       required: ["name"],
+    },
+  },
+  {
+    type: "function",
+    name: "client_note_add",
+    description:
+      "Save a one-line note on the client card at once, no confirmation. Call it for 'add a note for X: ...' and 'note that X ...'. Kind is note, or health_note for allergies and similar health topics (stays private, never spoken).",
+    parameters: {
+      type: "object",
+      properties: {
+        client_name: { type: "string", description: "Client name, approximate is fine." },
+        text: { type: "string", description: "The note in one line." },
+        kind: { type: "string", description: "note or health_note." },
+      },
+      required: ["client_name", "text"],
     },
   },
   {
@@ -842,8 +857,8 @@ export function logSupplyUse(db: ValeDb, args: { name?: unknown; confirm_create?
     ok: false,
     message:
       language === "en"
-        ? `I can't find "${name}". Should I create it and log it? Call again with confirm_create true after a yes.`
-        : `No encuentro "${name}". ¿lo creo y lo anoto en la sesión? Llama de nuevo con confirm_create true después del sí.`,
+        ? `I can't find "${name}". Should I save it and log it to this session?`
+        : `No encuentro "${name}". ¿lo guardo y lo anoto en la sesión?`,
     pendingCreate: name,
   };
 }
