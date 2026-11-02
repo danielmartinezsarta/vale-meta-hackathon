@@ -157,11 +157,11 @@ describe("sessions", () => {
 describe("session_open with only a client (9.5)", () => {
   it("resolves the service from today's appointment", () => {
     const db = freshTestDb();
-    // "Start a session with Daniel", "Daniel is here",
-    // "my client Daniel is getting near": the client alone is enough.
-    const opened = openSession(db, { client_name: "Daniel" });
+    // "Start a session with David", "David is here",
+    // "my client David is getting near": the client alone is enough.
+    const opened = openSession(db, { client_name: "David" });
     expect(opened.ok).toBe(true);
-    expect(opened.message).toContain("Daniel");
+    expect(opened.message).toContain("David");
     const session = db
       .prepare(
         `SELECT s.name AS service FROM sessions
@@ -197,7 +197,7 @@ describe("find_client", () => {
 describe("client_card_show (1.1)", () => {
   it("opens the full sheet without speaking health", () => {
     const db = freshTestDb();
-    const card = showClientCard(db, { name: "Daniel" }, "en");
+    const card = showClientCard(db, { name: "David" }, "en");
     expect(card.ok).toBe(true);
     const data = card.data as {
       card: {
@@ -208,11 +208,11 @@ describe("client_card_show (1.1)", () => {
         upcoming: { service: string; day: string; time: string }[];
       };
     };
-    expect(data.card.name).toBe("Daniel");
+    expect(data.card.name).toBe("David");
     expect(data.card.phone).toBe("+1-555-0101");
     expect(data.card.health_alert).toBe(true);
     expect(data.card.upcoming[0].service).toBe("Semi-permanent manicure");
-    expect(data.card.visits[0].photo).toContain("demo-visit-daniel");
+    expect(data.card.visits[0].photo).toContain("demo-visit-david");
     // The alert rides the screen only: nothing health-related is spoken.
     expect(JSON.stringify(card)).not.toContain("latex");
     expect(card.message).not.toContain("latex");
@@ -222,8 +222,8 @@ describe("client_card_show (1.1)", () => {
 
   it("lists health notes first on the card", () => {
     const db = freshTestDb();
-    runValeTool(db, "client_note_add", { client_name: "Daniel", text: "Likes neon colors", kind: "note" });
-    const card = showClientCard(db, { name: "Daniel" }, "en");
+    runValeTool(db, "client_note_add", { client_name: "David", text: "Likes neon colors", kind: "note" });
+    const card = showClientCard(db, { name: "David" }, "en");
     const kinds = (card.data as { card: { notes: { kind: string }[] } }).card.notes.map((note) => note.kind);
     expect(kinds[0]).toBe("health_note");
     expect(kinds).toContain("note");
@@ -577,7 +577,7 @@ describe("appointments", () => {
 
   it("answers what is today and who is next, including an empty day", () => {
     const db = freshTestDb();
-    expect(listToday(db).message).toContain("Daniel 15:00");
+    expect(listToday(db).message).toContain("David 15:00");
     db.prepare("DELETE FROM appointments").run();
     expect(listToday(db).message).toBe("No tienes nada hoy.");
     const inAnHour = bogotaPlus(60);
@@ -791,7 +791,7 @@ describe("agenda_show (0.2, X.1)", () => {
     const shown = showAgenda(db, { range: "today" }, "en");
     expect(shown.ok).toBe(true);
     expect(shown.message).toContain("Today:");
-    expect(shown.message).toContain("Daniel at 3 PM for Semi-permanent manicure");
+    expect(shown.message).toContain("David at 3 PM for Semi-permanent manicure");
     expect(shown.message).toContain("Reminders:");
     expect(shown.message).toContain("Buy acetone");
     expect(shown.message).toContain("cleaning company");
@@ -805,7 +805,7 @@ describe("agenda_show (0.2, X.1)", () => {
     const db = freshTestDb();
     const week = showAgenda(db, { range: "week" }, "en");
     expect(week.ok).toBe(true);
-    expect(week.message).toContain("Daniel");
+    expect(week.message).toContain("David");
     expect(week.message).toContain("Ana");
     const today = localDay();
     const date = showAgenda(db, { range: "date", day: today }, "en");
@@ -813,7 +813,7 @@ describe("agenda_show (0.2, X.1)", () => {
     expect((date.data as { appointments: { client: string }[] }).appointments.every((row) => row.client !== "Ana")).toBe(true);
     const range = showAgenda(db, { range: "range", from: today, to: today }, "en");
     expect(range.ok).toBe(true);
-    expect(range.message).toContain("Daniel");
+    expect(range.message).toContain("David");
     expect(showAgenda(db, { range: "someday" }, "en").ok).toBe(false);
     db.close();
   });

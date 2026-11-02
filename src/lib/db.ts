@@ -397,7 +397,7 @@ function migrateNoteKinds(db: ValeDb): void {
 }
 
 /**
- * Demo health notes (Daniel's test allergy). Seeded without the write log so
+ * Demo health notes (David's test allergy). Seeded without the write log so
  * undo_last only ever reverts the user's own writes.
  */
 function seedDemoNotes(db: ValeDb, notes: SeedDemoNote[], clientIds: Map<string, number>): void {

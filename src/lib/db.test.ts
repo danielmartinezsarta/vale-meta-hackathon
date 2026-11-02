@@ -59,7 +59,7 @@ describe("demo seed (HACK-018)", () => {
     const rows = db
       .prepare("SELECT name, sex, phone, email, birthday FROM clients ORDER BY id")
       .all() as { name: string; sex: string; phone: string; email: string; birthday: string }[];
-    expect(rows.map((row) => row.name)).toEqual(["Daniel", "Sofia", "Paola", "Ana"]);
+    expect(rows.map((row) => row.name)).toEqual(["David", "Sofia", "Paola", "Ana"]);
     for (const row of rows) {
       expect(row.sex.length).toBeGreaterThan(0);
       expect(row.phone.length).toBeGreaterThan(0);
@@ -69,10 +69,10 @@ describe("demo seed (HACK-018)", () => {
     db.close();
   });
 
-  it("keeps Daniel's test allergy masked on his card", () => {
+  it("keeps David's test allergy masked on his card", () => {
     const db = freshTestDb();
-    const daniel = db.prepare("SELECT id FROM clients WHERE name = ?").get("Daniel") as { id: number };
-    const notes = getPublicNotes(db, daniel.id);
+    const david = db.prepare("SELECT id FROM clients WHERE name = ?").get("David") as { id: number };
+    const notes = getPublicNotes(db, david.id);
     const health = notes.find((note) => note.kind === "health_note")!;
     expect(health.masked).toBe(true);
     expect(health.text).toBeNull();
@@ -80,7 +80,7 @@ describe("demo seed (HACK-018)", () => {
     db.close();
   });
 
-  it("holds today's three appointments plus Ana's, with Daniel's reference photo", () => {
+  it("holds today's three appointments plus Ana's, with David's reference photo", () => {
     const db = freshTestDb();
     const rows = db
       .prepare(
@@ -92,13 +92,13 @@ describe("demo seed (HACK-018)", () => {
     expect(rows).toHaveLength(4);
     const today = rows.filter((row) => row.day === localDay());
     expect(today.map((row) => `${row.client} ${row.time}`)).toEqual([
-      "Daniel 15:00",
+      "David 15:00",
       "Sofia 17:00",
       "Paola 19:00",
     ]);
     for (const row of today) expect(row.service.length).toBeGreaterThan(0);
-    const daniel = today.find((row) => row.client === "Daniel")!;
-    expect(daniel.referencePhoto.length).toBeGreaterThan(0);
+    const david = today.find((row) => row.client === "David")!;
+    expect(david.referencePhoto.length).toBeGreaterThan(0);
     const ana = rows.find((row) => row.client === "Ana")!;
     expect(ana.day).not.toBe(localDay());
     db.close();
@@ -157,7 +157,7 @@ describe("demo seed (HACK-018)", () => {
         `SELECT c.name AS client, v.photo FROM visits v JOIN clients c ON c.id = v.client_id ORDER BY v.id`,
       )
       .all() as { client: string; photo: string }[];
-    expect(rows.map((row) => row.client).sort()).toEqual(["Ana", "Daniel", "Paola", "Sofia"]);
+    expect(rows.map((row) => row.client).sort()).toEqual(["Ana", "David", "Paola", "Sofia"]);
     for (const row of rows) expect(row.photo.length).toBeGreaterThan(0);
     db.close();
   });

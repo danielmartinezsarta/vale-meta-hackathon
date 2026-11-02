@@ -33,7 +33,7 @@ describe("demo phrases (HACK-018 req 7)", () => {
   });
   it("finds the date inside a full booking sentence", () => {
     expect(
-      parseNaturalDate("Book Daniel next Friday at 5 PM for a gel removal", MONDAY),
+      parseNaturalDate("Book David next Friday at 5 PM for a gel removal", MONDAY),
     ).toEqual({ day: "2026-11-13", time: "17:00" });
   });
 });
