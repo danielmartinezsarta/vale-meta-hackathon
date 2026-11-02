@@ -92,6 +92,20 @@ describe("samBoxesMatch", () => {
     expect(samBoxesMatch(before, after, 5)).toBe(false);
     expect(samBoxesMatch(before, after, 15)).toBe(true);
   });
+
+  it("matches the same nails across different image sizes", () => {
+    const scale = (cx: number, cy: number, w: number, h: number): NailBox => ({
+      x1: cx - 50,
+      y1: cy - 50,
+      x2: cx + 50,
+      y2: cy + 50,
+      w,
+      h,
+    });
+    const before = FIVE_CENTERS.map(([x, y]) => scale(x, y, 1000, 1000));
+    const after = FIVE_CENTERS.map(([x, y]) => scale(x * 1.5, y * 1.5, 1500, 1500));
+    expect(samBoxesMatch(before, after)).toBe(true);
+  });
 });
 
 describe("runPhotoPreview", () => {

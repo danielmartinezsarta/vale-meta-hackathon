@@ -104,17 +104,23 @@ export function samBoxesMatch(
   tolerancePct = 15,
 ): boolean {
   if (beforeBoxes.length !== 5 || afterBoxes.length !== 5) return false;
+  // Boxes carry the pixel space of their own image (the model may rescale
+  // the preview), so compare normalized centers, not raw pixels.
+  const norm = (box: { x1: number; y1: number; x2: number; y2: number; w: number; h: number }) =>
+    box.w > 0 && box.h > 0
+      ? { cx: (box.x1 + box.x2) / 2 / box.w, cy: (box.y1 + box.y2) / 2 / box.h }
+      : null;
   const used = new Set<number>();
   for (const after of afterBoxes) {
-    const afterCx = (after.x1 + after.x2) / 2;
-    const afterCy = (after.y1 + after.y2) / 2;
+    const a = norm(after);
+    if (!a) return false;
+    const tol = tolerancePct / 100;
     let hit = -1;
     for (let i = 0; i < beforeBoxes.length; i++) {
       if (used.has(i)) continue;
-      const before = beforeBoxes[i];
-      const dx = Math.abs(afterCx - (before.x1 + before.x2) / 2);
-      const dy = Math.abs(afterCy - (before.y1 + before.y2) / 2);
-      if (dx <= (tolerancePct / 100) * before.w && dy <= (tolerancePct / 100) * before.h) {
+      const b = norm(beforeBoxes[i]);
+      if (!b) continue;
+      if (Math.abs(a.cx - b.cx) <= tol && Math.abs(a.cy - b.cy) <= tol) {
         hit = i;
         break;
       }
