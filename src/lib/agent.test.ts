@@ -150,9 +150,10 @@ describe("agent turn with tools", () => {
     const result = await runAgentTurn({ key: "test-key", transcript: "anota que prefiere viernes", language: "es", db });
 
     expect(result.toolUsed).toBe("add_note");
-    expect(result.text).toBe("Nota guardada en la ficha de Ana Beltran.");
+    expect(result.text).toBe("Nota guardada en la ficha de Ana.");
     expect(bodies).toHaveLength(1);
-    const notes = db.prepare("SELECT COUNT(*) AS n FROM notes").get() as { n: number };
+    const anaId = (db.prepare("SELECT id FROM clients WHERE name = ?").get("Ana") as { id: number }).id;
+    const notes = db.prepare("SELECT COUNT(*) AS n FROM notes WHERE client_id = ?").get(anaId) as { n: number };
     expect(notes.n).toBe(1);
     db.close();
   });
@@ -226,7 +227,7 @@ describe("agent turn with tools", () => {
 
     expect(bodies).toHaveLength(1);
     expect(result.toolUsed).toBe("open_session");
-    expect(result.text).toBe("Sesión abierta con Ana Beltran.");
+    expect(result.text).toBe("Sesión abierta con Ana.");
     db.close();
   });
 

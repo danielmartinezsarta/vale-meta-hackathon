@@ -68,7 +68,7 @@ describe("sessions", () => {
     const db = freshTestDb();
     const opened = openSession(db, { client_name: "ana", service_name: "retiro" });
     expect(opened.ok).toBe(true);
-    expect(opened.message).toContain("Ana Beltran");
+    expect(opened.message).toContain("Ana");
     const closed = closeSession(db, { products_used: ["Acetona", "Algodon"] });
     expect(closed.ok).toBe(true);
     expect(closed.message).toMatch(/Duró \d+ minutos/);
@@ -86,7 +86,7 @@ describe("sessions", () => {
   it("rejects a second open session and a close without one", () => {
     const db = freshTestDb();
     openAna(db);
-    expect(openSession(db, { client_name: "Maria", service_name: "Manicura" }).ok).toBe(false);
+    expect(openSession(db, { client_name: "Sofia", service_name: "Manicura" }).ok).toBe(false);
     closeSession(db, {});
     expect(closeSession(db, {}).ok).toBe(false);
     expect(closeSession(db, {}).message).toBe("No hay sesión abierta.");
@@ -97,7 +97,7 @@ describe("sessions", () => {
     openAna(db);
     const refused = openSession(
       db,
-      { client_name: "Maria", service_name: "Manicura" },
+      { client_name: "Sofia", service_name: "Manicura" },
       "en",
     );
     expect(refused.ok).toBe(false);
@@ -121,7 +121,7 @@ describe("find_client", () => {
     const db = freshTestDb();
     const found = findClient(db, { name: "ana" });
     expect(found.ok).toBe(true);
-    expect(found.card?.name).toBe("Ana Beltran");
+    expect(found.card?.name).toBe("Ana");
     expect(findClient(db, { name: "nadie" }).ok).toBe(false);
     db.close();
   });
@@ -135,7 +135,10 @@ describe("add_note", () => {
     const health = addNote(db, { client_name: "Ana", text: "onicolisis pulgar", kind: "health" });
     expect(health.ok).toBe(true);
     expect(health.message).toBe("Nota privada guardada.");
-    const stored = db.prepare("SELECT kind, private_for_glimmer FROM notes ORDER BY id").all() as {
+    const anaId = (db.prepare("SELECT id FROM clients WHERE name = ?").get("Ana") as { id: number }).id;
+    const stored = db
+      .prepare("SELECT kind, private_for_glimmer FROM notes WHERE client_id = ? ORDER BY id")
+      .all(anaId) as {
       kind: string;
       private_for_glimmer: number;
     }[];
@@ -163,6 +166,9 @@ describe("add_note", () => {
 describe("shopping list", () => {
   it("adds once, reads, and reports unknown items", () => {
     const db = freshTestDb();
+    db.prepare("DELETE FROM reminder_items").run();
+    db.prepare("DELETE FROM shopping_list").run();
+    db.prepare("DELETE FROM reminders").run();
     expect(readShoppingList(db).message).toBe("La lista está vacía.");
     expect(addToShoppingList(db, { item_name: "lima" }).ok).toBe(true);
     const twice = addToShoppingList(db, { item_name: "Lima de Uñas" });
@@ -219,10 +225,14 @@ describe("log_supply_use", () => {
 describe("undo_last_write", () => {
   it("reverts a note and a list addition", () => {
     const db = freshTestDb();
+    const seededNotes = (db.prepare("SELECT COUNT(*) AS n FROM notes").get() as { n: number }).n;
+    db.prepare("DELETE FROM reminder_items").run();
+    db.prepare("DELETE FROM shopping_list").run();
+    db.prepare("DELETE FROM reminders").run();
     addNote(db, { client_name: "Ana", text: "temporal", kind: "general" });
     expect(undoLastWrite(db).message).toContain("Deshecho");
     const notes = db.prepare("SELECT COUNT(*) AS n FROM notes").get() as { n: number };
-    expect(notes.n).toBe(0);
+    expect(notes.n).toBe(seededNotes);
     addToShoppingList(db, { item_name: "Algodon" });
     undoLastWrite(db);
     expect(readShoppingList(db).message).toBe("La lista está vacía.");
@@ -232,6 +242,7 @@ describe("undo_last_write", () => {
 
   it("reverts created clients, supply uses and session lifecycle", () => {
     const db = freshTestDb();
+    const seededSessions = (db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }).n;
     createClient(db, { name: "Elena Vidal" });
     undoLastWrite(db);
     expect(findClient(db, { name: "Elena" }).ok).toBe(false);
@@ -242,11 +253,13 @@ describe("undo_last_write", () => {
     expect(supplies.n).toBe(23);
     closeSession(db, { products_used: ["Algodon"] });
     undoLastWrite(db);
-    const session = db.prepare("SELECT ended_at FROM sessions").get() as { ended_at: string | null };
+    const session = db.prepare("SELECT ended_at FROM sessions ORDER BY id DESC LIMIT 1").get() as {
+      ended_at: string | null;
+    };
     expect(session.ended_at).toBeNull();
     undoLastWrite(db);
     const sessions = db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number };
-    expect(sessions.n).toBe(0);
+    expect(sessions.n).toBe(seededSessions);
     db.close();
   });
 });
@@ -358,20 +371,22 @@ describe("appointments", () => {
 
   it("answers what is today and who is next, including an empty day", () => {
     const db = freshTestDb();
+    expect(listToday(db).message).toContain("Daniel 15:00");
+    db.prepare("DELETE FROM appointments").run();
     expect(listToday(db).message).toBe("No tienes nada hoy.");
     const inAnHour = new Date(Date.now() + 60 * 60000);
     const inTwoHours = new Date(Date.now() + 120 * 60000);
     const pad = (value: number): string => String(value).padStart(2, "0");
     const timeOf = (when: Date): string => `${pad(when.getHours())}:${pad(when.getMinutes())}`;
     expect(bookToday(db, "Ana", timeOf(inAnHour)).ok).toBe(true);
-    expect(bookToday(db, "Maria", timeOf(inTwoHours)).ok).toBe(true);
+    expect(bookToday(db, "Sofia", timeOf(inTwoHours)).ok).toBe(true);
     const today = listToday(db);
     expect(today.ok).toBe(true);
-    expect(today.message).toContain(`Ana Beltran ${timeOf(inAnHour)}`);
-    expect(today.message).toContain(`Maria Solis ${timeOf(inTwoHours)}`);
+    expect(today.message).toContain(`Ana ${timeOf(inAnHour)}`);
+    expect(today.message).toContain(`Sofia ${timeOf(inTwoHours)}`);
     const next = nextAppointment(db);
     expect(next.ok).toBe(true);
-    expect(next.message).toBe(`Sigue Ana Beltran a las ${timeOf(inAnHour)}.`);
+    expect(next.message).toBe(`Sigue Ana a las ${timeOf(inAnHour)}.`);
     db.close();
   });
 
@@ -390,6 +405,7 @@ describe("appointments", () => {
 
   it("refuses unknown clients without creating anything", () => {
     const db = freshTestDb();
+    const seeded = (db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number }).n;
     const result = createAppointment(db, {
       client_name: "Nadie",
       service_name: "retiro",
@@ -399,7 +415,7 @@ describe("appointments", () => {
     expect(result.ok).toBe(false);
     expect(result.message).toContain("No encuentro");
     const count = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
-    expect(count.n).toBe(0);
+    expect(count.n).toBe(seeded);
     const moved = moveAppointment(db, { client_name: "Nadie", new_day: localDay(), new_time: "11:00" });
     expect(moved.ok).toBe(false);
     db.close();
@@ -441,15 +457,15 @@ describe("appointments", () => {
     );
     expect(feb29Leap.ok).toBe(true);
     const count = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
-    expect(count.n).toBe(1);
+    expect(count.n).toBe(5);
     db.close();
   });
 
   it("asks before acting on ambiguous clients or broken dates", () => {
     const db = freshTestDb();
-    createClient(db, { name: "Ana Ruiz" });
+    createClient(db, { name: "Sofia Vega" });
     const asked = createAppointment(db, {
-      client_name: "ana",
+      client_name: "sof",
       service_name: "retiro",
       day: localDay(),
       time: "10:00",
@@ -457,13 +473,14 @@ describe("appointments", () => {
     expect(asked.ok).toBe(false);
     expect(asked.message).toContain("¿Cuál");
     const count = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
-    expect(count.n).toBe(0);
+    expect(count.n).toBe(4);
     expect(createAppointment(db, { client_name: "Ana", service_name: "retiro", day: localDay() }).ok).toBe(false);
     db.close();
   });
 
   it("moves an appointment and undoes the move", () => {
     const db = freshTestDb();
+    db.prepare("DELETE FROM appointments").run();
     bookToday(db, "Ana", "10:00");
     const moved = moveAppointment(db, { client_name: "Ana", new_day: localDay(), new_time: "12:00" });
     expect(moved.ok).toBe(true);
@@ -550,29 +567,47 @@ describe("goal_progress", () => {
     expect(closed.ok).toBe(true);
   }
 
-  it("starts at zero against the 2500 goal", () => {
+  it("reports the seeded month progress against the 2500 goal", () => {
     const db = freshTestDb();
     const progress = goalProgress(db);
     expect(progress.ok).toBe(true);
     expect(progress.message).toContain("2500 USD");
-    expect((progress.data as { earned_usd: number }).earned_usd).toBe(0);
+    const rows = db
+      .prepare(
+        `SELECT margin_earned FROM sessions
+         WHERE ended_at IS NOT NULL AND strftime('%Y-%m', ended_at) = strftime('%Y-%m', 'now')`,
+      )
+      .all() as { margin_earned: number }[];
+    const total = rows.reduce((sum, row) => sum + row.margin_earned, 0);
+    expect(total).toBeGreaterThan(0);
+    expect((progress.data as { earned_usd: number }).earned_usd).toBe(Math.round(total * 100) / 100);
     db.close();
   });
 
   it("adds the closing margin and ignores other months", () => {
     const db = freshTestDb();
     closeHourSession(db);
-    const first = db.prepare("SELECT margin_earned FROM sessions").get() as { margin_earned: number };
+    const first = db.prepare("SELECT id, margin_earned FROM sessions ORDER BY id DESC LIMIT 1").get() as {
+      id: number;
+      margin_earned: number;
+    };
     expect(first.margin_earned).toBeGreaterThan(0);
     closeHourSession(db);
     const progress = goalProgress(db);
     const data = progress.data as { earned_usd: number };
-    const rows = db.prepare("SELECT margin_earned FROM sessions").all() as { margin_earned: number }[];
+    const rows = db
+      .prepare(
+        `SELECT id, margin_earned FROM sessions
+         WHERE ended_at IS NOT NULL AND strftime('%Y-%m', ended_at) = strftime('%Y-%m', 'now')`,
+      )
+      .all() as { id: number; margin_earned: number }[];
     const total = rows.reduce((sum, row) => sum + row.margin_earned, 0);
     expect(data.earned_usd).toBe(Math.round(total * 100) / 100);
-    db.prepare("UPDATE sessions SET ended_at = '2026-01-15T12:00:00.000Z' WHERE id = 1").run();
+    db.prepare("UPDATE sessions SET ended_at = '2026-01-15T12:00:00.000Z' WHERE id = ?").run(first.id);
     const backdated = goalProgress(db);
-    expect((backdated.data as { earned_usd: number }).earned_usd).toBe(Math.round(rows[1].margin_earned * 100) / 100);
+    expect((backdated.data as { earned_usd: number }).earned_usd).toBe(
+      Math.round((total - first.margin_earned) * 100) / 100,
+    );
     db.close();
   });
 
@@ -580,7 +615,9 @@ describe("goal_progress", () => {
     const db = freshTestDb();
     closeHourSession(db);
     expect(undoLastWrite(db).ok).toBe(true);
-    const row = db.prepare("SELECT margin_earned FROM sessions").get() as { margin_earned: number | null };
+    const row = db.prepare("SELECT margin_earned FROM sessions ORDER BY id DESC LIMIT 1").get() as {
+      margin_earned: number | null;
+    };
     expect(row.margin_earned).toBeNull();
     db.close();
   });
@@ -601,7 +638,7 @@ describe("off-hours warning", () => {
     expect(saturday.message).toContain("¿La guardo igual?");
     expect(saturday.pendingOffHours).toBe(true);
     const early = createAppointment(db, {
-      client_name: "Maria",
+      client_name: "Sofia",
       service_name: "retiro",
       day: "2026-10-29",
       time: "08:00",
@@ -609,15 +646,15 @@ describe("off-hours warning", () => {
     expect(early.ok).toBe(false);
     expect(early.message).toContain("fuera de 9 a 17");
     const both = createAppointment(db, {
-      client_name: "Carmen",
+      client_name: "Paola",
       service_name: "retiro",
       day: "2026-10-31",
       time: "18:00",
     });
     expect(both.ok).toBe(false);
     expect(both.message).toContain("fin de semana y queda fuera de 9 a 17");
-    const count = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
-    expect(count.n).toBe(0);
+    const seeded = (db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number }).n;
+    expect(seeded).toBe(4);
     const confirmed = createAppointment(db, {
       client_name: "Ana",
       service_name: "retiro",
@@ -629,7 +666,7 @@ describe("off-hours warning", () => {
     expect(confirmed.message).toContain("Cita guardada");
     expect((confirmed.data as { off_hours: boolean }).off_hours).toBe(true);
     const after = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
-    expect(after.n).toBe(1);
+    expect(after.n).toBe(5);
     expect(undoLastWrite(db).ok).toBe(true);
     db.close();
   });
