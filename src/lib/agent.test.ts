@@ -72,16 +72,16 @@ describe("agent prompt", () => {
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/no markdown/i);
     expect(SPOKEN_SYSTEM_PROMPT).toContain("Should I save it?");
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/never claim a write happened/i);
-    expect(SPOKEN_SYSTEM_PROMPT).toContain("Health notes: confirm briefly");
+    expect(SPOKEN_SYSTEM_PROMPT).toContain("Notes save at once, health notes stay private: confirm briefly");
     // How-to belongs to the tool, not the base: undo routing rides its description.
-    const undo = VALE_TOOLS.find((tool) => tool.name === "undo_last_write");
+    const undo = VALE_TOOLS.find((tool) => tool.name === "undo_last");
     expect(undo?.description).toContain("deshazlo");
     expect(undo?.description).toContain("undo it");
   });
 
   it("orders direct action without asking and asks only on doubt", () => {
     // Right-away dispatch rides the tool description, not the base.
-    const open = VALE_TOOLS.find((tool) => tool.name === "open_session");
+    const open = VALE_TOOLS.find((tool) => tool.name === "session_open");
     expect(open?.description).toMatch(/right away/i);
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/in doubt/i);
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/ambiguous/i);
@@ -140,7 +140,7 @@ describe("agent turn with tools", () => {
         bodies.push(body);
         if (bodies.length === 1) {
           return sseResponse([
-            toolCall("resp_1", "add_note", { client_name: "Ana", text: "prefiere viernes" }, "call_1"),
+            toolCall("resp_1", "client_note_add", { client_name: "Ana", text: "prefiere viernes" }, "call_1"),
           ]);
         }
         return sseResponse([spoken("resp_2", "Nota guardada en la ficha de Ana.")]);
@@ -149,10 +149,11 @@ describe("agent turn with tools", () => {
 
     const result = await runAgentTurn({ key: "test-key", transcript: "anota que prefiere viernes", language: "es", db });
 
-    expect(result.toolUsed).toBe("add_note");
-    expect(result.text).toBe("Nota guardada en la ficha de Ana Beltran.");
+    expect(result.toolUsed).toBe("client_note_add");
+    expect(result.text).toBe("Nota guardada en la ficha de Ana.");
     expect(bodies).toHaveLength(1);
-    const notes = db.prepare("SELECT COUNT(*) AS n FROM notes").get() as { n: number };
+    const anaId = (db.prepare("SELECT id FROM clients WHERE name = ?").get("Ana") as { id: number }).id;
+    const notes = db.prepare("SELECT COUNT(*) AS n FROM notes WHERE client_id = ?").get(anaId) as { n: number };
     expect(notes.n).toBe(1);
     db.close();
   });
@@ -167,7 +168,7 @@ describe("agent turn with tools", () => {
         );
         if (bodies.length === 1) {
           return sseResponse([
-            toolCall("resp_1", "read_shopping_list", {}, "call_9"),
+            toolCall("resp_1", "shopping_show", {}, "call_9"),
           ]);
         }
         return sseResponse([spoken("resp_2", "You have top coat.")]);
@@ -189,7 +190,7 @@ describe("agent turn with tools", () => {
     expect(second[second.length - 2]).toMatchObject({
       type: "function_call",
       call_id: "call_9",
-      name: "read_shopping_list",
+      name: "shopping_show",
     });
     expect(second[second.length - 1]).toMatchObject({
       type: "function_call_output",
@@ -209,7 +210,7 @@ describe("agent turn with tools", () => {
         return sseResponse([
           toolCall(
             "resp_1",
-            "open_session",
+            "session_open",
             { client_name: "Ana", service_name: "Gel refill" },
             "call_1",
           ),
@@ -225,8 +226,8 @@ describe("agent turn with tools", () => {
     });
 
     expect(bodies).toHaveLength(1);
-    expect(result.toolUsed).toBe("open_session");
-    expect(result.text).toBe("Sesión abierta con Ana Beltran.");
+    expect(result.toolUsed).toBe("session_open");
+    expect(result.text).toBe("Sesión abierta con Ana.");
     db.close();
   });
 
@@ -242,7 +243,7 @@ describe("agent turn with tools", () => {
               type: "response.function_call_arguments.delta",
               data: { delta: '{"name":"Ana"}' },
             },
-            toolCall("resp_1", "find_client", { name: "Ana" }, "call_1"),
+            toolCall("resp_1", "client_card_show", { name: "Ana" }, "call_1"),
           ]);
         }
         return sseResponse([
@@ -268,7 +269,7 @@ describe("agent turn with tools", () => {
 
   it("confirms a health note with exactly the private-note line", async () => {
     const db = freshTestDb();
-    runValeTool(db, "open_session", { client_name: "Ana", service_name: "Retiro de gel" });
+    runValeTool(db, "session_open", { client_name: "Ana", service_name: "Retiro de gel" });
     const stubHealthTurn = () => {
       const bodies: Record<string, unknown>[] = [];
       vi.stubGlobal(
@@ -277,7 +278,7 @@ describe("agent turn with tools", () => {
           bodies.push(JSON.parse((init as { body: string }).body) as Record<string, unknown>);
           if (bodies.length === 1) {
             return sseResponse([
-              toolCall("resp_1", "add_note", { client_name: "Ana", text: "onicolisis", kind: "health" }, "call_1"),
+              toolCall("resp_1", "client_note_add", { client_name: "Ana", text: "onicolisis", kind: "health_note" }, "call_1"),
             ]);
           }
           return sseResponse([spoken("resp_2", "Nota privada guardada.")]);
@@ -317,7 +318,7 @@ describe("agent narration buffering", () => {
         if (calls === 1) {
           return sseResponse([
             { type: "response.output_text.delta", data: { delta: "Abro la sesión ahora." } },
-            toolCall("resp_1", "find_client", { name: "Ana" }, "call_1"),
+            toolCall("resp_1", "client_card_show", { name: "Ana" }, "call_1"),
           ]);
         }
         return sseResponse([
@@ -444,7 +445,7 @@ describe("agent single attempt", () => {
         );
         if (bodies.length === 1) {
           return sseResponse([
-            toolCall("resp_mem", "create_client", { name: "Laura" }, "call_m"),
+            toolCall("resp_mem", "client_create", { name: "Laura" }, "call_m"),
           ]);
         }
         return sseResponse([spoken("resp_mem2", "Lista, Laura registrada.")]);
@@ -457,7 +458,7 @@ describe("agent single attempt", () => {
       slotKey: "mem-int",
       db: freshTestDb(),
     });
-    expect(created.toolUsed).toBe("create_client");
+    expect(created.toolUsed).toBe("client_create");
 
     await runAgentTurn({
       key: "test-key",
@@ -485,7 +486,7 @@ describe("agent single attempt", () => {
           return sseResponse([
             toolCall(
               "resp_doubt",
-              "open_session",
+              "session_open",
               { client_name: "Vera", service_name: "Gel removal" },
               "call_d",
             ),
@@ -503,9 +504,9 @@ describe("agent single attempt", () => {
     });
 
     expect(takePendingAction("pend-agent")).toEqual([
-      { tool: "create_client", args: { name: "Vera" } },
+      { tool: "client_create", args: { name: "Vera" } },
       {
-        tool: "open_session",
+        tool: "session_open",
         args: {
           client_name: "Vera",
           service_name: "Gel removal",
@@ -524,7 +525,7 @@ describe("agent single attempt", () => {
     );
     setPendingAction("stale-agent", [
       {
-        tool: "create_appointment",
+        tool: "agenda_create_appointment",
         args: { client_name: "Mia", day: "2026-10-31", time: "18:00" },
       },
     ]);
@@ -703,8 +704,8 @@ describe("closed reply language", () => {
           return sseResponse([
             toolCall(
               "resp_h",
-              "add_note",
-              { client_name: "Ana", text: "onicólisis", kind: "health" },
+              "client_note_add",
+              { client_name: "Ana", text: "onicólisis", kind: "health_note" },
               "call_h",
             ),
           ]);
@@ -733,7 +734,7 @@ describe("closed reply language", () => {
         );
         if (bodies.length === 1) {
           return sseResponse([
-            toolCall("resp_1", "goal_progress", {}, "call_g"),
+            toolCall("resp_1", "goal_show", {}, "call_g"),
           ]);
         }
         return sseResponse([spoken("resp_2", "Here is your goal.")]);
@@ -751,7 +752,7 @@ describe("closed reply language", () => {
       kind: "goal",
       title: "Monthly goal",
       size: "half",
-      data: { name: null, goal: 2500, earned: 0 },
+      data: { name: null, goal: 2500, earned: 112.6 },
     });
     expect(result.text).toBe("Here is your goal.");
   });
@@ -768,7 +769,7 @@ describe("closed reply language", () => {
           return sseResponse([
             toolCall(
               "resp_doubt",
-              "open_session",
+              "session_open",
               { client_name: "Vera", service_name: "Gel removal" },
               "call_d",
             ),
@@ -856,7 +857,7 @@ describe("closed reply language", () => {
       db,
       history: [
         { role: "user", text: "Vale, save a note for Emma", tool: null },
-        { role: "vale", text: "Saved. Anything else?", tool: "add_note" },
+        { role: "vale", text: "Saved. Anything else?", tool: "client_note_add" },
       ],
     });
     expect(result.text).toBe("What would you like me to confirm?");

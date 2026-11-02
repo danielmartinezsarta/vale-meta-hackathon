@@ -3,16 +3,18 @@ import { freshTestDb } from "./db";
 import { getHomeData } from "./home-data";
 
 describe("getHomeData (home screen snapshot)", () => {
-  it("returns the user name with empty sections on a fresh seed", () => {
+  it("returns the user name with the seeded demo agenda on a fresh seed", () => {
     const data = getHomeData(freshTestDb());
     expect(data.userName).toBe("Daniel");
-    expect(data.today).toEqual([]);
+    expect(data.today.length).toBeGreaterThan(0);
     expect(data.goal).toMatchObject({ month: expect.any(String) });
     expect(Array.isArray(data.supplies)).toBe(true);
   });
 
   it("shapes today, goal and supplies from the database", () => {
     const db = freshTestDb();
+    db.prepare("DELETE FROM appointments").run();
+    db.prepare("DELETE FROM sessions").run();
     const today = new Date();
     const day = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
     const client = db.prepare("SELECT id FROM clients LIMIT 1").get() as { id: number };

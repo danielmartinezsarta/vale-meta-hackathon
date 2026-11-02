@@ -7,10 +7,10 @@ import {
 } from "./slot-memory";
 
 describe("slot memory", () => {
-  it("records client and service from a successful open_session", () => {
+  it("records client and service from a successful session_open", () => {
     updateSlotsFromTool(
       "slot-open",
-      "open_session",
+      "session_open",
       { client_name: "Ana", service_name: "esmaltado" },
       true,
       undefined,
@@ -30,7 +30,7 @@ describe("slot memory", () => {
   it("ignores doubt, merges create_client, clears on close", () => {
     updateSlotsFromTool(
       "slot-merge",
-      "open_session",
+      "session_open",
       { client_name: "X" },
       false,
       undefined,
@@ -39,7 +39,7 @@ describe("slot memory", () => {
     expect(slotContext("slot-merge", "es")).toBe("");
     updateSlotsFromTool(
       "slot-merge",
-      "create_client",
+      "client_create",
       { name: "Laura" },
       true,
       undefined,
@@ -48,20 +48,20 @@ describe("slot memory", () => {
     expect(slotContext("slot-merge", "en")).toBe(
       "Ongoing: client Laura. Don't ask again for what's known.",
     );
-    updateSlotsFromTool("slot-merge", "close_session", {}, true, undefined);
+    updateSlotsFromTool("slot-merge", "session_close", {}, true, undefined);
     expect(getSlots("slot-merge")).toEqual({});
     clearSlots("slot-open");
     clearSlots("slot-merge");
   });
 
-  it("takes the matched name from find_client and add_note", () => {
-    updateSlotsFromTool("slot-card", "find_client", { name: "an" }, true, {
-      name: "Ana",
+  it("takes the matched name from client_card_show and client_note_add", () => {
+    updateSlotsFromTool("slot-card", "client_card_show", { name: "an" }, true, {
+      card: { name: "Ana" },
     });
     expect(getSlots("slot-card")).toEqual({ client: "Ana" });
     updateSlotsFromTool(
       "slot-card",
-      "add_note",
+      "client_note_add",
       { client_name: "Ana", text: "prefiere viernes" },
       true,
       undefined,

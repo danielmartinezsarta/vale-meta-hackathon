@@ -131,6 +131,21 @@ export function isUndoIntent(transcript: string): boolean {
 const GREETING_ONLY =
   /^(hola|hey|buenas|buenos dias|buenas tardes|buenas noches|alo|oiga|oigame)$/;
 
+/**
+ * A bare name call: the turn holds only the wake word ("Vale", "valley"),
+ * cut off mid-thought before the pause. Vale stays silent and keeps
+ * listening in the same turn instead of answering: answering here drops
+ * the words that follow (trial 9.1).
+ */
+export function isBareNameCall(transcript: string): boolean {
+  const tokens = normalizeWakeText(transcript)
+    .split(" ")
+    .filter((token) => token !== "");
+  if (tokens.length === 0 || tokens.length > 2) return false;
+  const bare = [...wakeWords(), "valley"];
+  return tokens.every((token) => bare.includes(token));
+}
+
 /** Bare greeting, optionally naming Vale: never a data request. */
 export function isGreetingOnly(transcript: string): boolean {
   const words = normalizeWakeText(transcript)
