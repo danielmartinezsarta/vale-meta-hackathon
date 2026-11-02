@@ -1823,9 +1823,9 @@ describe("quote reject on the touch card (decision 1)", () => {
       expect(agent).not.toHaveBeenCalled();
       const widget = browser.frames().find(
         (frame) => frame.type === "widget",
-      ) as { widget?: { kind?: string; lines?: string[] } | null };
-      expect(widget?.widget?.kind).toBe("breakdown");
-      expect(widget?.widget?.lines).toContain("Waiting for the amount.");
+      ) as { widget?: { kind?: string; data?: Record<string, unknown> } | null };
+      expect(widget?.widget?.kind).toBe("price");
+      expect(widget?.widget?.data).toMatchObject({ suggested: pending?.amount });
       // The reply never names the total.
       for (const frame of browser.frames()) {
         if (frame.type === "reply") {

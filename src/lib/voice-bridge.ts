@@ -675,10 +675,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     sendJson(browser, {
       type: "widget",
       widget: buildWidget(
-        "session_quote",
+        "quote_price",
         {},
         (rejected as { data?: unknown }).data ?? null,
-        turnLanguage,
       ),
     });
     logTurn({

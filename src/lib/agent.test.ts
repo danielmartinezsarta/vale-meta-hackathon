@@ -752,7 +752,7 @@ describe("closed reply language", () => {
       kind: "goal",
       title: "Monthly goal",
       size: "half",
-      data: { name: null, goal: 2500, earned: 0 },
+      data: { name: null, goal: 2500, earned: 112.6 },
     });
     expect(result.text).toBe("Here is your goal.");
   });

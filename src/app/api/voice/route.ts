@@ -329,10 +329,9 @@ export async function POST(request: Request): Promise<Response> {
               send("board", { board: getBoard(getDb()) });
               send("widget", {
                 widget: buildWidget(
-                  "session_quote",
+                  "quote_price",
                   {},
                   (rejected as { data?: unknown }).data ?? null,
-                  language,
                 ),
               });
               logTurn({
