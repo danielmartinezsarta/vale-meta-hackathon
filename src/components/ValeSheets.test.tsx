@@ -157,4 +157,52 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
     expect(screen.getByText("Food")).toBeTruthy();
     expect(screen.getByText("Stretch")).toBeTruthy();
   });
+
+  it("marks the mounted sheet open so Ali's CSS shows it", async () => {
+    renderSheet({
+      kind: "goal",
+      title: "Monthly goal",
+      size: "half",
+      data: { name: null, goal: 600, earned: 120 },
+    });
+    const sheet = screen.getByRole("dialog", { name: "Monthly goal" });
+    await vi.waitFor(() => {
+      expect(sheet.className).toContain("is-open");
+    });
+  });
+
+  it("marks every Ali sheet open so each kind can show", async () => {
+    const sheets: Widget[] = [
+      { kind: "client_card", title: "Client card", size: "full", data: { name: "David", birthday: null, sex: null, phone: null, email: null, visits: [], visitsMore: 0, healthNotes: [], noteTags: [] } },
+      { kind: "goal", title: "Monthly goal", size: "half", data: { name: null, goal: 600, earned: 120 } },
+      { kind: "camera_save_as", title: "Save photo as", size: "half", data: {} },
+      { kind: "photos", title: "Photos", size: "full", data: { before: null, reference: null, expected: null } },
+      { kind: "health_note", title: "Health note", size: "half", data: { text: "Allergic to monomer", client: "David" } },
+      { kind: "note", title: "Note saved", size: "half", data: { text: "Likes neon colors", client: "David" } },
+      { kind: "price", title: "Price", size: "half", data: { service: "Manicure", extras: null, suggested: 35 } },
+      { kind: "final_photo_confirm", title: "Save final photo", size: "full", data: { photo: null } },
+      { kind: "final_result", title: "Final result", size: "full", data: { photo: null, description: null } },
+      { kind: "booked", title: "Appointment booked", size: "half", data: { client: "David", service: "Manicure", day: "2026-11-27", time: "15:00" } },
+      { kind: "session_summary", title: "Session summary", size: "full", data: { client: "David", date: "Nov 2, 2026", service: { name: "Gel removal", price: 24 }, extras: [], suggested: 24, charged: 24, timeTotal: "11m", timeParts: [], costs: [], fixedDetail: null } },
+    ];
+    for (const widget of sheets) {
+      const { container, unmount } = renderSheet(widget);
+      const section = container.querySelector("section.aw-sheet");
+      expect(section).not.toBeNull();
+      await vi.waitFor(() => {
+        expect(section?.className).toContain("is-open");
+      });
+      unmount();
+    }
+  });
+
+  it("renders nothing for a kind outside the contract", () => {
+    const { container } = renderSheet({
+      kind: "agenda",
+      title: "Agenda",
+      size: "half",
+      data: {},
+    } as unknown as Widget);
+    expect(container.firstChild).toBeNull();
+  });
 });
