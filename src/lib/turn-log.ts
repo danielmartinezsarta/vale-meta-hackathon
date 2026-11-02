@@ -38,7 +38,7 @@ export interface TurnLogFields {
   key?: string;
   slots?: { client?: string; service?: string } | null;
   /** Sliding-gate verdict, seconds since Vale's last reply, turn wall time. */
-  gate?: "nombre" | "ventana" | "ignorado" | "idioma" | null;
+  gate?: "nombre" | "ventana" | "ignorado" | "idioma" | "cierre" | null;
   sinceReplyS?: number | null;
   totalMs?: number | null;
   /**

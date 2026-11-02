@@ -10,7 +10,12 @@ import type {
 import type { Board } from "@/lib/board";
 import { hasVisibleContent, type Turn } from "@/lib/turn-view";
 import { parseSseStream } from "@/lib/sse";
-import { namesVale, shouldCutPhrase, windowMs } from "@/lib/wake";
+import {
+  isCloseSheetIntent,
+  namesVale,
+  shouldCutPhrase,
+  windowMs,
+} from "@/lib/wake";
 import {
   isSpeaking,
   setVoiceEngine,
@@ -446,6 +451,10 @@ export function TapToTalk({
         failed: boolean;
         /** The single buffered-POST retry already ran for this turn. */
         postRetried: boolean;
+        /** POST abort handle: a spoken sheet close stops it mid-stream. */
+        controller?: AbortController | null;
+        /** A sheet close already claimed this turn: never dismiss twice. */
+        dismissed?: boolean;
         /** Audio as it stood when speech ended (no inter-turn tail). */
         endFrames: Int16Array[] | null;
         /** Frames with real voice (energy above the VAD threshold). */
@@ -596,6 +605,57 @@ export function TapToTalk({
         if (namesVale(text)) lastExecuteAtRef.current = Date.now();
       };
 
+      // Spoken sheet close with a sheet open: the card goes away with no
+      // model call and no spoken reply. The user bubble stays; the server
+      // logs the discard (gate cierre) and only sends ignored+done.
+      const dismissSheetTurn = (id: number, text: string) => {
+        if (widgetRef.current === null) return;
+        const transport = transports.get(id);
+        if (transport?.dismissed) return;
+        if (transport) transport.dismissed = true;
+        setWidget(null);
+        posted = true;
+        // The remainder drains until the pause like a cut phrase: no frames,
+        // no orphan turn, and the pause opens fresh with a re-armed window.
+        droppedRef.current = true;
+        const payload = JSON.stringify({ type: "dismiss", transcript: text });
+        try {
+          if (
+            convOpen &&
+            convSocket &&
+            typeof WebSocket !== "undefined" &&
+            convSocket.readyState === WebSocket.OPEN
+          ) {
+            convSocket.send(payload);
+            return;
+          }
+          const socket = transport?.socket ?? null;
+          if (
+            socket &&
+            typeof WebSocket !== "undefined" &&
+            socket.readyState === WebSocket.OPEN
+          ) {
+            socket.send(payload);
+            return;
+          }
+        } catch {
+          /* the POST abort below covers a dead socket */
+        }
+        try {
+          transport?.controller?.abort();
+        } catch {
+          /* already settled */
+        }
+      };
+
+      const maybeDismissSheet = (id: number, text: string) => {
+        noteHeardName(text);
+        if (!sessionRef.current) return;
+        if (id !== currentId || text.trim() === "") return;
+        if (widgetRef.current === null || !isCloseSheetIntent(text)) return;
+        dismissSheetTurn(id, text);
+      };
+
       // Unaddressed chatter never rides to the model: past the opening
       // words, with no session and the window closed, the phrase is cut
       // here and its remainder drains until the pause. A phrase that names
@@ -686,10 +746,12 @@ export function TapToTalk({
               if (message.transcript.trim() !== "") {
                 silentStreakRef.current = 0;
                 patchTurn(id, { final: message.transcript, interim: "" });
+                maybeDismissSheet(id, message.transcript);
               }
             } else {
               patchTurn(id, { interim: message.transcript });
               maybeCutUnaddressed(id, message.transcript);
+              maybeDismissSheet(id, message.transcript);
             }
             break;
           case "reply-delta":
@@ -1041,6 +1103,7 @@ export function TapToTalk({
               onInterim: (transcript) => {
                 patchTurn(id, { interim: transcript });
                 maybeCutUnaddressed(id, transcript);
+                maybeDismissSheet(id, transcript);
               },
               onFinal: (transcript) => {
                 // The turn ends at `done`; reply/notice/error follow on this stream.
@@ -1051,6 +1114,7 @@ export function TapToTalk({
                 if (transcript.trim() !== "") {
                   silentStreakRef.current = 0;
                   patchTurn(id, { final: transcript, interim: "" });
+                  maybeDismissSheet(id, transcript);
                 }
               },
               onErrorEvent: (message, code) => {
@@ -1125,6 +1189,8 @@ export function TapToTalk({
         });
         const controller = new AbortController();
         controllersRef.current.add(controller);
+        const transport = transports.get(id);
+        if (transport) transport.controller = controller;
         setNotice(null);
         subscribePostTurn(
           id,

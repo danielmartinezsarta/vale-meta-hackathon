@@ -142,4 +142,35 @@ describe("confirm card (touch equals voice)", () => {
       screen.queryByRole("button", { name: "Yes" }),
     ).toBeNull();
   });
+
+  it("closes the sheet on a spoken close order, no model round-trip", async () => {
+    const ws = await openConversation();
+    ws.serverMessage({
+      type: "widget",
+      widget: {
+        kind: "agenda",
+        title: "Today",
+        lines: [],
+        size: "half",
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Today")).toBeTruthy();
+    });
+    // A short close order with the sheet open dismisses the turn instead
+    // of riding to the model.
+    ws.serverMessage({
+      type: "transcript",
+      transcript: "close the agenda",
+      final: true,
+    });
+    await waitFor(() => {
+      expect(ws.sentStrings()).toContain(
+        JSON.stringify({ type: "dismiss", transcript: "close the agenda" }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Today")).toBeNull();
+    });
+  });
 });
