@@ -5,6 +5,7 @@ import { PRICING } from "./db";
 import { quotePrice } from "./quote";
 import seedData from "./seed-data.json";
 import { bogotaDay } from "./natural-date";
+import { buildPendingActions } from "./pending-action";
 import {
   VALE_TOOLS,
   acceptQuote,
@@ -70,6 +71,13 @@ describe("tool definitions", () => {
       ].sort(),
     );
     for (const tool of VALE_TOOLS) expect(tool.type).toBe("function");
+  });
+
+  it("routes delete-note phrases to undo_last", () => {
+    const undo = VALE_TOOLS.find((tool) => tool.name === "undo_last")!;
+    for (const phrase of ["delete that note", "remove that note", "borra esa nota", "elimina la nota"]) {
+      expect(undo.description).toContain(phrase);
+    }
   });
 
   it("keeps booking and card lookups internal-only", () => {
@@ -211,14 +219,24 @@ describe("client_card_show (1.1)", () => {
     expect(card.message).not.toContain("allergy");
     db.close();
   });
+
+  it("lists health notes first on the card", () => {
+    const db = freshTestDb();
+    runValeTool(db, "client_note_add", { client_name: "Daniel", text: "Likes neon colors", kind: "note" });
+    const card = showClientCard(db, { name: "Daniel" }, "en");
+    const kinds = (card.data as { card: { notes: { kind: string }[] } }).card.notes.map((note) => note.kind);
+    expect(kinds[0]).toBe("health_note");
+    expect(kinds).toContain("note");
+    db.close();
+  });
 });
 
 describe("add_note", () => {
-  it("saves general notes and private health notes", () => {
+  it("saves notes and private health notes", () => {
     const db = freshTestDb();
-    const general = addNote(db, { client_name: "Ana", text: "prefiere viernes", kind: "general" });
+    const general = addNote(db, { client_name: "Ana", text: "prefiere viernes", kind: "note" });
     expect(general.ok).toBe(true);
-    const health = addNote(db, { client_name: "Ana", text: "onicolisis pulgar", kind: "health" });
+    const health = addNote(db, { client_name: "Ana", text: "onicolisis pulgar", kind: "health_note" });
     expect(health.ok).toBe(true);
     expect(health.message).toBe("Nota privada guardada.");
     const anaId = (db.prepare("SELECT id FROM clients WHERE name = ?").get("Ana") as { id: number }).id;
@@ -229,16 +247,51 @@ describe("add_note", () => {
       private_for_glimmer: number;
     }[];
     expect(stored).toEqual([
-      { kind: "general", private_for_glimmer: 0 },
-      { kind: "health", private_for_glimmer: 1 },
+      { kind: "note", private_for_glimmer: 0 },
+      { kind: "health_note", private_for_glimmer: 1 },
     ]);
+    db.close();
+  });
+
+  it("saves immediately with no confirm question", () => {
+    const db = freshTestDb();
+    const saved = runValeTool(
+      db,
+      "client_note_add",
+      { client_name: "Ana", text: "He likes neon colors", kind: "note" },
+      "en",
+    );
+    expect(saved.ok).toBe(true);
+    expect(
+      buildPendingActions(db, "client_note_add", { client_name: "Ana", text: "He likes neon colors" }, saved),
+    ).toBeUndefined();
+    // Unknown clients fail outright: register them first, then save.
+    const unknown = runValeTool(db, "client_note_add", { client_name: "Nadie", text: "hola" });
+    expect(unknown.ok).toBe(false);
+    expect(
+      buildPendingActions(db, "client_note_add", { client_name: "Nadie", text: "hola" }, unknown),
+    ).toBeUndefined();
+    db.close();
+  });
+
+  it("names the removed text when a note is undone, never a health text", () => {
+    const db = freshTestDb();
+    addNote(db, { client_name: "Ana", text: "Likes neon colors", kind: "note" }, "en");
+    const undone = undoLastWrite(db, "en");
+    expect(undone.ok).toBe(true);
+    expect(undone.message).toBe('Undone: added note "Likes neon colors".');
+    addNote(db, { client_name: "Ana", text: "Allergic to monomer", kind: "health_note" }, "en");
+    const hidden = undoLastWrite(db, "en");
+    expect(hidden.ok).toBe(true);
+    expect(hidden.message).toBe("Undone: added note.");
+    expect(hidden.message).not.toContain("monomer");
     db.close();
   });
 
   it("never lets private text reach the model context", () => {
     const db = freshTestDb();
     const secret = "onicocriptosis severa inventada xyz";
-    const result = runValeTool(db, "client_note_add", { client_name: "Ana", text: secret, kind: "health" });
+    const result = runValeTool(db, "client_note_add", { client_name: "Ana", text: secret, kind: "health_note" });
     expect(result.ok).toBe(true);
     // Everything this tool hands back toward the model: result + public card.
     const card = findClient(db, { name: "Ana" });
@@ -332,7 +385,7 @@ describe("undo_last_write", () => {
     db.prepare("DELETE FROM reminder_items").run();
     db.prepare("DELETE FROM shopping_list").run();
     db.prepare("DELETE FROM reminders").run();
-    addNote(db, { client_name: "Ana", text: "temporal", kind: "general" });
+    addNote(db, { client_name: "Ana", text: "temporal", kind: "note" });
     expect(undoLastWrite(db).message).toContain("Deshecho");
     const notes = db.prepare("SELECT COUNT(*) AS n FROM notes").get() as { n: number };
     expect(notes.n).toBe(seededNotes);
