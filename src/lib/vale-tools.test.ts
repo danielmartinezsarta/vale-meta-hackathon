@@ -109,7 +109,7 @@ describe("sessions", () => {
     expect(opened.message).toContain("Ana");
     const closed = closeSession(db, { products_used: ["Acetona", "Algodon"] });
     expect(closed.ok).toBe(true);
-    expect(closed.message).toMatch(/Duró \d+ minutos/);
+    expect(closed.message).toMatch(/Duró \d+ minutos?/);
     const row = db.prepare("SELECT ended_at, duration_s FROM sessions").get() as {
       ended_at: string;
       duration_s: number;

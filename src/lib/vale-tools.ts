@@ -463,7 +463,8 @@ export function closeSession(db: ValeDb, args: { products_used?: unknown }, lang
   logWrite(db, "session_close", "sessions", open.id, { supplies: recordedIds });
   // The full summary sheet reads the payment off this session, if any.
   const paid = db.prepare("SELECT COALESCE(SUM(amount_usd), 0) AS total FROM payments WHERE session_id = ?").get(open.id) as { total: number };
-  let message = language === "en" ? `Session closed. It lasted ${minutes} minutes.` : `Sesión cerrada. Duró ${minutes} minutos.`;
+  const lasted = language === "en" ? `It lasted ${minutes} minute${minutes === 1 ? "" : "s"}.` : `Duró ${minutes} minuto${minutes === 1 ? "" : "s"}.`;
+  let message = language === "en" ? `Session closed. ${lasted}` : `Sesión cerrada. ${lasted}`;
   if (recorded.length > 0) message += language === "en" ? ` Logged: ${recorded.join(", ")}.` : ` Anoté: ${recorded.join(", ")}.`;
   if (unknown.length > 0) message += language === "en" ? ` Not found: ${unknown.join(", ")}.` : ` No encontré: ${unknown.join(", ")}.`;
   return {
