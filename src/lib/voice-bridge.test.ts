@@ -8,6 +8,7 @@ import {
   tryParseControl,
   type BridgeAgentResult,
 } from "./voice-bridge";
+import { checkWake } from "./wake";
 
 class FakeBrowser extends EventEmitter {
   readonly OPEN = 1;
@@ -136,11 +137,12 @@ function attachForTest(
   browser: FakeBrowser,
   agent: AgentFn = fakeAgent(),
   key = "test-key",
+  clientId = "test-client",
 ) {
   attachVoiceBridge({
     browser: browser as unknown as WebSocket,
     key,
-    clientId: "test-client",
+    clientId,
     metaUrl: url,
     runAgent: agent,
   });
@@ -356,6 +358,26 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("anchors the attention window on her real last word", async () => {
+    const browser = new FakeBrowser();
+    attachForTest(browser, fakeAgent(), "spoken-key", "spoken-client-1");
+    await vi.waitFor(() => {
+      expect(browser.frames().some((frame) => frame.type === "bridge")).toBe(
+        true,
+      );
+    });
+    expect(
+      checkWake("what time is it", "spoken-client-1", Date.now()).execute,
+    ).toBe(false);
+    browser.peerMessage(JSON.stringify({ type: "spoken" }));
+    expect(
+      checkWake("what time is it", "spoken-client-1", Date.now()),
+    ).toMatchObject({ execute: true, namedVale: false, gate: "ventana" });
+    expect(tryParseControl(JSON.stringify({ type: "spoken" }))).toEqual({
+      type: "spoken",
+    });
   });
 
   it("closes the sheet on dismiss with no model call", async () => {

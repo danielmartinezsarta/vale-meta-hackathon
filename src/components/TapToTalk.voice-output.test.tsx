@@ -31,6 +31,13 @@ vi.mock("@/lib/speak", async (importOriginal) => {
     // Strict turns: the mock voice never reports its end through the
     // estimate, so the suite drives settled-ness directly.
     speechSettled: vi.fn(() => !speakAudibleRef.current),
+    // The real-end notice: captured so the suite fires it by hand.
+    onSpeechSettled: vi.fn((fn: () => void) => {
+      settleListener = fn;
+      return () => {
+        settleListener = null;
+      };
+    }),
   };
 });
 
@@ -41,6 +48,8 @@ const mockFinishStream = vi.mocked(finishStream);
 const mockStopSpeaking = vi.mocked(stopSpeaking);
 /** Audibility the real (headless, silent) synth cannot report. */
 const speakAudibleRef = { current: false };
+/** The live real-end subscriber; the suite fires it by hand. */
+let settleListener: (() => void) | null = null;
 
 class FakeWs {
   static instances: FakeWs[] = [];
@@ -89,6 +98,7 @@ afterEach(() => {
   cleanup();
   FakeWs.instances = [];
   speakAudibleRef.current = false;
+  settleListener = null;
   setVoiceEngine("browser");
   vi.unstubAllGlobals();
   vi.clearAllMocks();
@@ -484,5 +494,72 @@ describe("voice engine switch", () => {
     expect(FakeWs.instances).toHaveLength(1);
     expect(played).toHaveLength(playedBefore + 1);
     expect(mockStopSpeaking).not.toHaveBeenCalled();
+  });
+
+  it("reopens the mic within 300 ms of her real last word", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+    });
+    vi.stubGlobal("WebSocket", FakeWs);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("no post", { status: 500 })));
+    const setPausedSpy = vi.fn();
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      driver = {
+        onSpeechStart: callbacks.onSpeechStart,
+        onSpeechEnd: callbacks.onSpeechEnd,
+        onFrame: callbacks.onFrame,
+      };
+      return {
+        stop: () => {},
+        state: () => "running",
+        engine: () => "script" as const,
+        setPaused: setPausedSpy,
+      };
+    });
+    speakAudibleRef.current = false;
+
+    render(<TapToTalk debug />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
+    await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(1);
+    });
+    FakeWs.instances[0].open();
+    const ws = FakeWs.instances[0];
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toBe("Listening");
+    });
+    await waitFor(() => {
+      expect(settleListener).not.toBeNull();
+    });
+
+    // Her reply is audible: frames mute the mic and the face speaks.
+    speakAudibleRef.current = true;
+    const voiced = new Int16Array(960).fill(4000);
+    driver!.onSpeechStart();
+    for (let i = 0; i < 8; i += 1) driver!.onFrame?.(voiced);
+    driver!.onSpeechEnd();
+    expect(setPausedSpy).toHaveBeenCalledWith(true);
+    ws.serverMessage({ type: "reply", text: "On it." });
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toBe("Speaking");
+    });
+
+    // Her voice really ends: face, mic and server anchor follow at once.
+    speakAudibleRef.current = false;
+    settleListener!();
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toBe("Listening");
+    });
+    await waitFor(() => {
+      expect(setPausedSpy).toHaveBeenCalledWith(false);
+    });
+    const spoken = ws
+      .sentStrings()
+      .map((raw) => JSON.parse(raw))
+      .filter((msg) => msg.type === "spoken");
+    expect(spoken).toHaveLength(1);
   });
 });

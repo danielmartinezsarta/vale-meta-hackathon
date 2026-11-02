@@ -9,6 +9,7 @@ import {
   getVoicePrefs,
   isSpeaking,
   loadVoicePrefs,
+  onSpeechSettled,
   pickVoice,
   preferredVoice,
   prosodyFor,
@@ -17,6 +18,7 @@ import {
   setVoicePrefs,
   speak,
   speakStream,
+  speechSettled,
   splitSentences,
   spokenText,
   stopSpeaking,
@@ -53,6 +55,16 @@ function stubSpeechSynthesis(voices: SpeechSynthesisVoice[] = []) {
     writable: true,
   });
   return { synth, utterances };
+}
+
+/** Fire the utterance end the real voice reports (onend or onerror). */
+function fireUtteranceEnd(utterance: SpeechSynthesisUtterance): void {
+  const end = (
+    utterance as unknown as {
+      onend: ((this: unknown, ev: unknown) => void) | null;
+    }
+  ).onend;
+  end?.call(utterance, {});
 }
 
 afterEach(() => {
@@ -553,6 +565,85 @@ describe("one voice per language (lead round p2)", () => {
     await vi.waitFor(() => {
       expect(utterances).toEqual(["Hi, I'm Vah-leh."]);
     });
+  });
+
+  it("settles the moment the voice really ends, not at the estimate", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    speak("Hello.", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
+    // The 150 ms/char + 2.5 s estimate is still owed: no real end yet.
+    expect(speechSettled()).toBe(false);
+    const only = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
+    fireUtteranceEnd(only);
+    expect(speechSettled()).toBe(true);
+  });
+
+  it("waits for the last queued utterance before settling", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    speak("Hi, I am Vale. Tell me what you need.", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(2);
+    });
+    const first = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
+    const second = synth.speak.mock.calls[1][0] as SpeechSynthesisUtterance;
+    fireUtteranceEnd(first);
+    expect(speechSettled()).toBe(false);
+    fireUtteranceEnd(second);
+    expect(speechSettled()).toBe(true);
+  });
+
+  it("ignores the ended reply once a newer one is queued", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    speak("First reply here.", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
+    const stale = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
+    speak("Second.", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(2);
+    });
+    fireUtteranceEnd(stale);
+    expect(speechSettled()).toBe(false);
+    const current = synth.speak.mock.calls[1][0] as SpeechSynthesisUtterance;
+    fireUtteranceEnd(current);
+    expect(speechSettled()).toBe(true);
+  });
+
+  it("settles when synth.speaking goes quiet without an end event", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    const live = synth as unknown as { speaking: boolean };
+    speak("Hello.", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
+    live.speaking = true;
+    expect(speechSettled()).toBe(false);
+    live.speaking = false;
+    expect(speechSettled()).toBe(true);
+    live.speaking = false;
+  });
+
+  it("notifies settle listeners once at the real end", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    const heard: number[] = [];
+    const release = onSpeechSettled(() => {
+      heard.push(Date.now());
+    });
+    try {
+      speak("Hello.", "en");
+      await vi.waitFor(() => {
+        expect(synth.speak).toHaveBeenCalledTimes(1);
+      });
+      const only = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
+      fireUtteranceEnd(only);
+      expect(heard).toHaveLength(1);
+      expect(speechSettled()).toBe(true);
+    } finally {
+      release();
+    }
   });
 
   it("caps speech end by phrase length, never cutting real speech", () => {

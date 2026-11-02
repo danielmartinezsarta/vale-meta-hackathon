@@ -18,6 +18,7 @@ import {
 } from "@/lib/wake";
 import {
   isSpeaking,
+  onSpeechSettled,
   setVoiceEngine,
   speak,
   speechSettled,
@@ -153,6 +154,10 @@ export function TapToTalk({
   const resumeTimerRef = useRef(0);
   const speechWatchRef = useRef(0);
   const muteStartRef = useRef(0);
+  // Her voice really sounded this reply: the real-end notice anchors it.
+  const voicedRef = useRef(false);
+  // Real-end subscription for this mic session; released with the watch.
+  const settleReleaseRef = useRef<(() => void) | null>(null);
   // Per-turn ear evidence, frozen at endStream and sent with it.
   const turnPeakRef = useRef(0);
   const turnMutedMsRef = useRef(0);
@@ -237,6 +242,8 @@ export function TapToTalk({
   const clearSpeechWatch = useCallback(() => {
     window.clearInterval(speechWatchRef.current);
     window.clearTimeout(resumeTimerRef.current);
+    settleReleaseRef.current?.();
+    settleReleaseRef.current = null;
     mutedRef.current = false;
   }, []);
 
@@ -388,6 +395,23 @@ export function TapToTalk({
       // owed (audible speech or the estimate window), capture stays muted;
       // when she settles, flush stale frames, wait ~300 ms, re-listen.
       // The window stays open throughout: a yes still lands on the session.
+      // One unmute path: the estimate watch and the real-end notice share it.
+      const resumeMicFromSpeech = () => {
+        mutedRef.current = false;
+        turnMutedMsRef.current += Date.now() - muteStartRef.current;
+        // Fresh stamp for the next mute: the cap measures this voice.
+        muteStartRef.current = 0;
+        pending.length = 0;
+        window.clearTimeout(resumeTimerRef.current);
+        resumeTimerRef.current = window.setTimeout(() => {
+          if (!sessionRef.current) return;
+          captureRef.current?.setPaused?.(false);
+          // A turn posted while she settled already claimed the state.
+          if (valeStoreRef.current.get() === "speaking") {
+            valeStoreRef.current.set("listening");
+          }
+        }, SPEECH_RESUME_DELAY_MS);
+      };
       window.clearInterval(speechWatchRef.current);
       speechWatchRef.current = window.setInterval(() => {
         if (!sessionRef.current) return;
@@ -410,20 +434,7 @@ export function TapToTalk({
           return;
         }
         if (mutedRef.current) {
-          mutedRef.current = false;
-          turnMutedMsRef.current += Date.now() - muteStartRef.current;
-          // Fresh stamp for the next mute: the cap measures this voice.
-          muteStartRef.current = 0;
-          pending.length = 0;
-          window.clearTimeout(resumeTimerRef.current);
-          resumeTimerRef.current = window.setTimeout(() => {
-            if (!sessionRef.current) return;
-            captureRef.current?.setPaused?.(false);
-            // A turn posted while she settled already claimed the state.
-            if (valeStoreRef.current.get() === "speaking") {
-              valeStoreRef.current.set("listening");
-            }
-          }, SPEECH_RESUME_DELAY_MS);
+          resumeMicFromSpeech();
         } else {
           // Her voice settled with the mic open: speaking and done fall
           // back to listening, so a done that landed mid-speech no longer
@@ -433,6 +444,33 @@ export function TapToTalk({
           );
         }
       }, 250);
+      // Her real last word reopens everything at once: the face, the mic
+      // (through the shared resume), the window mirror, and the server
+      // anchor. Muted replies never voiced, so they anchor nothing.
+      settleReleaseRef.current?.();
+      settleReleaseRef.current = onSpeechSettled(() => {
+        // The window counts from her real last word, like the server anchor.
+        lastExecuteAtRef.current = Date.now();
+        if (!sessionRef.current || mutedOutRef.current) return;
+        if (valeStoreRef.current.get() === "speaking") {
+          valeStoreRef.current.set("listening");
+        }
+        if (!voicedRef.current) return;
+        voicedRef.current = false;
+        if (mutedRef.current) resumeMicFromSpeech();
+        try {
+          if (
+            convOpen &&
+            convSocket &&
+            typeof WebSocket !== "undefined" &&
+            convSocket.readyState === WebSocket.OPEN
+          ) {
+            convSocket.send(JSON.stringify({ type: "spoken" }));
+          }
+        } catch {
+          /* the reply-time anchor stands */
+        }
+      });
       // One conversation socket when /voice is up, else one bridge socket
       // per turn; frames stay buffered for replay or POST fallback.
       let convSocket: WebSocket | null = null;
@@ -766,6 +804,7 @@ export function TapToTalk({
               // Muted: the text still grows, but her voice never starts.
               if (!mutedOutRef.current) {
                 valeStoreRef.current.set("speaking");
+                voicedRef.current = true;
                 speakStream(message.text, languageRef.current);
               }
             }
@@ -777,6 +816,7 @@ export function TapToTalk({
             if (!mutedOutRef.current) {
               if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
               else speak(message.text, languageRef.current);
+              voicedRef.current = true;
               valeStoreRef.current.set("speaking");
             }
             repliesRef.current.set(id, message.text);
@@ -1134,7 +1174,10 @@ export function TapToTalk({
                 const next = `${repliesRef.current.get(id) ?? ""}${text}`;
                 repliesRef.current.set(id, next);
                 patchTurn(id, { reply: next });
-                if (!mutedOutRef.current) speakStream(text, languageRef.current);
+                if (!mutedOutRef.current) {
+                  voicedRef.current = true;
+                  speakStream(text, languageRef.current);
+                }
               },
               onReply: (text) => {
                 lastExecuteAtRef.current = Date.now();
@@ -1142,6 +1185,7 @@ export function TapToTalk({
                 if (!mutedOutRef.current) {
                   if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
                   else speak(text, languageRef.current);
+                  voicedRef.current = true;
                 }
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
