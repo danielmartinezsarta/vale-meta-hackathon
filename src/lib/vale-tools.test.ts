@@ -375,6 +375,19 @@ describe("appointments", () => {
     db.close();
   });
 
+  it("answers the day plan in English when asked", () => {
+    const db = freshTestDb();
+    expect(listToday(db, "en").message).toBe("Nothing today.");
+    expect(nextAppointment(db, "en").message).toBe("Nobody else today.");
+    const inAnHour = new Date(Date.now() + 60 * 60000);
+    const pad = (value: number): string => String(value).padStart(2, "0");
+    const time = `${pad(inAnHour.getHours())}:${pad(inAnHour.getMinutes())}`;
+    expect(bookToday(db, "Ana", time).ok).toBe(true);
+    expect(listToday(db, "en").message).toBe(`Today: Ana Beltran ${time}.`);
+    expect(nextAppointment(db, "en").message).toBe(`Next is Ana Beltran at ${time}.`);
+    db.close();
+  });
+
   it("refuses unknown clients without creating anything", () => {
     const db = freshTestDb();
     const result = createAppointment(db, {

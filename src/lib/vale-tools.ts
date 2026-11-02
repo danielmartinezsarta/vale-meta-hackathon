@@ -875,22 +875,31 @@ export function goalProgress(db: ValeDb): ToolResult {
   };
 }
 
-export function listToday(db: ValeDb): ToolResult {
+export function listToday(db: ValeDb, language: ValeLanguage = "es"): ToolResult {
   const rows = listAppointments(db, "WHERE a.day = ?", localDay());
-  if (rows.length === 0) return { ok: true, message: "No tienes nada hoy.", data: { appointments: [] } };
+  if (rows.length === 0)
+    return { ok: true, message: language === "en" ? "Nothing today." : "No tienes nada hoy.", data: { appointments: [] } };
   return {
     ok: true,
-    message: `Hoy tienes: ${rows.map(appointmentLabel).join(", ")}.`,
+    message:
+      language === "en"
+        ? `Today: ${rows.map(appointmentLabel).join(", ")}.`
+        : `Hoy tienes: ${rows.map(appointmentLabel).join(", ")}.`,
     data: { appointments: rows },
   };
 }
 
-export function nextAppointment(db: ValeDb): ToolResult {
+export function nextAppointment(db: ValeDb, language: ValeLanguage = "es"): ToolResult {
   const now = localTime();
   const rows = listAppointments(db, "WHERE a.day = ? AND a.time >= ?", localDay(), now);
-  if (rows.length === 0) return { ok: true, message: "No queda nadie hoy.", data: { appointment: null } };
+  if (rows.length === 0)
+    return { ok: true, message: language === "en" ? "Nobody else today." : "No queda nadie hoy.", data: { appointment: null } };
   const next = rows[0];
-  return { ok: true, message: `Sigue ${next.client} a las ${next.time}.`, data: { appointment: next } };
+  return {
+    ok: true,
+    message: language === "en" ? `Next is ${next.client} at ${next.time}.` : `Sigue ${next.client} a las ${next.time}.`,
+    data: { appointment: next },
+  };
 }
 
 export function moveAppointment(
@@ -997,9 +1006,9 @@ export function runValeTool(db: ValeDb, name: string, args: Record<string, unkno
     case "create_appointment":
       return createAppointment(db, args, language);
     case "list_today":
-      return listToday(db);
+      return listToday(db, language);
     case "next_appointment":
-      return nextAppointment(db);
+      return nextAppointment(db, language);
     case "move_appointment":
       return moveAppointment(db, args, language);
     case "set_stock":
