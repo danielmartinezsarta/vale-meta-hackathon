@@ -24,7 +24,7 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
         sex: "Male",
         phone: "+1 (555) 014-2200",
         email: "david@example.com",
-        visits: [{ date: "Oct 12, 2026", service: "Gel manicure" }],
+        visits: [{ date: "2026-10-12", service: "Gel manicure" }],
         visitsMore: 2,
         healthNotes: ["Allergic to monomer"],
         noteTags: ["Always on time"],
@@ -152,9 +152,9 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
   });
 
   it("renders the good-job overlay with care icons", () => {
-    render(<CareOverlay caption="Good job!" />);
-    expect(screen.getByText("Good job!")).toBeTruthy();
+    render(<CareOverlay />);
     expect(screen.getByText("Water")).toBeTruthy();
+    expect(screen.getByText("Food")).toBeTruthy();
     expect(screen.getByText("Stretch")).toBeTruthy();
   });
 });

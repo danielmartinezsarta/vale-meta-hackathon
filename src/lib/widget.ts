@@ -71,7 +71,7 @@ export function widgetTitle(kind: WidgetKind): string {
   }
 }
 
-/** A past visit on the client card; the tap opens the visit photos. */
+/** A past visit on the client card; ISO date, display formatted in the UI. */
 export interface ClientVisit {
   date: string;
   service: string;
@@ -288,10 +288,9 @@ function visitsOf(
     const rows = db.prepare(
       "SELECT s.started_at AS started, v.name AS service FROM sessions s JOIN services v ON v.id = s.service_id WHERE s.client_id = ? AND s.ended_at IS NOT NULL ORDER BY s.started_at DESC",
     ).all(id) as { started?: unknown; service?: unknown }[];
-    const visits = rows.map((row) => ({
-      date: formatVisit(text(row.started)),
-      service: text(row.service),
-    }));
+    const visits = rows
+      .map((row) => ({ date: text(row.started).slice(0, 10), service: text(row.service) }))
+      .filter((visit) => visit.date !== "" && visit.service !== "");
     return { visits: visits.slice(0, 3), visitsMore: Math.max(0, visits.length - 3) };
   } catch {
     return { visits: [], visitsMore: 0 };
