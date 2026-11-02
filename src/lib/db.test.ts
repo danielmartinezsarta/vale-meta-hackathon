@@ -14,11 +14,12 @@ import {
   seedDatabase,
   userName,
 } from "./db";
+import { localDay } from "./vale-tools";
 
 describe("seeded database", () => {
-  it("seeds 5 clients, 6 services and 23 supplies", () => {
+  it("seeds 4 clients, 6 services and 23 supplies", () => {
     const db = freshTestDb();
-    expect(getCounts(db)).toEqual({ clients: 5, services: 6, supplies: 23 });
+    expect(getCounts(db)).toEqual({ clients: 4, services: 6, supplies: 23 });
     db.close();
   });
 
@@ -33,8 +34,130 @@ describe("seeded database", () => {
 
   it("seeding twice does not duplicate rows", () => {
     const db = freshTestDb();
+    const before = {
+      appointments: (db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number }).n,
+      reminders: (db.prepare("SELECT COUNT(*) AS n FROM reminders").get() as { n: number }).n,
+      sessions: (db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }).n,
+      visits: (db.prepare("SELECT COUNT(*) AS n FROM visits").get() as { n: number }).n,
+    };
     seedDatabase(db);
-    expect(getCounts(db)).toEqual({ clients: 5, services: 6, supplies: 23 });
+    expect(getCounts(db)).toEqual({ clients: 4, services: 6, supplies: 23 });
+    expect((db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number }).n).toBe(
+      before.appointments,
+    );
+    expect((db.prepare("SELECT COUNT(*) AS n FROM reminders").get() as { n: number }).n).toBe(before.reminders);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }).n).toBe(before.sessions);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM visits").get() as { n: number }).n).toBe(before.visits);
+    db.close();
+  });
+});
+
+describe("demo seed (HACK-018)", () => {
+  it("holds the four demo clients with full-card fields", () => {
+    const db = freshTestDb();
+    const rows = db
+      .prepare("SELECT name, sex, phone, email, birthday FROM clients ORDER BY id")
+      .all() as { name: string; sex: string; phone: string; email: string; birthday: string }[];
+    expect(rows.map((row) => row.name)).toEqual(["Daniel", "Sofia", "Paola", "Ana"]);
+    for (const row of rows) {
+      expect(row.sex.length).toBeGreaterThan(0);
+      expect(row.phone.length).toBeGreaterThan(0);
+      expect(row.email).toContain("@");
+      expect(row.birthday).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+    db.close();
+  });
+
+  it("keeps Daniel's test allergy masked on his card", () => {
+    const db = freshTestDb();
+    const daniel = db.prepare("SELECT id FROM clients WHERE name = ?").get("Daniel") as { id: number };
+    const notes = getPublicNotes(db, daniel.id);
+    const health = notes.find((note) => note.kind === "health")!;
+    expect(health.masked).toBe(true);
+    expect(health.text).toBeNull();
+    expect(JSON.stringify(notes)).not.toContain("latex");
+    db.close();
+  });
+
+  it("holds today's three appointments plus Ana's, with Daniel's reference photo", () => {
+    const db = freshTestDb();
+    const rows = db
+      .prepare(
+        `SELECT c.name AS client, s.name AS service, a.day, a.time, a.reference_photo AS referencePhoto
+         FROM appointments a JOIN clients c ON c.id = a.client_id JOIN services s ON s.id = a.service_id
+         ORDER BY a.day, a.time`,
+      )
+      .all() as { client: string; service: string; day: string; time: string; referencePhoto: string }[];
+    expect(rows).toHaveLength(4);
+    const today = rows.filter((row) => row.day === localDay());
+    expect(today.map((row) => `${row.client} ${row.time}`)).toEqual([
+      "Daniel 15:00",
+      "Sofia 17:00",
+      "Paola 19:00",
+    ]);
+    for (const row of today) expect(row.service.length).toBeGreaterThan(0);
+    const daniel = today.find((row) => row.client === "Daniel")!;
+    expect(daniel.referencePhoto.length).toBeGreaterThan(0);
+    const ana = rows.find((row) => row.client === "Ana")!;
+    expect(ana.day).not.toBe(localDay());
+    db.close();
+  });
+
+  it("links the shopping reminder to shopping_list rows and keeps the call reminder", () => {
+    const db = freshTestDb();
+    const reminders = db.prepare("SELECT id, text, kind FROM reminders ORDER BY id").all() as {
+      id: number;
+      text: string;
+      kind: string;
+    }[];
+    expect(reminders).toHaveLength(2);
+    const shopping = reminders.find((row) => row.kind === "shopping")!;
+    const items = db
+      .prepare(
+        `SELECT s.name FROM reminder_items i JOIN shopping_list l ON l.id = i.shopping_list_id
+         JOIN supplies s ON s.id = l.supply_id WHERE i.reminder_id = ? ORDER BY s.name`,
+      )
+      .all(shopping.id) as { name: string }[];
+    expect(items.map((row) => row.name)).toEqual(["Acetone", "Cotton pads", "Foil wraps"]);
+    const call = reminders.find((row) => row.kind === "call")!;
+    expect(call.text).toContain("cleaning company");
+    const linked = db
+      .prepare("SELECT COUNT(*) AS n FROM reminder_items WHERE reminder_id = ?")
+      .get(call.id) as { n: number };
+    expect(linked.n).toBe(0);
+    db.close();
+  });
+
+  it("keeps top coat at its minimum and past sessions behind the month goal", () => {
+    const db = freshTestDb();
+    const top = db.prepare("SELECT stock_qty, min_qty FROM supplies WHERE name = ?").get("Top coat") as {
+      stock_qty: number;
+      min_qty: number;
+    };
+    expect(top.stock_qty).toBe(top.min_qty);
+    const sessions = db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NOT NULL").all() as {
+      n: number;
+    }[];
+    expect(sessions[0].n).toBeGreaterThan(0);
+    const earned = db
+      .prepare(
+        `SELECT COALESCE(SUM(margin_earned), 0) AS earned FROM sessions
+         WHERE ended_at IS NOT NULL AND strftime('%Y-%m', ended_at) = strftime('%Y-%m', 'now')`,
+      )
+      .get() as { earned: number };
+    expect(earned.earned).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("holds visits with photo markers for every demo client", () => {
+    const db = freshTestDb();
+    const rows = db
+      .prepare(
+        `SELECT c.name AS client, v.photo FROM visits v JOIN clients c ON c.id = v.client_id ORDER BY v.id`,
+      )
+      .all() as { client: string; photo: string }[];
+    expect(rows.map((row) => row.client).sort()).toEqual(["Ana", "Daniel", "Paola", "Sofia"]);
+    for (const row of rows) expect(row.photo.length).toBeGreaterThan(0);
     db.close();
   });
 });

@@ -69,7 +69,7 @@ describe("pending action", () => {
   it("stores a simple supply proposal when the session is open", () => {
     const db = freshTestDb();
     openSession(db, {
-      client_name: "Ana Beltran",
+      client_name: "Ana",
       service_name: "Gel removal",
     });
     expect(

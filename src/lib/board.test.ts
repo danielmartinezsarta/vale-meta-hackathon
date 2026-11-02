@@ -7,6 +7,10 @@ import { runValeTool } from "./vale-tools";
 describe("board snapshot", () => {
   it("starts empty with no session, card or items", () => {
     const db = freshTestDb();
+    db.prepare("DELETE FROM notes").run();
+    db.prepare("DELETE FROM reminder_items").run();
+    db.prepare("DELETE FROM shopping_list").run();
+    db.prepare("DELETE FROM reminders").run();
     expect(getBoard(db)).toEqual({ session: null, card: null, list: [] });
     db.close();
   });
@@ -19,11 +23,11 @@ describe("board snapshot", () => {
     runValeTool(db, "add_to_shopping_list", { item_name: "lima" });
 
     const board = getBoard(db);
-    expect(board.session?.clientName).toBe("Ana Beltran");
+    expect(board.session?.clientName).toBe("Ana");
     expect(board.session?.serviceName).toBe("Gel removal");
     expect(board.session?.startedAt).toBeTruthy();
-    expect(board.card?.name).toBe("Ana Beltran");
-    expect(board.list).toEqual(["Nail file"]);
+    expect(board.card?.name).toBe("Ana");
+    expect(board.list).toEqual(["Acetone", "Foil wraps", "Cotton pads", "Nail file"]);
 
     const health = board.card?.notes.find((note) => note.kind === "health");
     expect(health?.masked).toBe(true);
@@ -34,6 +38,7 @@ describe("board snapshot", () => {
 
   it("keeps the last touched card after the session closes", () => {
     const db = freshTestDb();
+    db.prepare("DELETE FROM notes").run();
     runValeTool(db, "open_session", { client_name: "Ana", service_name: "Retiro de gel" });
     runValeTool(db, "close_session", { products_used: [] });
     const board = getBoard(db);

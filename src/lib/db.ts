@@ -49,6 +49,54 @@ interface SeedSupply {
   price_per_product_usd?: number;
 }
 
+interface SeedClient {
+  name: string;
+  es?: string;
+  sex?: string;
+  phone?: string;
+  email?: string;
+  birthday?: string;
+}
+
+interface SeedDemoNote {
+  client: string;
+  kind?: string;
+  private?: boolean;
+  text: string;
+}
+
+interface SeedDemoAppointment {
+  client: string;
+  service: string;
+  day: string;
+  time: string;
+  reference_photo?: string;
+}
+
+interface SeedDemoReminder {
+  text: string;
+  kind?: string;
+  day?: string;
+  items?: string[];
+}
+
+interface SeedDemoVisit {
+  client: string;
+  service?: string;
+  days_ago?: number;
+  photo?: string;
+  note?: string;
+}
+
+interface SeedDemoPastSession {
+  client: string;
+  service: string;
+  days_ago?: number;
+  start?: string;
+  minutes?: number;
+  margin_earned?: number;
+}
+
 interface SeedRecipeLine {
   name: string;
   qty: number;
@@ -125,6 +173,49 @@ function schemaSql(): string {
   return readFileSync(join(process.cwd(), "src", "lib", "schema.sql"), "utf8");
 }
 
+/**
+ * Local YYYY-MM-DD shifted by a day offset. Duplicated from vale-tools
+ * (which imports this module for PRICING, so importing back would cycle).
+ */
+function seedDay(offsetDays = 0): string {
+  const when = new Date();
+  when.setDate(when.getDate() + offsetDays);
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`;
+}
+
+/** Resolve a demo day marker ("today", "tomorrow") to a local YYYY-MM-DD. */
+function resolveSeedDay(day: string): string {
+  if (day === "today") return seedDay(0);
+  if (day === "tomorrow") return seedDay(1);
+  return day;
+}
+
+/**
+ * Local YYYY-MM-DDTHH:MM:SS for a past session. Stays inside the current
+ * month so the month goal always shows the seeded progress.
+ */
+function pastSessionStart(daysAgo: number, time: string): string {
+  const now = new Date();
+  const probe = new Date(now);
+  probe.setDate(now.getDate() - daysAgo);
+  const sameMonth =
+    probe.getFullYear() === now.getFullYear() && probe.getMonth() === now.getMonth();
+  const day = sameMonth ? seedDay(-daysAgo) : `${seedDay(0).slice(0, 8)}01`;
+  return `${day}T${time}:00`;
+}
+
+/** Add minutes to a local YYYY-MM-DDTHH:MM:SS stamp. */
+function addMinutes(stamp: string, minutes: number): string {
+  const [date, time] = stamp.split("T");
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const when = new Date(year, month - 1, day, hour, minute, 0);
+  when.setMinutes(when.getMinutes() + minutes);
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}:00`;
+}
+
 /** Add a column when an older database file lacks it. */
 function ensureColumn(db: ValeDb, table: string, column: string, definition: string): void {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
@@ -154,6 +245,10 @@ export function userName(db: ValeDb): string {
 
 export function seedDatabase(db: ValeDb): void {
   db.exec(schemaSql());
+  ensureColumn(db, "clients", "sex", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "clients", "phone", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "clients", "email", "TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "clients", "birthday", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "services", "es", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "services", "aliases", "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, "supplies", "es", "TEXT NOT NULL DEFAULT ''");
@@ -163,11 +258,40 @@ export function seedDatabase(db: ValeDb): void {
   ensureColumn(db, "supplies", "stock_qty", "REAL NOT NULL DEFAULT 0");
   ensureColumn(db, "supplies", "min_qty", "REAL NOT NULL DEFAULT 0");
   ensureColumn(db, "supplies", "price_per_product_usd", "REAL NOT NULL DEFAULT 0");
+  ensureColumn(db, "appointments", "reference_photo", "TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "sessions", "margin_earned", "REAL");
 
-  const seed = seedData as unknown as { clients: string[]; services: SeedService[]; supplies: SeedSupply[] };
-  const addClient = db.prepare("INSERT OR IGNORE INTO clients (name) VALUES (?)");
-  for (const name of seed.clients) addClient.run(name);
+  const seed = seedData as unknown as {
+    clients: SeedClient[];
+    services: SeedService[];
+    supplies: SeedSupply[];
+    demo_notes?: SeedDemoNote[];
+    demo_appointments?: SeedDemoAppointment[];
+    demo_reminders?: SeedDemoReminder[];
+    demo_visits?: SeedDemoVisit[];
+    demo_past_sessions?: SeedDemoPastSession[];
+  };
+  const clientIds = new Map<string, number>();
+  const upsertClient = db.prepare(
+    `INSERT INTO clients (name, sex, phone, email, birthday)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET
+       sex = excluded.sex,
+       phone = excluded.phone,
+       email = excluded.email,
+       birthday = excluded.birthday`,
+  );
+  for (const client of seed.clients) {
+    upsertClient.run(
+      client.name,
+      client.sex ?? "",
+      client.phone ?? "",
+      client.email ?? "",
+      client.birthday ?? "",
+    );
+    const row = db.prepare("SELECT id FROM clients WHERE name = ?").get(client.name) as { id: number };
+    clientIds.set(client.name, row.id);
+  }
   db.prepare("INSERT OR IGNORE INTO user_profile (id, name) VALUES (1, ?)").run(DEFAULT_USER_NAME);
 
   const upsertSupply = db.prepare(
@@ -206,6 +330,7 @@ export function seedDatabase(db: ValeDb): void {
        price_cents = excluded.price_cents,
        duration_min = excluded.duration_min`,
   );
+  const serviceIds = new Map<string, number>();
   for (const service of seed.services) {
     upsertService.run(
       service.name,
@@ -215,12 +340,148 @@ export function seedDatabase(db: ValeDb): void {
       service.minutes,
     );
     const row = db.prepare("SELECT id FROM services WHERE name = ?").get(service.name) as { id: number };
+    serviceIds.set(service.name, row.id);
     db.prepare("DELETE FROM service_supplies WHERE service_id = ?").run(row.id);
     const addLine = db.prepare("INSERT INTO service_supplies (service_id, supply_id, qty, unit) VALUES (?, ?, ?, ?)");
     for (const line of service.supplies ?? []) {
       const supplyId = supplyIds.get(line.name);
       if (supplyId !== undefined) addLine.run(row.id, supplyId, line.qty, line.unit ?? "pcs");
     }
+  }
+
+  seedDemoNotes(db, seed.demo_notes ?? [], clientIds);
+  seedDemoAppointments(db, seed.demo_appointments ?? [], clientIds, serviceIds);
+  seedDemoReminders(db, seed.demo_reminders ?? [], supplyIds);
+  seedDemoVisits(db, seed.demo_visits ?? [], clientIds, serviceIds);
+  seedDemoPastSessions(db, seed.demo_past_sessions ?? [], clientIds, serviceIds);
+}
+
+/** Table row count, used to seed demo rows once without touching live rows. */
+function tableCount(db: ValeDb, table: string): number {
+  return (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+}
+
+/**
+ * Demo health notes (Daniel's test allergy). Seeded without the write log so
+ * undo_last only ever reverts the user's own writes.
+ */
+function seedDemoNotes(db: ValeDb, notes: SeedDemoNote[], clientIds: Map<string, number>): void {
+  const addNote = db.prepare(
+    "INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES (?, ?, ?, ?)",
+  );
+  for (const note of notes) {
+    const clientId = clientIds.get(note.client);
+    if (clientId === undefined) continue;
+    const kind = note.kind === "health" ? "health" : "general";
+    const existing = db
+      .prepare("SELECT id FROM notes WHERE client_id = ? AND kind = ?")
+      .get(clientId, kind) as { id: number } | undefined;
+    if (existing) continue;
+    addNote.run(clientId, note.text, kind, note.private === true || kind === "health" ? 1 : 0);
+  }
+}
+
+/** Demo agenda: today's three appointments plus Ana's. Seeded once. */
+function seedDemoAppointments(
+  db: ValeDb,
+  appointments: SeedDemoAppointment[],
+  clientIds: Map<string, number>,
+  serviceIds: Map<string, number>,
+): void {
+  if (appointments.length === 0 || tableCount(db, "appointments") > 0) return;
+  const add = db.prepare(
+    "INSERT INTO appointments (client_id, service_id, day, time, reference_photo) VALUES (?, ?, ?, ?, ?)",
+  );
+  for (const appointment of appointments) {
+    const clientId = clientIds.get(appointment.client);
+    const serviceId = serviceIds.get(appointment.service);
+    if (clientId === undefined || serviceId === undefined) continue;
+    add.run(
+      clientId,
+      serviceId,
+      resolveSeedDay(appointment.day),
+      appointment.time,
+      appointment.reference_photo ?? "",
+    );
+  }
+}
+
+/**
+ * Demo reminders. The shopping reminder links to its shopping_list rows so
+ * the shopping logic works even though it never shows in the video.
+ */
+function seedDemoReminders(
+  db: ValeDb,
+  reminders: SeedDemoReminder[],
+  supplyIds: Map<string, number>,
+): void {
+  if (reminders.length === 0 || tableCount(db, "reminders") > 0) return;
+  const addReminder = db.prepare("INSERT INTO reminders (text, kind, day) VALUES (?, ?, ?)");
+  const addShopping = db.prepare("INSERT OR IGNORE INTO shopping_list (supply_id) VALUES (?)");
+  const linkItem = db.prepare("INSERT OR IGNORE INTO reminder_items (reminder_id, shopping_list_id) VALUES (?, ?)");
+  for (const reminder of reminders) {
+    const kind = reminder.kind === "shopping" || reminder.kind === "call" ? reminder.kind : "general";
+    const id = Number(
+      addReminder.run(reminder.text, kind, resolveSeedDay(reminder.day ?? "today")).lastInsertRowid,
+    );
+    for (const name of reminder.items ?? []) {
+      const supplyId = supplyIds.get(name);
+      if (supplyId === undefined) continue;
+      addShopping.run(supplyId);
+      const listRow = db
+        .prepare("SELECT id FROM shopping_list WHERE supply_id = ?")
+        .get(supplyId) as { id: number };
+      linkItem.run(id, listRow.id);
+    }
+  }
+}
+
+/** Demo visits with photo markers for the full client card. Seeded once. */
+function seedDemoVisits(
+  db: ValeDb,
+  visits: SeedDemoVisit[],
+  clientIds: Map<string, number>,
+  serviceIds: Map<string, number>,
+): void {
+  if (visits.length === 0 || tableCount(db, "visits") > 0) return;
+  const add = db.prepare(
+    "INSERT INTO visits (client_id, service_id, visited_at, photo, note) VALUES (?, ?, ?, ?, ?)",
+  );
+  for (const visit of visits) {
+    const clientId = clientIds.get(visit.client);
+    if (clientId === undefined) continue;
+    const serviceId = visit.service ? serviceIds.get(visit.service) : undefined;
+    add.run(
+      clientId,
+      serviceId ?? null,
+      `${seedDay(-(visit.days_ago ?? 7))}T12:00:00`,
+      visit.photo ?? "",
+      visit.note ?? "",
+    );
+  }
+}
+
+/**
+ * Demo past sessions closed this month so the month goal shows progress.
+ * No write_log rows and no supply links: they predate the demo user.
+ */
+function seedDemoPastSessions(
+  db: ValeDb,
+  pastSessions: SeedDemoPastSession[],
+  clientIds: Map<string, number>,
+  serviceIds: Map<string, number>,
+): void {
+  if (pastSessions.length === 0 || tableCount(db, "sessions") > 0) return;
+  const add = db.prepare(
+    "INSERT INTO sessions (client_id, service_id, started_at, ended_at, duration_s, margin_earned) VALUES (?, ?, ?, ?, ?, ?)",
+  );
+  for (const past of pastSessions) {
+    const clientId = clientIds.get(past.client);
+    const serviceId = serviceIds.get(past.service);
+    if (clientId === undefined || serviceId === undefined) continue;
+    const minutes = past.minutes ?? 60;
+    const started = pastSessionStart(past.days_ago ?? 1, past.start ?? "10:00");
+    add.run(clientId, serviceId, started, addMinutes(started, minutes), minutes * 60, past.margin_earned ?? 0);
   }
 }
 

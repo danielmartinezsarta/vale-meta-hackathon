@@ -173,6 +173,71 @@
     "Vale, book Mia for gel refill Monday at 4 PM",
     "book her again next month, same time"
    ]
+  },
+  {
+   "id": "C18",
+   "goal": "demo path in English: agenda, card, session, supplies, quote accept, booking, close, goal",
+   "turns": [
+    "Vale, what do we have today?",
+    "Vale, what do you have on Daniel?",
+    "Vale, open a session with Daniel",
+    "Vale, I used gold foil",
+    "Vale, no, that wasn't it",
+    "Vale, add two crystals",
+    "Vale, how much do I charge?",
+    "yes",
+    "Vale, book him for Friday at 5 PM",
+    "Vale, close the session",
+    "Vale, how am I doing with this month's goal?"
+   ]
+  },
+  {
+   "id": "C19",
+   "goal": "full Daniel booking phrase in one turn",
+   "turns": [
+    "Vale, book Daniel next Friday at 5 PM for gel removal"
+   ]
+  },
+  {
+   "id": "C20",
+   "goal": "name-only turn then the rest after a pause stays one booking",
+   "turns": [
+    "Vale",
+    "book Daniel next Friday at 5 PM for gel removal"
+   ]
+  },
+  {
+   "id": "C21",
+   "goal": "correction moves the same booking to next Friday",
+   "turns": [
+    "Vale, book Daniel Friday at 5 PM for gel removal",
+    "no, it's for next Friday"
+   ]
+  },
+  {
+   "id": "C22",
+   "goal": "natural tomorrow time booking for Daniel",
+   "turns": [
+    "Vale, book an appointment for Daniel tomorrow at three PM"
+   ]
+  },
+  {
+   "id": "C23",
+   "goal": "client mention without a request books nothing",
+   "turns": [
+    "Vale, open a session with Emma for gel refill",
+    "and your client called Daniel",
+    "Thanks Vale, bye"
+   ]
+  },
+  {
+   "id": "C24",
+   "goal": "wake-word mush without a request stays ignored",
+   "turns": [
+    "pleaseplease",
+    "pleaseplease",
+    "Thanks Vale, bye"
+   ]
   }
  ],
  "note": "All names and facts are invented for the hackathon demo. No real client data."
