@@ -24,7 +24,12 @@ import {
   speakStream,
 } from "@/lib/speak";
 import { createValeState, type ValeState } from "@/lib/vale-state";
-import { turnErrorText, type ValeLanguage } from "@/lib/vale-language";
+import {
+  storedLanguage,
+  storeLanguage,
+  turnErrorText,
+  type ValeLanguage,
+} from "@/lib/vale-language";
 import { uiStrings } from "@/lib/vale-ui";
 import type { Widget } from "@/lib/widget";
 import { VoiceControls } from "@/components/VoiceControls";
@@ -72,17 +77,6 @@ const SPEECH_HARD_CAP_MS = 60000;
 /** 960 samples at the 24 kHz capture rate (capture.ts). */
 const FRAME_MS = 40;
 
-/** Persisted screen language: the selector survives reloads, EN default. */
-const LANGUAGE_KEY = "vale-language";
-
-function storedLanguage(): ValeLanguage {
-  try {
-    return window.localStorage.getItem(LANGUAGE_KEY) === "es" ? "es" : "en";
-  } catch {
-    return "en";
-  }
-}
-
 function SpeakerIcon() {
   return (
     <svg
@@ -106,7 +100,7 @@ function countVoiced(frame: Int16Array): boolean {
   return frame.length > 0 && energy / frame.length > VOICE_ENERGY_THRESHOLD;
 }
 
-export function TapToTalk() {
+export function TapToTalk({ autoStart = false }: { autoStart?: boolean } = {}) {
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -133,22 +127,10 @@ export function TapToTalk() {
     // idle (no live socket, no listener yet) must still stick for the next
     // connection's first frame.
     languageRef.current = next;
-    try {
-      window.localStorage.setItem(LANGUAGE_KEY, next);
-    } catch {
-      /* private mode: the session still switches for this visit */
-    }
+    // Persisted for the menu selector; the live socket adopts it at once
+    // (the next Meta dial pins ASR to it, no manual reconnect needed).
+    storeLanguage(next);
     stopSpeaking("language-switch");
-    // The session listener forwards this on the live socket at once (the
-    // next Meta dial pins ASR to it and the next reply speaks it, with no
-    // manual reconnect); an idle session adopts it from the ref instead.
-    try {
-      window.dispatchEvent(
-        new CustomEvent<ValeLanguage>("vale-language", { detail: next }),
-      );
-    } catch {
-      /* the next turn carries the language frame instead */
-    }
   }, []);
   const ui = uiStrings(language);
   // Stable per-browser id so slots, pending actions and chain lanes survive
@@ -1373,6 +1355,16 @@ export function TapToTalk() {
       setStatus(isPermissionDenied(error) ? "blocked" : "error");
     }
   }, [status, stopSession, runSession]);
+
+  // "Wake Vale" is the browser's mic gesture: the home screen mounts this
+  // already awake, so the tap that woke her starts the session at once.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (autoStart && !autoStartedRef.current && status === "idle") {
+      autoStartedRef.current = true;
+      void handleTap();
+    }
+  }, [autoStart, status, handleTap]);
 
   const toggleEngine = useCallback(() => {
     const next: VoiceEngine = engine === "seamless" ? "browser" : "seamless";
