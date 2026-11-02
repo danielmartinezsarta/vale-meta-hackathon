@@ -431,6 +431,13 @@
   flex: 1;
 }
 
+.chev {
+  width: 18px;
+  height: 18px;
+  color: var(--vs-muted);
+  flex: none;
+}
+
 .lang {
   margin-top: auto;
   border: 0;

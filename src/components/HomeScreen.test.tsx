@@ -40,6 +40,11 @@ describe("HomeScreen (Vale asleep)", () => {
     const { onLanguageChange } = renderHome();
     fireEvent.click(screen.getByRole("button", { name: "Menu" }));
     expect(screen.getByRole("dialog", { name: "Menu" })).toBeTruthy();
+    expect(
+      screen
+        .getByRole("dialog", { name: "Menu" })
+        .querySelectorAll('path[d="M9 6l6 6-6 6"]').length,
+    ).toBe(8);
     fireEvent.click(screen.getByLabelText("ES"));
     expect(onLanguageChange).toHaveBeenCalledWith("es");
     fireEvent.click(screen.getByRole("button", { name: "Close menu" }));
