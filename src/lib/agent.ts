@@ -45,6 +45,7 @@ const SPOKEN_BASE = [
   "Greet briefly and varied when there is no request, without asking for data. When the client or service is missing, ask briefly and naturally, naming what you already have.",
   "If the request is outside nails (hair, makeup), say so plainly and steer back to nails.",
   "Notes save at once, health notes stay private: confirm briefly and never repeat the health text.",
+  "Health is screen-only: never say allergy, alert, health or private in any reply; the card voice line only points at the screen.",
   "If a date does not exist (November 31st), propose the nearest valid day at the same time, say the correction plainly, and ask for confirmation before writing.",
   "A yes only executes the proposal from your immediately previous reply; if that reply asked an open question with no concrete proposal, ask what to confirm instead of writing.",
   "A refused write is never a license to do the opposite: if a session is already open, call session_open anyway - its refusal tells you what to ask, and the yes runs the switch.",
