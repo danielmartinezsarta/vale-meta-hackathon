@@ -41,7 +41,14 @@ import { useScreenMode } from "@/components/useScreenMode";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
-const NO_SPEECH_TIMEOUT_MS = 8000;
+/**
+ * Silence window before an empty turn churns: two straight silent windows
+ * raise the "I didn't hear you" banner. Tunable without redeploying the
+ * default, and shortenable for tests.
+ */
+function quietWindowMs(): number {
+  return Math.max(1, Number(process.env.NEXT_PUBLIC_QUIET_WINDOW_MS) || 8000);
+}
 
 function isPermissionDenied(error: unknown): boolean {
   return (
@@ -534,7 +541,8 @@ export function TapToTalk({
 
       const armQuiet = () => {
         window.clearTimeout(quietTimerRef.current);
-        quietTimerRef.current = window.setTimeout(() => {
+        quietTimerRef.current = window.setTimeout(
+          () => {
           if (!sessionRef.current) return;
           // Muted while she speaks, the VAD is frozen: churning the turn
           // here would drop an in-flight reply bubble, so wait her out.
@@ -548,7 +556,9 @@ export function TapToTalk({
           // empty row churns.
           pruneIfEmpty(currentId);
           openTurn();
-        }, NO_SPEECH_TIMEOUT_MS);
+          },
+          quietWindowMs(),
+        );
       };
 
       const openTurn = (arm = true) => {
@@ -755,6 +765,9 @@ export function TapToTalk({
           }
           case "ignored":
             patchTurn(id, { ignored: true });
+            // Voice was heard, just not for her: a discarded turn never
+            // seeds the silence banner.
+            silentStreakRef.current = 0;
             break;
           case "done":
             transport.settled = true;
@@ -1067,7 +1080,10 @@ export function TapToTalk({
                 setBoard(next);
               },
               onWidget: (next) => handleWidget(next),
-              onIgnored: () => patchTurn(id, { ignored: true }),
+              onIgnored: () => {
+              patchTurn(id, { ignored: true });
+              silentStreakRef.current = 0;
+            },
               onNotice: (message, code) => {
                 // E-VAD notices pass the silence gate; anything else shows directly.
                 if (code === "E-VAD") handleVadCandidate(id);
@@ -1342,6 +1358,9 @@ export function TapToTalk({
             // (the server only stamps attention on executed turns and replies).
             const transport = transports.get(currentId);
             if ((transport?.voiced ?? 0) * FRAME_MS < MIN_VOICED_MS) {
+              // The VAD fired, so somebody spoke: a dropped blip is heard
+              // voice, never silence toward the banner.
+              silentStreakRef.current = 0;
               if (transport) {
                 transport.failed = true;
                 const socket = transport.socket;

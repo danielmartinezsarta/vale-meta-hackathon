@@ -97,6 +97,66 @@ afterEach(() => {
 });
 
 describe("silence-aware E-VAD banner (fix 3)", () => {
+  it("a discarded turn never seeds the silence banner", async () => {
+    vi.stubEnv("NEXT_PUBLIC_QUIET_WINDOW_MS", "100");
+    try {
+      vi.stubGlobal("navigator", {
+        mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+      });
+      vi.stubGlobal("WebSocket", undefined);
+      const ignoredBody = () => {
+        const bytes = new TextEncoder().encode(
+          `event: interim\ndata: {"transcript":"background"}\n\n` +
+            `event: final\ndata: {"transcript":"background chat here","audioProcessedMs":800}\n\n` +
+            `event: ignored\ndata: {}\n\n` +
+            `event: done\ndata: {}\n\n`,
+        );
+        let served = false;
+        return {
+          getReader: () => ({
+            read: async () => {
+              if (!served) {
+                served = true;
+                return { done: false, value: bytes };
+              }
+              return { done: true, value: undefined };
+            },
+            releaseLock: () => {},
+          }),
+        };
+      };
+      const fetchMock = vi.fn(() =>
+        Promise.resolve({ ok: true, body: ignoredBody() })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      stubSessionOnce();
+
+      render(<TapToTalk debug />);
+      fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+      await waitFor(() => {
+        expect(driver).not.toBeNull();
+      });
+
+      // One silent window: the streak sits at 1.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      // A heard-but-discarded turn: voice frames in, server ignores it.
+      driver!.onFrame(voiceFrame());
+      driver!.onSpeechStart();
+      for (let i = 0; i < 8; i += 1) driver!.onFrame(voiceFrame());
+      driver!.onSpeechEnd();
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+      // Let the done event re-arm the window before measuring it.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      // One more silent window: the discard reset the streak, so no banner.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(vadBanner()).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it("drops silent blips locally: no post, no banner, session alive", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
