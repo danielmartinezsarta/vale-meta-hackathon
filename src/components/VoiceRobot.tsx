@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef } from "react";
 import { BRAND } from "@/lib/brand-tokens";
+import type { ValeState } from "@/lib/vale-state";
 
 /**
  * Vale's friendly robot. Pure SVG, no dependencies, animated with one
@@ -17,13 +18,8 @@ import { BRAND } from "@/lib/brand-tokens";
  *   Without it, a synthetic motion is used.
  * - Honors `prefers-reduced-motion`: draws a still pose per state.
  */
-export type RobotState =
-  | "idle"
-  | "listening"
-  | "thinking"
-  | "speaking"
-  | "done"
-  | "error";
+/** Robot states are the single ValeState union. */
+export type RobotState = ValeState;
 
 type Props = {
   state?: RobotState;

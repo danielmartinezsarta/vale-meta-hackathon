@@ -1,4 +1,5 @@
 import type { ValeLanguage } from "./vale-language";
+import type { ValeState } from "./vale-state";
 
 /**
  * Interface dictionary: every chrome string on screen, keyed once.
@@ -30,14 +31,8 @@ export interface UiStrings {
   valeState: (state: ValeStateName) => string;
 }
 
-/** The six Vale states the robot can show. */
-export type ValeStateName =
-  | "idle"
-  | "listening"
-  | "thinking"
-  | "speaking"
-  | "done"
-  | "error";
+/** The six Vale states the robot can show: the single state union. */
+export type ValeStateName = ValeState;
 
 const EN: UiStrings = {
   tapToTalk: "Tap to talk",

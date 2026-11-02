@@ -9,7 +9,7 @@ import {
   type WakeVerdict,
 } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
-import { emitModelLog, emitTurnLog, estimateCost } from "./turn-log";
+import { emitModelLog, emitTurnLog, estimateCost, modelElapsedMs } from "./turn-log";
 import { isMutedJunkTurn, saveTurnWav } from "./turn-audio";
 import {
   clearPendingAction,
@@ -732,7 +732,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       if (!browserGone) recordTurn(getDb(), clientId, "vale", result.text, result.toolUsed);
       emitModelLog(
         AGENT_MODEL,
-        result.firstTokenMs ?? Date.now() - speechEndAt,
+        modelElapsedMs(result.firstTokenMs, speechEndAt),
         transcript,
       );
       sendJson(browser, { type: "reply", text: result.text });

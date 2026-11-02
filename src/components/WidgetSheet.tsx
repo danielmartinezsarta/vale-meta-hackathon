@@ -11,18 +11,15 @@ import styles from "./WidgetSheet.module.css";
  */
 export function WidgetSheet({
   size,
-  open,
   onClose,
   label,
   children,
 }: {
   size: WidgetSize;
-  open: boolean;
   onClose: () => void;
   label: string;
   children: React.ReactNode;
 }) {
-  const sheetRef = useRef<HTMLElement>(null);
   const dragRef = useRef<{ startY: number; dy: number; active: boolean }>({
     startY: 0,
     dy: 0,
@@ -31,13 +28,12 @@ export function WidgetSheet({
   const [dragDy, setDragDy] = useState(0);
 
   useEffect(() => {
-    if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [onClose]);
 
   const beginDrag = (clientY: number) => {
     dragRef.current = { startY: clientY, dy: 0, active: true };
@@ -58,36 +54,31 @@ export function WidgetSheet({
 
   return (
     <section
-      ref={sheetRef}
       role="dialog"
       aria-label={label}
-      aria-hidden={open ? "false" : "true"}
       data-size={size}
-      className={`${styles.sheet} ${open ? styles.open : ""}`}
+      className={`${styles.sheet} ${styles.open}`}
       style={dragDy > 0 ? { transform: `translateY(${dragDy}px)` } : undefined}
     >
-      <div
+      <button
+        type="button"
         className={styles.grab}
-        role="button"
-        tabIndex={0}
         aria-label={`Drag down to close ${label}`}
+        onClick={onClose}
         onPointerDown={(event) => {
           try {
             (event.target as HTMLElement).setPointerCapture?.(event.pointerId);
           } catch {
-            /* jsdom and some browsers lack pointer capture: drag still works */
+            /* jsdom lacks pointer capture: the drag still works */
           }
           beginDrag(event.clientY);
         }}
         onPointerMove={(event) => moveDrag(event.clientY)}
         onPointerUp={() => endDrag()}
         onPointerCancel={() => endDrag()}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") onClose();
-        }}
       >
         <span aria-hidden="true" />
-      </div>
+      </button>
       <div className={styles.head}>
         <h2 className={styles.title}>{label}</h2>
         <button

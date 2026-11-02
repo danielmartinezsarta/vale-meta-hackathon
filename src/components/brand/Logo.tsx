@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { BRAND } from "@/lib/brand-tokens";
+import { leftBearing } from "@/lib/text-metrics";
 
 export type LogoTheme = "light" | "dark" | "system";
 export type SloganLanguage = "en" | "es";
 
-const SLOGANS: Record<SloganLanguage, string> = {
-  en: "Just say it.",
-  es: "Solo dilo.",
-};
+/** The brand slogan, single-sourced from BRAND. */
 
 /* Five equal bars, equal gaps, fully rounded. Tops step down toward the
    center and bottoms step down further, so both edges dip like a V. */
@@ -61,7 +60,7 @@ export function Logo({
   sloganLanguage = "en",
   theme = "system",
 }: LogoProps) {
-  const slogan = SLOGANS[sloganLanguage];
+  const slogan = BRAND.slogan[sloganLanguage];
   const sloganRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -71,25 +70,13 @@ export function Logo({
       return;
     }
     const compute = () => {
-      try {
-        const target = sloganRef.current;
-        if (!target) return;
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        ctx.textAlign = "left";
-        ctx.textBaseline = "alphabetic";
-        ctx.font = `300 ${size}px "Josefin Sans", sans-serif`;
-        const wordBox = ctx.measureText("vale");
-        ctx.font = `italic 300 ${size * 0.32}px "Cormorant Garamond", serif`;
-        const sloganBox = ctx.measureText(slogan);
-        const shift =
-          (wordBox.actualBoundingBoxLeft ?? 0) -
-          (sloganBox.actualBoundingBoxLeft ?? 0);
-        if (Number.isFinite(shift)) target.style.marginLeft = `${shift}px`;
-      } catch {
-        /* Keep fallback alignment. */
-      }
+      const target = sloganRef.current;
+      if (!target) return;
+      const shift =
+        leftBearing("vale", `300 ${size}px "Josefin Sans", sans-serif`) -
+        leftBearing(slogan, `italic 300 ${size * 0.32}px "Cormorant Garamond", serif`);
+      if (Number.isFinite(shift) && shift !== 0)
+        target.style.marginLeft = `${shift}px`;
     };
     compute();
     if (document.fonts) {
