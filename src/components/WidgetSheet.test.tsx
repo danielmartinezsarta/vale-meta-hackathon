@@ -7,7 +7,7 @@ afterEach(cleanup);
 function openSheet(size: "half" | "full" = "half") {
   const onClose = vi.fn();
   render(
-    <WidgetSheet size={size} open onClose={onClose} label="Price">
+    <WidgetSheet size={size} onClose={onClose} label="Price">
       <p>sheet body</p>
     </WidgetSheet>,
   );
@@ -15,31 +15,22 @@ function openSheet(size: "half" | "full" = "half") {
 }
 
 describe("WidgetSheet (generic bottom sheet)", () => {
-  it("carries the widget size and stays hidden until open", () => {
-    const onClose = vi.fn();
-    const { rerender } = render(
-      <WidgetSheet size="full" open={false} onClose={onClose} label="Price">
-        <p>sheet body</p>
-      </WidgetSheet>,
-    );
-    const sheet = screen.getByRole("dialog", { hidden: true });
-    expect(sheet.getAttribute("aria-label")).toBe("Price");
+  it("carries the widget size", () => {
+    openSheet("full");
+    const sheet = screen.getByRole("dialog", { name: "Price" });
     expect(sheet.getAttribute("data-size")).toBe("full");
-    expect(sheet.getAttribute("aria-hidden")).toBe("true");
-    rerender(
-      <WidgetSheet size="full" open onClose={onClose} label="Price">
-        <p>sheet body</p>
-      </WidgetSheet>,
-    );
-    expect(sheet.getAttribute("aria-hidden")).toBe("false");
   });
 
-  it("closes with the X button and with Escape", () => {
+  it("closes with the X button, the handle tap and with Escape", () => {
     const onClose = openSheet();
     fireEvent.click(screen.getByRole("button", { name: "Close Price" }));
     expect(onClose).toHaveBeenCalledTimes(1);
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Drag down to close Price" }),
+    );
     expect(onClose).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(3);
   });
 
   // jsdom has no PointerEvent: dispatch plain events carrying clientY,

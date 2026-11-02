@@ -224,27 +224,27 @@
 }
 
 /* Awake without a session: bigger robot, greeting text. */
-.idle .robot {
+.awake .robot {
   width: 288px;
   max-width: none;
 }
 
-.idle .cap {
+.awake .cap {
   font-size: 1.1rem;
   line-height: 1.4;
   margin-top: -4px;
 }
 
-.idle .sub {
+.awake .sub {
   font-size: 0.85rem;
   line-height: 1.3;
 }
 
-.idle .chat {
+.awake .chat {
   margin-top: 12px;
 }
 
-.idle .msg {
+.awake .msg {
   max-width: 90%;
   font-size: 0.82rem;
 }
@@ -311,6 +311,8 @@
   position: absolute;
   inset: 0;
   z-index: 6;
+  border: 0;
+  padding: 0;
   background: rgba(10, 18, 48, 0.5);
   opacity: 0;
   visibility: hidden;

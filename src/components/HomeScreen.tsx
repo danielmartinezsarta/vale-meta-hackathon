@@ -4,7 +4,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { BRAND } from "@/lib/brand-tokens";
 import { homeVars } from "@/lib/vale-theme";
 import { useScreenMode } from "@/components/useScreenMode";
-import { storeLanguage, type ValeLanguage } from "@/lib/vale-language";
+import type { ValeLanguage } from "@/lib/vale-language";
 import type { HomeData } from "@/lib/home-data";
 import styles from "./HomeScreen.module.css";
 
@@ -58,14 +58,81 @@ function SleepingHead() {
 }
 
 const MENU_ITEMS = [
-  { name: "Agenda", icon: '<rect x="4" y="5.5" width="16" height="14" rx="3"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/>' },
-  { name: "Client files", icon: '<circle cx="12" cy="9" r="3.4"/><path d="M5.5 19.5c.8-3.6 3.4-5.3 6.5-5.3s5.7 1.7 6.5 5.3"/>' },
-  { name: "Goals", icon: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/>' },
-  { name: "Supplies & stock", icon: '<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>' },
-  { name: "Collaborators", icon: '<circle cx="9" cy="9.5" r="3"/><circle cx="16.5" cy="10.5" r="2.4"/><path d="M3.5 19c.6-3.3 2.8-4.8 5.5-4.8s4.9 1.5 5.5 4.8M15.5 14.5c2.4-.2 4.3 1.1 5 4"/>' },
-  { name: "Suppliers", icon: '<path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>' },
-  { name: "Permissions", icon: '<rect x="5" y="10.5" width="14" height="9.5" rx="3"/><path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5"/>' },
-  { name: "Services", icon: '<path d="M9 7h11M9 12h11M9 17h11"/><path d="M3.5 7l1.2 1.2L6.8 6M3.5 12l1.2 1.2L6.8 11M3.5 17l1.2 1.2L6.8 16"/>' },
+  {
+    name: "Agenda",
+    icon: (
+      <>
+        <rect x="4" y="5.5" width="16" height="14" rx="3" />
+        <path d="M4 10h16M8.5 3.5v4M15.5 3.5v4" />
+      </>
+    ),
+  },
+  {
+    name: "Client files",
+    icon: (
+      <>
+        <circle cx="12" cy="9" r="3.4" />
+        <path d="M5.5 19.5c.8-3.6 3.4-5.3 6.5-5.3s5.7 1.7 6.5 5.3" />
+      </>
+    ),
+  },
+  {
+    name: "Goals",
+    icon: (
+      <>
+        <circle cx="12" cy="12" r="8" />
+        <circle cx="12" cy="12" r="4" />
+        <circle cx="12" cy="12" r=".8" fill="currentColor" />
+      </>
+    ),
+  },
+  {
+    name: "Supplies & stock",
+    icon: (
+      <>
+        <path d="M4 8l8-4 8 4v8l-8 4-8-4z" />
+        <path d="M4 8l8 4 8-4M12 12v8" />
+      </>
+    ),
+  },
+  {
+    name: "Collaborators",
+    icon: (
+      <>
+        <circle cx="9" cy="9.5" r="3" />
+        <circle cx="16.5" cy="10.5" r="2.4" />
+        <path d="M3.5 19c.6-3.3 2.8-4.8 5.5-4.8s4.9 1.5 5.5 4.8M15.5 14.5c2.4-.2 4.3 1.1 5 4" />
+      </>
+    ),
+  },
+  {
+    name: "Suppliers",
+    icon: (
+      <>
+        <path d="M3 7h11v9H3zM14 10h4l3 3v3h-7" />
+        <circle cx="7" cy="17.5" r="1.8" />
+        <circle cx="17" cy="17.5" r="1.8" />
+      </>
+    ),
+  },
+  {
+    name: "Permissions",
+    icon: (
+      <>
+        <rect x="5" y="10.5" width="14" height="9.5" rx="3" />
+        <path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5" />
+      </>
+    ),
+  },
+  {
+    name: "Services",
+    icon: (
+      <>
+        <path d="M9 7h11M9 12h11M9 17h11" />
+        <path d="M3.5 7l1.2 1.2L6.8 6M3.5 12l1.2 1.2L6.8 11M3.5 17l1.2 1.2L6.8 16" />
+      </>
+    ),
+  },
 ];
 
 function monthLabel(month: string): string {
@@ -216,7 +283,14 @@ export function HomeScreen({
       </button>
 
       <div className={styles.ov} role="dialog" aria-label="Menu" aria-hidden={menuOpen ? "false" : "true"}>
-        <div className={styles.scrim} onClick={() => setMenuOpen(false)} aria-hidden="true" />
+        {/* Backdrop is mouse-only; keyboard closes with Escape or the X. */}
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-hidden="true"
+          className={styles.scrim}
+          onClick={() => setMenuOpen(false)}
+        />
         <nav className={styles.panel}>
           <div className={styles.ovtop}>
             <h2>Menu</h2>
@@ -234,13 +308,17 @@ export function HomeScreen({
               <li key={item.name}>
                 <button className={`${styles.item} ${styles[`i${(index % 3) + 1}`]}`} type="button">
                   <span className={styles.ic}>
-                    <svg
-                      viewBox="0 0 24 24"
-                      aria-hidden="true"
-                      dangerouslySetInnerHTML={{
-                        __html: `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${item.icon}</g>`,
-                      }}
-                    />
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <g
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        {item.icon}
+                      </g>
+                    </svg>
                   </span>
                   <span className={styles.lb}>{item.name}</span>
                   <svg className={styles.chev} viewBox="0 0 24 24" aria-hidden="true">
@@ -265,10 +343,7 @@ export function HomeScreen({
                 name="home-language"
                 value="en"
                 checked={language === "en"}
-                onChange={() => {
-                  storeLanguage("en");
-                  onLanguageChange("en");
-                }}
+                onChange={() => onLanguageChange("en")}
               />{" "}
               EN
             </label>
@@ -278,10 +353,7 @@ export function HomeScreen({
                 name="home-language"
                 value="es"
                 checked={language === "es"}
-                onChange={() => {
-                  storeLanguage("es");
-                  onLanguageChange("es");
-                }}
+                onChange={() => onLanguageChange("es")}
               />{" "}
               ES
             </label>

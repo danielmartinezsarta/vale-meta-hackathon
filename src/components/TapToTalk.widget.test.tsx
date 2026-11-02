@@ -89,6 +89,7 @@ describe("confirm card (touch equals voice)", () => {
         kind: "confirm",
         title: "Open session with Ana for Gel refill?",
         lines: [],
+        size: "half",
       },
     });
     await waitFor(() => {
@@ -108,7 +109,7 @@ describe("confirm card (touch equals voice)", () => {
     const ws = await openConversation();
     ws.serverMessage({
       type: "widget",
-      widget: { kind: "confirm", title: "Log Top coat?", lines: [] },
+      widget: { kind: "confirm", title: "Log Top coat?", lines: [], size: "half" },
     });
     await waitFor(() => {
       expect(screen.getByText("Log Top coat?")).toBeTruthy();
@@ -129,6 +130,7 @@ describe("confirm card (touch equals voice)", () => {
         kind: "meta",
         title: "Month goal",
         lines: ["120.00 USD of 600.00 USD (20%)"],
+        size: "half"
       },
     });
     await waitFor(() => {

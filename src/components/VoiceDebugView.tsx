@@ -8,6 +8,7 @@ import type { Board } from "@/lib/board";
 import type { ValeLanguage } from "@/lib/vale-language";
 import type { UiStrings } from "@/lib/vale-ui";
 import type { ValeState } from "@/lib/vale-state";
+import { hasVisibleContent, type Turn } from "@/lib/turn-view";
 import type { Widget } from "@/lib/widget";
 import type { VoiceEngine } from "@/lib/speak";
 
@@ -15,24 +16,7 @@ import type { VoiceEngine } from "@/lib/speak";
 
 export type DebugStatus = "idle" | "requesting" | "live" | "blocked" | "error";
 
-export interface DebugTurn {
-  id: number;
-  interim: string;
-  final: string | null;
-  reply: string | null;
-  ignored?: boolean;
-}
-
-function hasVisibleContent(turn: {
-  interim: string;
-  final: string | null;
-  reply: string | null;
-}): boolean {
-  return (
-    (turn.final ?? turn.interim).trim() !== "" ||
-    (turn.reply?.trim() ?? "") !== ""
-  );
-}
+export type DebugTurn = Turn;
 
 function SpeakerIcon() {
   return (

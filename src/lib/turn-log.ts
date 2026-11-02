@@ -84,10 +84,22 @@ export function formatModelLog(
   responseMs: number | null,
   content: string,
 ): string {
-  const clipped = content.length > 80 ? `${content.slice(0, 80)}…` : content;
+  const flat = content.replace(/[\r\n]+/g, " ");
+  const clipped = flat.length > 80 ? `${flat.slice(0, 80)}…` : flat;
   const safe = clipped.replace(/"/g, "'");
   const response = responseMs === null ? "-" : `${Math.round(responseMs)}ms`;
   return `[vale-model] content="${safe}" model="${model}" response=${response}`;
+}
+
+/**
+ * Agent reply time: time to first token when the model streamed, otherwise
+ * the elapsed time since the turn's speech ended.
+ */
+export function modelElapsedMs(
+  firstTokenMs: number | null | undefined,
+  sinceMs: number,
+): number {
+  return firstTokenMs ?? Date.now() - sinceMs;
 }
 
 /** Console-only: demo evidence, never persisted to the turn log. */

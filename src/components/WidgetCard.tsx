@@ -30,8 +30,8 @@ export function WidgetCard({
       <p>{widget.title}</p>
       {widget.lines.length > 0 && (
         <ul>
-          {widget.lines.map((line) => (
-            <li key={line}>{line}</li>
+          {widget.lines.map((line, index) => (
+            <li key={`${index}-${line}`}>{line}</li>
           ))}
         </ul>
       )}

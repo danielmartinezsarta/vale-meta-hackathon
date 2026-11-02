@@ -7,9 +7,8 @@ import type {
   CaptureHandle,
   UtteranceStats,
 } from "@/lib/capture";
-import { LevelMeter } from "@/components/LevelMeter";
-import { ValeBoard } from "@/components/ValeBoard";
 import type { Board } from "@/lib/board";
+import { hasVisibleContent, type Turn } from "@/lib/turn-view";
 import { parseSseStream } from "@/lib/sse";
 import { namesVale } from "@/lib/wake";
 import {
@@ -25,11 +24,10 @@ import {
 } from "@/lib/speak";
 import { createValeState, type ValeState } from "@/lib/vale-state";
 import {
-  storedLanguage,
-  storeLanguage,
   turnErrorText,
   type ValeLanguage,
 } from "@/lib/vale-language";
+import { useValeLanguage } from "@/components/useValeLanguage";
 import { uiStrings } from "@/lib/vale-ui";
 import type { Widget } from "@/lib/widget";
 import { AwakeScreen, type AwakeBubble } from "@/components/AwakeScreen";
@@ -39,32 +37,12 @@ import { useScreenMode } from "@/components/useScreenMode";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
-interface Turn {
-  id: number;
-  interim: string;
-  final: string | null;
-  reply: string | null;
-  /** Discarded by the wake gate: shown dimmed, never as dialogue. */
-  ignored?: boolean;
-}
-
 const NO_SPEECH_TIMEOUT_MS = 8000;
 
 function isPermissionDenied(error: unknown): boolean {
   return (
     error instanceof DOMException &&
     (error.name === "NotAllowedError" || error.name === "SecurityError")
-  );
-}
-
-function hasVisibleContent(turn: {
-  interim: string;
-  final: string | null;
-  reply: string | null;
-}): boolean {
-  return (
-    (turn.final ?? turn.interim).trim() !== "" ||
-    (turn.reply?.trim() ?? "") !== ""
   );
 }
 
@@ -78,23 +56,6 @@ const SPEECH_RESUME_DELAY_MS = 300;
 const SPEECH_HARD_CAP_MS = 60000;
 /** 960 samples at the 24 kHz capture rate (capture.ts). */
 const FRAME_MS = 40;
-
-function SpeakerIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden="true"
-    >
-      <path d="M2 6v4h3l4 3V3L5 6H2z" fill="currentColor" stroke="none" />
-      <path d="M11 5.5a3.5 3.5 0 010 5" />
-    </svg>
-  );
-}
 
 function countVoiced(frame: Int16Array): boolean {
   let energy = 0;
@@ -114,34 +75,25 @@ export function TapToTalk({
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  // Codes drive routing (E-VAD banner vs alert) but never render: the user
-  // only reads the friendly message, never a raw code.
-  const [, setNoticeCode] = useState<string | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
-  const [, setAlertCode] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
   const [board, setBoard] = useState<Board | null>(null);
   const [widget, setWidget] = useState<Widget | null>(null);
   const castVoteRef = useRef<(vote: "yes" | "no") => void>(() => {});
   const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
-  // Screen selector: persisted choice, EN default. It drives listening
-  // (ASR language), prompt output, voice and UI; there is no auto-detection.
-  const [language, setLanguage] = useState<ValeLanguage>(() =>
-    typeof window === "undefined" ? "en" : storedLanguage(),
-  );
+  // Screen language, single source: storage, synced live. It drives
+  // listening (ASR language), prompt output, voice and UI.
+  const [language, setLanguage] = useValeLanguage();
   // Turn handlers close over the session; the ref keeps the live language.
   const languageRef = useRef<ValeLanguage>(language);
-  const switchLanguage = useCallback((next: ValeLanguage) => {
-    setLanguage(next);
-    // The ref is the wire truth, not the session listener: switching while
-    // idle (no live socket, no listener yet) must still stick for the next
-    // connection's first frame.
-    languageRef.current = next;
-    // Persisted for the menu selector; the live socket adopts it at once
-    // (the next Meta dial pins ASR to it, no manual reconnect needed).
-    storeLanguage(next);
-    stopSpeaking("language-switch");
-  }, []);
+  const switchLanguage = useCallback(
+    (next: ValeLanguage) => {
+      setLanguage(next);
+      languageRef.current = next;
+      stopSpeaking("language-switch");
+    },
+    [setLanguage],
+  );
   const ui = uiStrings(language);
   // Stable per-browser id so slots, pending actions and chain lanes survive
   // retaps even behind one shared IP; generated once, then reused.
@@ -219,20 +171,13 @@ export function TapToTalk({
       valeStoreRef.current.set("listening");
     }
   }, []);
-  /** Wire widgets always carry a sheet size; older payloads default to half. */
-  const showWidget = useCallback((incoming: Widget | null) => {
-    if (incoming === null) {
-      setWidget(null);
-      return;
-    }
-    setWidget({ ...incoming, size: incoming.size === "full" ? "full" : "half" });
-  }, []);
   /** A working tool shows done, then falls back ~1.5 s later; speech wins. */
   const handleWidget = useCallback(
     (incoming: unknown) => {
       if (incoming !== null && !(incoming && typeof incoming === "object"))
         return;
-      showWidget((incoming ?? null) as Widget | null);
+      // buildWidget always stamps size: the single guarantor lives in lib.
+      setWidget((incoming ?? null) as Widget | null);
       if (incoming !== null && valeStoreRef.current.get() !== "speaking") {
         clearDoneTimer();
         valeStoreRef.current.set("done");
@@ -242,7 +187,7 @@ export function TapToTalk({
         }, 1500);
       }
     },
-    [showWidget, clearDoneTimer, settleToListening],
+    [clearDoneTimer, settleToListening],
   );
   const toggleMute = useCallback(() => {
     if (mutedOutRef.current) {
@@ -371,7 +316,6 @@ export function TapToTalk({
       socketsRef.current.clear();
       convSocketRef.current = null;
       setAlert(message);
-      setAlertCode(code);
       setStatus("idle");
       valeStoreRef.current.set("error");
       sessionEndRef.current?.();
@@ -541,7 +485,6 @@ export function TapToTalk({
 
       const showNotice = (message: string, code: string | null = null) => {
         setNotice(message);
-        setNoticeCode(code);
       };
 
       const handleVadCandidate = (id: number) => {
@@ -1066,7 +1009,6 @@ export function TapToTalk({
         const controller = new AbortController();
         controllersRef.current.add(controller);
         setNotice(null);
-        setNoticeCode(null);
         subscribePostTurn(
           id,
           fetch(
@@ -1114,7 +1056,6 @@ export function TapToTalk({
         const controller = new AbortController();
         controllersRef.current.add(controller);
         setNotice(null);
-        setNoticeCode(null);
         subscribePostTurn(
           id,
           fetch(
@@ -1410,17 +1351,13 @@ export function TapToTalk({
     if (status === "live" || status === "error") {
       stopSession();
       setAlert(null);
-      setAlertCode(null);
       setNotice(null);
-      setNoticeCode(null);
       setLevel(0);
       setBoard(null);
       return;
     }
     setAlert(null);
-    setAlertCode(null);
     setNotice(null);
-    setNoticeCode(null);
     setLevel(0);
     setStatus("requesting");
     try {
@@ -1529,7 +1466,7 @@ export function TapToTalk({
         onToggleMute={toggleMute}
         onSleep={sleep}
         onPhotoType={photoType}
-        onCloseWidget={() => showWidget(null)}
+        onCloseWidget={() => setWidget(null)}
         onVote={(vote) => castVoteRef.current(vote)}
       />
     );
@@ -1548,7 +1485,7 @@ export function TapToTalk({
       alert={alert}
       onToggleMute={toggleMute}
       onSleep={sleep}
-      onCloseWidget={() => showWidget(null)}
+      onCloseWidget={() => setWidget(null)}
       onVote={(vote) => castVoteRef.current(vote)}
     />
   );

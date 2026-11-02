@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { SplashScreen } from "@/components/SplashScreen";
 import { HomeScreen } from "@/components/HomeScreen";
 import { TapToTalk } from "@/components/TapToTalk";
-import { storedLanguage, type ValeLanguage } from "@/lib/vale-language";
+import { useValeLanguage } from "@/components/useValeLanguage";
 import type { HomeData } from "@/lib/home-data";
 
 type Screen = "home" | "voice";
@@ -12,9 +12,7 @@ type Screen = "home" | "voice";
 export default function Home() {
   const [showSplash, setShowSplash] = useState(true);
   const [screen, setScreen] = useState<Screen>("home");
-  const [language, setLanguage] = useState<ValeLanguage>(() =>
-    typeof window === "undefined" ? "en" : storedLanguage(),
-  );
+  const [language, setLanguage] = useValeLanguage();
   const [homeData, setHomeData] = useState<HomeData | null>(null);
 
   useEffect(() => {

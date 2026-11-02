@@ -3,16 +3,27 @@
 import { useEffect, useState } from "react";
 import type { HomeMode } from "@/lib/vale-theme";
 
-/** Day/night follows the device; the reference keeps the switch out of the UI. */
+/** Stored override from the app shell, if the user ever set one. */
+function storedMode(): HomeMode | null {
+  try {
+    const saved = window.localStorage.getItem("vale-theme");
+    if (saved === "light") return "day";
+    if (saved === "dark") return "night";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Day/night follows the stored choice, else the device. */
 export function useScreenMode(): HomeMode {
   const [mode, setMode] = useState<HomeMode>("day");
   useEffect(() => {
     const query = window.matchMedia?.("(prefers-color-scheme: dark)");
-    if (!query) return;
-    const apply = () => setMode(query.matches ? "night" : "day");
+    const apply = () => setMode(storedMode() ?? (query?.matches ? "night" : "day"));
     apply();
-    query.addEventListener("change", apply);
-    return () => query.removeEventListener("change", apply);
+    query?.addEventListener("change", apply);
+    return () => query?.removeEventListener("change", apply);
   }, []);
   return mode;
 }

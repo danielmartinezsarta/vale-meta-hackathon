@@ -326,6 +326,8 @@
 .scrim {
   position: absolute;
   inset: 0;
+  border: 0;
+  padding: 0;
   background: rgba(10, 18, 48, 0.55);
 }
 

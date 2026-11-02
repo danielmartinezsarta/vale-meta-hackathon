@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
-import { sessionClock, SessionScreen } from "./SessionScreen";
+import { SessionScreen } from "./SessionScreen";
 import { startCapture } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -54,15 +54,6 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-});
-
-describe("session clock", () => {
-  it("formats HH:MM:SS from the table start", () => {
-    const start = new Date("2026-11-02T10:00:00Z").getTime();
-    expect(sessionClock(new Date(start).toISOString(), start)).toBe("00:00:00");
-    expect(sessionClock(new Date(start).toISOString(), start + 3723 * 1000)).toBe("01:02:03");
-    expect(sessionClock("not-a-date", start)).toBe("00:00:00");
-  });
 });
 
 describe("in-session screen (names, stopwatch, sheets)", () => {

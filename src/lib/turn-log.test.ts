@@ -7,6 +7,7 @@ import {
   emitTurnLog,
   formatModelLog,
   formatTurnLog,
+  modelElapsedMs,
   persistTurnLog,
   turnsLogFile,
 } from "./turn-log";
@@ -23,6 +24,11 @@ describe("model call log", () => {
     expect(formatModelLog("m", 1, long)).toBe(
       `[vale-model] content="${"x".repeat(80)}…" model="m" response=1ms`,
     );
+    expect(formatModelLog("m", 5, "one\ntwo\r\nthree")).toBe(
+      '[vale-model] content="one two three" model="m" response=5ms',
+    );
+    expect(modelElapsedMs(800, 1000)).toBe(800);
+    expect(modelElapsedMs(null, Date.now() - 50)).toBeGreaterThanOrEqual(0);
   });
 });
 

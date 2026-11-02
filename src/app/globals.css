@@ -1,5 +1,6 @@
-/* Vale design tokens. Every color in the app resolves through these
-   custom properties. No color value may appear in any other file. */
+/* Vale preview tokens for /brand. The demo screens resolve their colors
+   through BRAND (src/lib/brand-tokens.ts) and the per-screen vars in
+   src/lib/vale-theme.ts instead. */
 
 :root,
 [data-theme="light"] {

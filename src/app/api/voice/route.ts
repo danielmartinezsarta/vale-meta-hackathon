@@ -20,7 +20,7 @@ import {
 } from "@/lib/wake";
 import { getOpenSession } from "@/lib/vale-tools";
 import { ASR_MODEL, openAsrConnection } from "@/lib/asr";
-import { emitModelLog, emitTurnLog, estimateCost } from "@/lib/turn-log";
+import { emitModelLog, emitTurnLog, estimateCost, modelElapsedMs } from "@/lib/turn-log";
 import { saveTurnWav } from "@/lib/turn-audio";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
 import {
@@ -356,7 +356,7 @@ export async function POST(request: Request): Promise<Response> {
           if (!aborted) recordTurn(getDb(), clientKey, "vale", result.text, result.toolUsed);
           emitModelLog(
             AGENT_MODEL,
-            result.firstTokenMs ?? Date.now() - speechEndAt,
+            modelElapsedMs(result.firstTokenMs, speechEndAt),
             transcript,
           );
           send("reply", { text: result.text });

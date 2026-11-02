@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type CSSProperties } from "react";
 import { BRAND } from "@/lib/brand-tokens";
+import { leftBearing } from "@/lib/text-metrics";
 import styles from "./SplashScreen.module.css";
 
 /**
@@ -27,7 +28,8 @@ type Props = {
   className?: string;
 };
 
-const SLOGAN = { en: "Just say it.", es: "Solo dilo." } as const;
+/** The brand slogan, single-sourced. */
+const SLOGAN = BRAND.slogan;
 const ANIMATION_MS = 2400;
 
 // Bar geometry (viewBox units). Colors come from BRAND, the single source.
@@ -55,15 +57,13 @@ export function SplashScreen({ onDone, lang = "en", holdMs = 400, className }: P
       const v = valeRef.current;
       const s = sloganRef.current;
       if (!v || !s || cancelled) return;
-      const ctx = document.createElement("canvas").getContext("2d");
-      if (!ctx) return;
       const cv = getComputedStyle(v);
       const cs = getComputedStyle(s);
-      ctx.font = `${cv.fontStyle} ${cv.fontWeight} ${cv.fontSize} ${cv.fontFamily}`;
-      const vLeft = -ctx.measureText("v").actualBoundingBoxLeft;
-      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-      const sLeft = -ctx.measureText(SLOGAN[lang].charAt(0)).actualBoundingBoxLeft;
-      s.style.marginLeft = `${(vLeft - sLeft).toFixed(2)}px`;
+      const vFont = `${cv.fontStyle} ${cv.fontWeight} ${cv.fontSize} ${cv.fontFamily}`;
+      const sFont = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const shift =
+        leftBearing(SLOGAN[lang].charAt(0), sFont) - leftBearing("v", vFont);
+      s.style.marginLeft = `${shift.toFixed(2)}px`;
     };
     const fonts = document.fonts;
     if (fonts?.ready) fonts.ready.then(align, align);
