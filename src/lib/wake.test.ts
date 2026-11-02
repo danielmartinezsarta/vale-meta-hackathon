@@ -339,6 +339,25 @@ describe("isCloseSheetIntent (spoken sheet close)", () => {
     expect(isCloseSheetIntent("gracias, eso es todo")).toBe(true);
   });
 
+  it("closes whatever sheet is open, by noun, in either language", () => {
+    expect(isCloseSheetIntent("close the schedule")).toBe(true);
+    expect(isCloseSheetIntent("Vale, close the schedule")).toBe(true);
+    expect(isCloseSheetIntent("can you close this table")).toBe(true);
+    expect(isCloseSheetIntent("close the photos")).toBe(true);
+    expect(isCloseSheetIntent("close the card")).toBe(true);
+    expect(isCloseSheetIntent("that's all")).toBe(true);
+    expect(isCloseSheetIntent("that's it, thanks")).toBe(true);
+    expect(isCloseSheetIntent("cierra la ficha")).toBe(true);
+    expect(isCloseSheetIntent("cierra eso")).toBe(true);
+  });
+
+  it("never mistakes the session for a sheet", () => {
+    expect(isCloseSheetIntent("close the session")).toBe(false);
+    expect(isCloseSheetIntent("Vale, close the session")).toBe(false);
+    expect(isCloseSheetIntent("cierra la sesión")).toBe(false);
+    expect(isCloseSheetIntent("close")).toBe(false);
+  });
+
   it("leaves compound orders and negations to the model", () => {
     expect(
       isCloseSheetIntent("close the agenda and book Ana for tomorrow at five"),
