@@ -31,7 +31,7 @@ function sseBody(transcript: string, reply: string): {
     `event: interim\ndata: {"transcript":"${transcript.slice(0, 5)}"}\n\n` +
     `event: final\ndata: {"transcript":"${transcript}","audioProcessedMs":800}\n\n` +
     `event: reply\ndata: {"text":${JSON.stringify(reply)}}\n\n` +
-    `event: board\ndata: {"board":{"session":{"clientName":"Daniel","serviceName":"Gel manicure","startedAt":${JSON.stringify(STARTED_AT)}},"card":null,"list":[]}}\n\n` +
+    `event: board\ndata: {"board":{"session":{"clientName":"David","serviceName":"Gel manicure","startedAt":${JSON.stringify(STARTED_AT)}},"card":null,"list":[]}}\n\n` +
     "event: done\ndata: {}\n\n";
   const bytes = encoder.encode(raw);
   const first = bytes.slice(0, 13);
@@ -82,7 +82,7 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
     driveSession();
     render(<TapToTalk autoStart />);
     await waitFor(() => {
-      expect(screen.getByText("Daniel")).toBeTruthy();
+      expect(screen.getByText("David")).toBeTruthy();
     });
     expect(screen.getByText("Gel manicure")).toBeTruthy();
     expect(screen.getByRole("timer", { name: "Session time" })).toBeTruthy();
@@ -98,7 +98,7 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
         bubbles={[]}
         widget={null}
         language="en"
-        session={{ clientName: "Daniel", serviceName: "Gel manicure", startedAt: STARTED_AT }}
+        session={{ clientName: "David", serviceName: "Gel manicure", startedAt: STARTED_AT }}
         muted={false}
         notice={null}
         alert={null}
@@ -127,7 +127,7 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
         bubbles={[]}
         widget={null}
         language="en"
-        session={{ clientName: "Daniel", serviceName: "Gel manicure", startedAt: STARTED_AT }}
+        session={{ clientName: "David", serviceName: "Gel manicure", startedAt: STARTED_AT }}
         muted={false}
         notice={null}
         alert={null}

@@ -178,7 +178,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
     type: "function",
     name: "session_open",
     description:
-      "Open a nail session with a timer for a client. The service is optional: when it is missing, today's appointment for that client names it (for example Start a session with Daniel, Daniel is here, my client Daniel is getting near). Call it right away when the request names a client, even when another session is already open: the refusal carries the switch question and a yes runs it.",
+      "Open a nail session with a timer for a client. The service is optional: when it is missing, today's appointment for that client names it (for example Start a session with David, David is here, my client David is getting near). Call it right away when the request names a client, even when another session is already open: the refusal carries the switch question and a yes runs it.",
     parameters: {
       type: "object",
       properties: {
@@ -371,7 +371,7 @@ export function openSession(db: ValeDb, args: { client_name?: unknown; service_n
   if (client.kind === "none") return { ok: false, message: `No encuentro a "${clientName}".` };
   if (client.kind === "ambiguous") return { ok: false, message: ambiguousMessage(client.options) };
   // A bare client names the service through today's booking: Start a
-  // session with Daniel opens the service of Daniel's appointment today.
+  // session with David opens the service of David's appointment today.
   let service: Match = { kind: "none" };
   if (serviceName.trim() !== "") {
     service = matchService(db, serviceName);

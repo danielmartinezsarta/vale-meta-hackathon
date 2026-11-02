@@ -179,8 +179,8 @@
    "goal": "demo path in English: agenda, card, session, supplies, quote accept, booking, close, goal",
    "turns": [
     "Vale, what do we have today?",
-    "Vale, what do you have on Daniel?",
-    "Vale, open a session with Daniel",
+    "Vale, what do you have on David?",
+    "Vale, open a session with David",
     "Vale, I used gold foil",
     "Vale, no, that wasn't it",
     "Vale, add two crystals",
@@ -193,9 +193,9 @@
   },
   {
    "id": "C19",
-   "goal": "full Daniel booking phrase in one turn",
+   "goal": "full David booking phrase in one turn",
    "turns": [
-    "Vale, book Daniel next Friday at 5 PM for gel removal"
+    "Vale, book David next Friday at 5 PM for gel removal"
    ]
   },
   {
@@ -203,22 +203,22 @@
    "goal": "name-only turn then the rest after a pause stays one booking",
    "turns": [
     "Vale",
-    "book Daniel next Friday at 5 PM for gel removal"
+    "book David next Friday at 5 PM for gel removal"
    ]
   },
   {
    "id": "C21",
    "goal": "correction moves the same booking to next Friday",
    "turns": [
-    "Vale, book Daniel Friday at 5 PM for gel removal",
+    "Vale, book David Friday at 5 PM for gel removal",
     "no, it's for next Friday"
    ]
   },
   {
    "id": "C22",
-   "goal": "natural tomorrow time booking for Daniel",
+   "goal": "natural tomorrow time booking for David",
    "turns": [
-    "Vale, book an appointment for Daniel tomorrow at three PM"
+    "Vale, book an appointment for David tomorrow at three PM"
    ]
   },
   {
@@ -226,7 +226,7 @@
    "goal": "client mention without a request books nothing",
    "turns": [
     "Vale, open a session with Emma for gel refill",
-    "and your client called Daniel",
+    "and your client called David",
     "Thanks Vale, bye"
    ]
   },
