@@ -186,28 +186,35 @@ export interface WakeVerdict {
   sinceReplyS: number | null;
 }
 
-/** Spoken sheet close, either language: "close it", "cierra la agenda". */
-const CLOSE_SHEET_PHRASES = [
-  "close it",
-  "close that",
-  "close the agenda",
-  // ASR hears the Spanglish "de" for "the" (Daniel's own turn).
-  "close de agenda",
-  "close the sheet",
-  // Apostrophes never survive normalization ("that's" reads "thats").
-  "thanks thats all",
-  "thats all thanks",
-  "cierra la agenda",
-  "cierra eso",
+/** Close verbs, either language; attached pronouns count as the same word. */
+const CLOSE_SHEET_VERBS = new Set([
+  "close",
+  "cierra",
   "cierrala",
-  "gracias eso es todo",
-  "eso es todo gracias",
-];
+  "cierralo",
+  "cierre",
+]);
+/** Bare determiners between the verb and the sheet noun. */
+const CLOSE_SHEET_ARTICLES = new Set([
+  "this",
+  "that",
+  "the",
+  "a",
+  "an",
+  "de",
+  "la",
+  "las",
+  "los",
+  "el",
+  "mi",
+  "my",
+]);
 
 /**
  * A short order to close the open sheet: no model, no spoken reply. Longer
  * turns ride to the model untouched, so a compound order that mentions
- * closing among other asks is never swallowed here.
+ * closing among other asks is never swallowed here. The session is never
+ * a sheet: ending it opens the summary through the agent instead.
  */
 export const CLOSE_SHEET_WORDS = 8;
 
@@ -223,17 +230,37 @@ export function isCloseSheetIntent(transcript: string): boolean {
     flat.includes(" dont close") ||
     flat.includes(" do not close") ||
     flat.includes(" no cierres") ||
-    flat.includes(" no la cierres")
+    flat.includes(" no la cierres") ||
+    flat.includes(" no lo cierres")
   ) {
     return false;
   }
-  return CLOSE_SHEET_PHRASES.some((phrase) => flat.includes(` ${phrase} `));
+  if (/\bsessions?\b/.test(flat) || /\bsesion(es)?\b/.test(flat)) return false;
+  // Apostrophes never survive normalization ("that's" reads "thats").
+  if (
+    flat.includes(" thats all ") ||
+    flat.includes(" thats it ") ||
+    flat.includes(" eso es todo ")
+  ) {
+    return true;
+  }
+  const tokens = flat
+    .trim()
+    .split(" ")
+    .filter((word) => word !== "");
+  const verbAt = tokens.findIndex((token) => CLOSE_SHEET_VERBS.has(token));
+  if (verbAt === -1) return false;
+  const rest = tokens
+    .slice(verbAt + 1)
+    .filter((token) => !CLOSE_SHEET_ARTICLES.has(token));
+  return rest.length > 0;
 }
 
 /**
- * Sliding attention window: naming Vale opens it, and every executed turn
- * restarts it, so any request inside the window runs without the name.
- * Empty transcripts bypass the gate: the existing silence path handles them.
+ * Sliding attention window: naming Vale opens it, every executed turn and
+ * her real last word restart it, and a sheet she opened holds it open
+ * behind the reading, so any request inside runs without the name. Empty
+ * transcripts bypass the gate: the existing silence path handles them.
  * Ignored turns neither read nor write the model or the chain.
  */
 export function checkWake(
