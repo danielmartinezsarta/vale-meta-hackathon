@@ -157,7 +157,7 @@ function parseClientStats(message: {
 export function tryParseControl(
   data: unknown,
 ):
-  | { type: "endStream"; stats: TurnClientStats }
+  | { type: "endStream"; stats: TurnClientStats; language: ValeLanguage | null }
   | { type: "language"; language: ValeLanguage }
   | { type: "client"; client: string }
   | { type: "wake" }
@@ -185,9 +185,18 @@ export function tryParseControl(
       valeState?: unknown;
       lostBlocks?: unknown;
       srcBlocks?: unknown;
+      engine?: unknown;
+      sheetOpen?: unknown;
     };
     if (message.type === "endStream")
-      return { type: "endStream", stats: parseClientStats(message) };
+      return {
+        type: "endStream",
+        stats: parseClientStats(message),
+        language:
+          message.language === "en" || message.language === "es"
+            ? message.language
+            : null,
+      };
     if (message.type === "wake") return { type: "wake" };
     if (
       message.type === "vote" &&
@@ -1068,7 +1077,12 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         return;
       }
       // Only endStream reaches here: keep what the client saw this turn.
-      if (control.type === "endStream") turnStats = control.stats;
+      // The language rides along so a switch that raced the handshake
+      // still applies from the first speech of the session.
+      if (control.type === "endStream") {
+        turnStats = control.stats;
+        if (control.language !== null) turnLanguage = control.language;
+      }
       // Nothing ever voiced: answer locally instead of dialing Meta for it.
       if (!metaOpen && bufferedBytes === 0 && pendingAudio.length === 0) {
         finishEmptyTurn(0);
