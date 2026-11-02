@@ -109,6 +109,9 @@ export interface TurnClientStats {
   srcBlocks: number | null;
   engine: "worklet" | "script" | null;
   sheetOpen: boolean | null;
+  visible: string | null;
+  actualRate: number | null;
+  ctxState: string | null;
 }
 
 function parseClientStats(message: {
@@ -120,6 +123,9 @@ function parseClientStats(message: {
   srcBlocks?: unknown;
   engine?: unknown;
   sheetOpen?: unknown;
+  visible?: unknown;
+  actualRate?: unknown;
+  ctxState?: unknown;
 }): TurnClientStats {
   const num = (value: unknown, max: number): number | null =>
     typeof value === "number" &&
@@ -151,6 +157,13 @@ function parseClientStats(message: {
         ? message.engine
         : null,
     sheetOpen: typeof message.sheetOpen === "boolean" ? message.sheetOpen : null,
+    visible: typeof message.visible === "string" ? message.visible : null,
+    actualRate:
+      typeof message.actualRate === "number" &&
+      Number.isFinite(message.actualRate)
+        ? message.actualRate
+        : null,
+    ctxState: typeof message.ctxState === "string" ? message.ctxState : null,
   };
 }
 
@@ -189,6 +202,9 @@ export function tryParseControl(
       srcBlocks?: unknown;
       engine?: unknown;
       sheetOpen?: unknown;
+      visible?: unknown;
+      actualRate?: unknown;
+      ctxState?: unknown;
     };
     if (message.type === "endStream")
       return {
@@ -286,6 +302,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     srcBlocks: null,
     engine: null,
     sheetOpen: null,
+    visible: null,
+    actualRate: null,
+    ctxState: null,
   };
   let pendingEnd = false;
   let agentRan = false;
@@ -364,6 +383,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       srcBlocks: null,
       engine: null,
       sheetOpen: null,
+      visible: null,
+      actualRate: null,
+      ctxState: null,
     };
     pendingEnd = false;
     agentRan = false;
@@ -482,6 +504,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       srcBlocks: turnStats.srcBlocks,
       engine: turnStats.engine,
       sheetOpen: turnStats.sheetOpen,
+      visible: turnStats.visible,
+      actualRate: turnStats.actualRate,
+      ctxState: turnStats.ctxState,
       costUsd: estimateCost(
         {
           inputTokens: fields.inputTokens,
