@@ -406,9 +406,14 @@ export function splitSentences(text: string): string[] {
 
 let seamlessAudio: HTMLAudioElement | null = null;
 let seamlessPlayId = 0;
+/** A seamless sentence chain is playing: browser utterance ends defer. */
+let seamlessChainActive = false;
+/** No chain sentence fell back to the browser voice mid-reply. */
+let seamlessClean = true;
 
 export function stopSeamlessSpeech(): void {
   seamlessPlayId += 1;
+  seamlessChainActive = false;
   try {
     seamlessAudio?.pause();
   } catch {
@@ -434,13 +439,15 @@ async function playSentence(
       `/api/seamless-voice?speaker=${SEAMLESS_SPEAKER}&text=${encodeURIComponent(said.slice(0, SEAMLESS_MAX_CHARS))}`,
     );
   } catch {
-    sayBrowserFallback(sentence, language);
+    seamlessClean = false;
+    sayBrowserFallback(sentence, language, false);
     onDone();
     return;
   }
   if (!response.ok || playId !== seamlessPlayId) {
     if (!response.ok && playId === seamlessPlayId) {
-      sayBrowserFallback(sentence, language);
+      seamlessClean = false;
+      sayBrowserFallback(sentence, language, false);
     }
     onDone();
     return;
@@ -461,7 +468,10 @@ async function playSentence(
     };
     await audio.play();
   } catch {
-    if (playId === seamlessPlayId) sayBrowserFallback(sentence, language);
+    if (playId === seamlessPlayId) {
+      seamlessClean = false;
+      sayBrowserFallback(sentence, language, false);
+    }
     onDone();
   }
 }
@@ -475,6 +485,9 @@ function playSeamless(
   language: ValeLanguage = DEFAULT_LANGUAGE,
 ): void {
   stopSeamlessSpeech();
+  beginSpeechBatch();
+  seamlessChainActive = true;
+  seamlessClean = true;
   expectSpeech(text, 1);
   const playId = seamlessPlayId;
   const sentences = splitSentences(text);
@@ -482,7 +495,13 @@ function playSeamless(
   let index = 0;
   const next = (): void => {
     if (playId !== seamlessPlayId) return;
-    if (index >= sentences.length) return;
+    if (index >= sentences.length) {
+      // The last audio ended: settle at the real end. A chain with a
+      // browser fallback still owes its voice, so it settles itself.
+      seamlessChainActive = false;
+      if (seamlessClean) noteSpeechEnd();
+      return;
+    }
     const sentence = sentences[index];
     index += 1;
     void playSentence(playId, sentence, language, next);
@@ -490,15 +509,26 @@ function playSeamless(
   next();
 }
 
-/** Seamless failed: the browser voice says it instead of silence. */
+/**
+ * Seamless failed: the browser voice says it instead of silence. A
+ * fallback continues the same reply; only a fresh call starts a batch.
+ */
 function sayBrowserFallback(
   text: string,
   language: ValeLanguage = DEFAULT_LANGUAGE,
+  fresh = true,
 ): void {
   const s = synth();
   if (!s) return;
   const sentences = splitSentences(text);
   if (sentences.length === 0) return;
+  if (!fresh) {
+    void ensureVoices(s).then((late) =>
+      queueBrowserSentences(s, sentences, late, language),
+    );
+    return;
+  }
+  beginSpeechBatch();
   try {
     s.cancel();
   } catch {
@@ -549,6 +579,19 @@ function queueBrowserSentences(
       utterance.pitch = prosody.pitch;
       utterance.lang = voice?.lang ?? FALLBACK_LANG[language];
       if (voice) utterance.voice = voice;
+      // The real end settles the mic: each utterance releases once, and a
+      // cancelled batch never settles the reply that replaced it.
+      const gen = speechGen;
+      let owed = true;
+      const release = (): void => {
+        if (!owed || gen !== speechGen) return;
+        owed = false;
+        pendingUtterances = Math.max(0, pendingUtterances - 1);
+        if (pendingUtterances === 0 && !seamlessChainActive) noteSpeechEnd();
+      };
+      utterance.onend = release;
+      utterance.onerror = release;
+      pendingUtterances += 1;
       s.speak(utterance);
     }
   } catch {
@@ -625,13 +668,15 @@ export function stopSpeaking(reason: string): void {
   } catch {
     /* logging must never break the stop */
   }
-  speechDueUntil = 0;
+  beginSpeechBatch();
   stopSeamlessSpeech();
   try {
     synth()?.cancel();
   } catch {
     /* nothing playing or nothing to stop */
   }
+  // A cut voice is a real end too: the mic reopens at once.
+  noteSpeechEnd();
 }
 
 /**
@@ -645,6 +690,44 @@ export const SPEECH_END_MARGIN_MS = 2500;
 
 /** When the queued reply should be over, worst case. 0 means nothing queued. */
 let speechDueUntil = 0;
+/** Replies started: stale utterance ends never settle a newer reply. */
+let speechGen = 0;
+/** Browser utterances owed their voice; seamless chains track separately. */
+let pendingUtterances = 0;
+/** The synth spoke since the last settle: quiet now means the real end. */
+let heardAudible = false;
+/** Mic-reopen callbacks, fired once per real end (never on the estimate). */
+const settleListeners = new Set<() => void>();
+
+/** A new reply owns the mic accounting; stale ends belong to the old one. */
+function beginSpeechBatch(): void {
+  speechGen += 1;
+  speechDueUntil = 0;
+  pendingUtterances = 0;
+  heardAudible = false;
+}
+
+/** The voice really ended: settle now and reopen every waiting mic. */
+function noteSpeechEnd(): void {
+  speechDueUntil = 0;
+  pendingUtterances = 0;
+  heardAudible = false;
+  for (const listener of [...settleListeners]) {
+    try {
+      listener();
+    } catch {
+      /* a bad listener never holds the mic */
+    }
+  }
+}
+
+/** Run when her voice really ends (not on the estimate); returns release. */
+export function onSpeechSettled(listener: () => void): () => void {
+  settleListeners.add(listener);
+  return () => {
+    settleListeners.delete(listener);
+  };
+}
 
 export function estimateSpeechMs(text: string, rate = 1): number {
   const chars = text.replace(/\s+/g, " ").trim().length;
@@ -663,7 +746,13 @@ export function expectSpeech(text: string, rate = 1): void {
 
 /** True when no voice is audible and no reply is owed: safe to re-listen. */
 export function speechSettled(): boolean {
-  if (isSpeaking()) return false;
+  if (isSpeaking()) {
+    heardAudible = true;
+    return false;
+  }
+  // Quiet after audible: the real end, even with no end event. The
+  // estimate below stays the cap for a voice that never sounded at all.
+  if (heardAudible) noteSpeechEnd();
   return speechDueUntil === 0 || Date.now() >= speechDueUntil;
 }
 

@@ -177,6 +177,7 @@ export function tryParseControl(
   | { type: "client-state"; state: Record<string, unknown> }
   | { type: "vote"; vote: "yes" | "no" }
   | { type: "dismiss"; transcript: string | null }
+  | { type: "spoken" }
   | null {
   let text: string | null = null;
   if (typeof data === "string") {
@@ -216,6 +217,8 @@ export function tryParseControl(
             : null,
       };
     if (message.type === "wake") return { type: "wake" };
+    // Her real last word: the window counts from here, not the send time.
+    if (message.type === "spoken") return { type: "spoken" };
     if (
       message.type === "vote" &&
       (message.vote === "yes" || message.vote === "no")
@@ -1139,6 +1142,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       // execute. The phrase earns the window by naming her (or a reply
       // opens it), and the gate below judges the rest.
       if (control.type === "wake") {
+        return;
+      }
+      // Her voice really ended: the attention window counts from here.
+      if (control.type === "spoken") {
+        noteAttention(clientId);
         return;
       }
       // Field diagnostics: capture, AudioContext, tab visibility, speech
