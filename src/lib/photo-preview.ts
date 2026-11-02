@@ -21,6 +21,10 @@ export interface DesignSpec {
 export interface PreviewInput {
   beforePhoto: Buffer;
   mime: string;
+  /** Appointment reference photo: the design source applied onto the before nails. */
+  referencePhoto: Buffer;
+  /** MIME of the reference photo; defaults to mime. */
+  referenceMime?: string;
   design: DesignSpec;
   appointmentRef: string;
 }
@@ -67,7 +71,9 @@ function previewError(code: string, message: string): Error {
 }
 
 /**
- * Nails-only edit prompt. Keeps skin, background, light and framing
+ * Nails-only edit prompt for the two-image form. The first image is the
+ * before photo to edit; the second image is the appointment reference
+ * design source. Keeps hand, skin, ring, background, light and framing
  * identical, and keeps the sparkle watermark mark visible (never crop it).
  * There is intentionally no mask parameter: the model finds the nails.
  */
@@ -78,9 +84,11 @@ export function buildPreviewPrompt(
   return [
     `Nail design preview for appointment ${appointmentRef}:`,
     `${design.shape} nails, ${design.color} color, ${design.finish} finish, ${design.detail}.`,
-    "Apply the design only inside the nails.",
-    "Keep skin, background, light and framing identical to the before photo.",
+    "The first image is the before photo to edit; the second image is the appointment reference design.",
+    "Apply the reference design onto the before nails, only inside the nails.",
+    "Keep hand, skin, ring, background, light and framing identical to the before photo.",
     "Keep the sparkle watermark mark fully visible; do not crop or cover it.",
+    "Keep the small sparkle watermark mark in the bottom-right corner fully visible; do not crop, move, or cover it.",
   ].join(" ");
 }
 
@@ -162,6 +170,11 @@ export async function runPhotoPreview(
     "image",
     new Blob([new Uint8Array(input.beforePhoto)], { type: input.mime }),
     "before-photo",
+  );
+  form.append(
+    "image",
+    new Blob([new Uint8Array(input.referencePhoto)], { type: input.referenceMime ?? input.mime }),
+    "reference-photo",
   );
   form.append("prompt", prompt);
   form.append("model", model);

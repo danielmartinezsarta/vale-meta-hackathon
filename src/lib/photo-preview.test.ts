@@ -34,15 +34,19 @@ describe("buildPreviewPrompt", () => {
   it("mentions the nails and preserves the rest of the photo", () => {
     const prompt = buildPreviewPrompt(DESIGN, "APT-1");
     expect(prompt.toLowerCase()).toContain("nail");
-    expect(prompt).toContain("Keep skin");
+    expect(prompt).toContain("second image");
+    expect(prompt).toContain("reference design");
+    expect(prompt).toContain("only inside the nails");
+    expect(prompt).toContain("ring");
     expect(prompt).toContain("background");
     expect(prompt).toContain("framing identical");
     expect(prompt).toContain("sparkle");
+    expect(prompt).toContain("bottom-right");
   });
 });
 
 describe("runPhotoPreview", () => {
-  it("sends photo, prompt and model with no mask field", async () => {
+  it("sends before plus reference photos, prompt and model with no mask field", async () => {
     const { b64 } = previewImagePayload();
     let seen: FormData | null = null;
     const dir = mkdtempSync(join(tmpdir(), "preview-"));
@@ -50,6 +54,7 @@ describe("runPhotoPreview", () => {
       {
         beforePhoto: Buffer.from([1, 2, 3]),
         mime: "image/png",
+        referencePhoto: Buffer.from([4, 5, 6]),
         design: DESIGN,
         appointmentRef: "APT-2",
       },
@@ -69,9 +74,13 @@ describe("runPhotoPreview", () => {
     );
     expect(seen).not.toBeNull();
     const form = seen as unknown as FormData;
+    const images = form.getAll("image");
+    expect(images).toHaveLength(2);
+    expect((images[0] as File).name).toBe("before-photo");
+    expect((images[1] as File).name).toBe("reference-photo");
     expect(form.get("mask")).toBeNull();
     expect(form.get("model")).toBe("muse-image-1.0");
-    expect(typeof form.get("prompt")).toBe("string");
+    expect(form.get("prompt") as string).toContain("reference design");
     expect(result.mime).toBe("image/png");
     expect(result.watermarkKept).toBe(true);
     expect(result.disclaimer).toBe("AI preview, the real result may vary");
@@ -85,7 +94,7 @@ describe("runPhotoPreview", () => {
     try {
       await expect(
         runPhotoPreview(
-          { beforePhoto: Buffer.from([1]), mime: "image/png", design: DESIGN, appointmentRef: "APT-3" },
+          { beforePhoto: Buffer.from([1]), mime: "image/png", referencePhoto: Buffer.from([2]), design: DESIGN, appointmentRef: "APT-3" },
           { costLogPath: join(mkdtempSync(join(tmpdir(), "preview-")), "c.jsonl") },
         ),
       ).rejects.toMatchObject({ code: "E-NO-KEY" });
@@ -98,7 +107,7 @@ describe("runPhotoPreview", () => {
     const dir = mkdtempSync(join(tmpdir(), "preview-"));
     await expect(
       runPhotoPreview(
-        { beforePhoto: Buffer.from([1]), mime: "image/png", design: DESIGN, appointmentRef: "APT-4" },
+        { beforePhoto: Buffer.from([1]), mime: "image/png", referencePhoto: Buffer.from([2]), design: DESIGN, appointmentRef: "APT-4" },
         {
           apiKey: "test-key",
           timeoutMs: 10,
@@ -122,6 +131,7 @@ describe("runPhotoPreview", () => {
     const base = {
       beforePhoto: Buffer.from([1]),
       mime: "image/png",
+      referencePhoto: Buffer.from([2]),
       design: DESIGN,
       appointmentRef: "APT-5",
     };
