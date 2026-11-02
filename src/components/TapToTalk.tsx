@@ -306,6 +306,24 @@ export function TapToTalk({
     onSleep?.();
   }, [stopSession, onSleep]);
 
+  // The X on a sheet Vale opened: close locally and restart her window.
+  const closeWidgetByHand = useCallback(() => {
+    if (widgetRef.current === null) return;
+    setWidget(null);
+    try {
+      const socket = convSocketRef.current;
+      if (
+        socket &&
+        typeof WebSocket !== "undefined" &&
+        socket.readyState === WebSocket.OPEN
+      ) {
+        socket.send(JSON.stringify({ type: "sheet-closed" }));
+      }
+    } catch {
+      /* the next turn's stats still describe the screen */
+    }
+  }, []);
+
   useEffect(() => stopSession, [stopSession]);
 
   const patchTurn = useCallback((id: number, patch: Partial<Turn>) => {
@@ -704,7 +722,9 @@ export function TapToTalk({
         if (!sessionRef.current || posted || droppedRef.current) return;
         if (id !== currentId) return;
         const sessionOpen = boardRef.current?.session != null;
+        // A sheet she opened holds the window like the server gate does.
         const windowOpen =
+          widgetRef.current !== null ||
           Date.now() - lastExecuteAtRef.current < windowMs(sessionOpen);
         if (!shouldCutPhrase({ text, sessionOpen, windowOpen })) return;
         droppedRef.current = true;
@@ -1718,7 +1738,7 @@ export function TapToTalk({
         onToggleMute={toggleMute}
         onSleep={sleep}
         onPhotoType={photoType}
-        onCloseWidget={() => setWidget(null)}
+        onCloseWidget={closeWidgetByHand}
         onVote={(vote) => castVoteRef.current(vote)}
       />
     );
@@ -1737,7 +1757,7 @@ export function TapToTalk({
       alert={alert}
       onToggleMute={toggleMute}
       onSleep={sleep}
-      onCloseWidget={() => setWidget(null)}
+      onCloseWidget={closeWidgetByHand}
       onVote={(vote) => castVoteRef.current(vote)}
     />
   );

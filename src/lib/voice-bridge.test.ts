@@ -420,6 +420,71 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     }
   });
 
+  it("holds the window open behind her sheet and restarts it on close", async () => {
+    finalTranscript = "read me the total";
+    const agent = vi.fn(fakeAgent());
+    const browser = new FakeBrowser();
+    attachVoiceBridge({
+      browser: browser as unknown as WebSocket,
+      key: "sheet-key",
+      clientId: "sheet-client-2",
+      metaUrl: url,
+      runAgent: agent,
+      conversation: true,
+    });
+    await vi.waitFor(() => {
+      expect(browser.frames().some((frame) => frame.type === "bridge")).toBe(
+        true,
+      );
+    });
+    const voiceTurn = (sheetOpen: boolean): void => {
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(JSON.stringify({ type: "endStream", sheetOpen }));
+    };
+    const doneCount = (): number =>
+      browser.frames().filter((frame) => frame.type === "done").length;
+    // No sheet, no window: background chatter never reaches the model.
+    voiceTurn(false);
+    await vi.waitFor(() => {
+      expect(doneCount()).toBe(1);
+    });
+    expect(agent).not.toHaveBeenCalled();
+    expect(
+      browser.frames().some((frame) => frame.type === "ignored"),
+    ).toBe(true);
+    // Sheet open on screen: the same unnamed phrase executes.
+    voiceTurn(true);
+    await vi.waitFor(() => {
+      expect(doneCount()).toBe(2);
+    });
+    expect(agent).toHaveBeenCalledTimes(1);
+    expect(
+      browser.frames().some(
+        (frame) => frame.type === "reply" && frame.text === "All set, see you soon.",
+      ),
+    ).toBe(true);
+    // The X on her sheet restarts the window: the follow-up runs sheetless.
+    browser.peerMessage(JSON.stringify({ type: "sheet-closed" }));
+    expect(
+      checkWake("and the time", "sheet-client-2", Date.now()),
+    ).toMatchObject({ execute: true, namedVale: false, gate: "ventana" });
+    // A voice close restarts it the same way.
+    browser.peerMessage(
+      JSON.stringify({ type: "dismiss", transcript: "close it" }),
+    );
+    await vi.waitFor(() => {
+      expect(doneCount()).toBe(3);
+    });
+    expect(
+      checkWake("and the time", "sheet-client-2", Date.now()),
+    ).toMatchObject({ execute: true, namedVale: false, gate: "ventana" });
+    // ...but the restarted window still expires on its own.
+    expect(
+      checkWake("and the time", "sheet-client-2", Date.now() + 46_000, false, "en")
+        .execute,
+    ).toBe(false);
+  });
+
   it("hands prior turns as history and drops nothing after a failure", async () => {
     finalTranscript = "vale, si";
     const seen: { role: string; text: string }[][] = [];

@@ -242,9 +242,11 @@ export function checkWake(
   now: number = Date.now(),
   sessionOpen = false,
   language: ValeLanguage = "en",
+  sheetOpen = false,
 ): WakeVerdict {
   const since = attentionSince.get(clientId);
-  const inWindow = since !== undefined && now - since < windowMs(sessionOpen);
+  const inWindow =
+    sheetOpen || (since !== undefined && now - since < windowMs(sessionOpen));
   const sinceReplyS = since === undefined ? null : (now - since) / 1000;
   // A phrase that names Vale is never discarded for language: the name
   // itself says nothing about the language, and the selector owns the
