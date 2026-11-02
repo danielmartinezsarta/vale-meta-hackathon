@@ -178,6 +178,7 @@ export function tryParseControl(
   | { type: "vote"; vote: "yes" | "no" }
   | { type: "dismiss"; transcript: string | null }
   | { type: "spoken" }
+  | { type: "sheet-closed" }
   | null {
   let text: string | null = null;
   if (typeof data === "string") {
@@ -219,6 +220,7 @@ export function tryParseControl(
     if (message.type === "wake") return { type: "wake" };
     // Her real last word: the window counts from here, not the send time.
     if (message.type === "spoken") return { type: "spoken" };
+    if (message.type === "sheet-closed") return { type: "sheet-closed" };
     if (
       message.type === "vote" &&
       (message.vote === "yes" || message.vote === "no")
@@ -1005,7 +1007,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             return;
           }
           const sessionOpen = getOpenSession(getDb()) !== null;
-          const verdict = checkWake(finalText, clientId, Date.now(), sessionOpen, turnLanguage);
+          const verdict = checkWake(
+            finalText,
+            clientId,
+            Date.now(),
+            sessionOpen,
+            turnLanguage,
+            turnStats.sheetOpen === true,
+          );
           if (!verdict.execute) {
             // Background chatter without the name: silent discard.
             logTurn({
@@ -1163,9 +1172,16 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         return;
       }
       // Spoken sheet close ("close it", "cierra la agenda"): the card goes
-      // away with no model call and no spoken reply.
+      // away with no model call and no spoken reply. Closing restarts the
+      // window like any executed turn.
       if (control.type === "dismiss") {
+        noteAttention(clientId);
         dismissTurn(control.transcript ?? "");
+        return;
+      }
+      // The X on a sheet Vale opened: closing restarts the window too.
+      if (control.type === "sheet-closed") {
+        noteAttention(clientId);
         return;
       }
       // Only endStream reaches here: keep what the client saw this turn.

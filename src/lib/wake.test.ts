@@ -312,6 +312,22 @@ describe("shouldCutPhrase (client-side early cut)", () => {
   });
 });
 
+describe("sheet-open window (reading a sheet keeps her listening)", () => {
+  it("executes an unnamed turn while a sheet Vale opened is on screen", () => {
+    const at = 1_000_000;
+    expect(
+      checkWake("how much is this", "ip-sheet-1", at, false, "en", true),
+    ).toMatchObject({ execute: true, namedVale: false, gate: "ventana" });
+  });
+
+  it("ignores the same turn with no sheet and a closed window", () => {
+    const at = 1_000_000;
+    expect(
+      checkWake("how much is this", "ip-sheet-2", at, false, "en", false),
+    ).toMatchObject({ execute: false, gate: "ignorado" });
+  });
+});
+
 describe("isCloseSheetIntent (spoken sheet close)", () => {
   it("catches the short close orders in both languages", () => {
     expect(isCloseSheetIntent("close it")).toBe(true);
