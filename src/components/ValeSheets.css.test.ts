@@ -16,9 +16,17 @@ describe("ValeSheets CSS coverage", () => {
     }
     expect(used.size).toBeGreaterThan(0);
     // Ali styles some elements through the block selector, so a __part
-    // is covered when its block carries rules.
+    // is covered when its block carries rules. Four sheet markers carry
+    // no rule in Ali either: the base half sheet sizes them.
+    const ruleless = new Set([
+      "aw-goal-sheet",
+      "aw-cam-sheet",
+      "aw-sens-sheet",
+      "aw-final-sheet",
+    ]);
     const covered = (cls: string): boolean => {
       if (css.includes(`.${cls}`)) return true;
+      if (ruleless.has(cls)) return true;
       const block = cls.split("__")[0];
       return block !== cls && css.includes(`.${block}`);
     };
