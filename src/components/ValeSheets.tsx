@@ -767,20 +767,36 @@ function SummaryBody({ data }: { data: SessionSummaryData }) {
   );
 }
 
+/** The sheet mounts only while its widget is set, so mount means open. */
+function useSheetOpen(): boolean {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (typeof requestAnimationFrame !== "undefined") {
+      const id = requestAnimationFrame(() => setOpen(true));
+      return () => cancelAnimationFrame(id);
+    }
+    const id = window.setTimeout(() => setOpen(true), 0);
+    return () => window.clearTimeout(id);
+  }, []);
+  return open;
+}
+
 /** Ali's sheet per widget kind; confirm keeps the legacy card elsewhere. */
 export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetCallbacks) {
   const { onClose, onAccept, onReject, onChoose, onVisit } = callbacks;
+  const open = useSheetOpen();
+  const sheet = (base: string): string => (open ? `${base} is-open` : base);
   switch (widget.kind) {
     case "client_card":
       return (
-        <section className="aw-sheet aw-card-sheet" role="dialog" aria-label="Client card">
+        <section className={sheet("aw-sheet aw-card-sheet")} role="dialog" aria-label="Client card">
           <SheetHead icon={PERSON_ICON} title={widget.title} closeClass="aw-card-close" closeLabel="Close client card" onClose={onClose} />
           <CardBody data={widget.data} onVisit={onVisit} />
         </section>
       );
     case "goal":
       return (
-        <section className="aw-sheet aw-goal-sheet" role="dialog" aria-label="Monthly goal">
+        <section className={sheet("aw-sheet aw-goal-sheet")} role="dialog" aria-label="Monthly goal">
           <Grab />
           <div className="aw-sheet__head">
             <span className="aw-sheet__ic" aria-hidden="true">
@@ -797,7 +813,7 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
       );
     case "camera_save_as":
       return (
-        <section className="aw-sheet aw-cam-sheet" role="dialog" aria-label="Save photo as">
+        <section className={sheet("aw-sheet aw-cam-sheet")} role="dialog" aria-label="Save photo as">
           <Grab />
           <div className="aw-sheet__head">
             <span className="aw-sheet__ic" aria-hidden="true">
@@ -830,7 +846,7 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
       );
     case "photos":
       return (
-        <section className="aw-sheet aw-pics-sheet" role="dialog" aria-label="Photos">
+        <section className={sheet("aw-sheet aw-pics-sheet")} role="dialog" aria-label="Photos">
           <Grab />
           <SheetHead icon={PHOTOS_ICON} title={widget.title} tag={<ClientFileTag />} closeClass="aw-pics-close" closeLabel="Close photos" onClose={onClose} />
           <PhotosBody data={widget.data} />
@@ -838,7 +854,7 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
       );
     case "health_note":
       return (
-        <section className="aw-sheet aw-sens-sheet" role="dialog" aria-label="Health note">
+        <section className={sheet("aw-sheet aw-sens-sheet")} role="dialog" aria-label="Health note">
           <Grab />
           <SheetHead title={widget.title} tag={<LockTag />} />
           <SensFields rows={[{ label: "Note", value: widget.data.text, wide: true }, { label: "Client", value: widget.data.client }]} />
@@ -846,7 +862,7 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
       );
     case "note":
       return (
-        <section className="aw-sheet aw-sens-sheet" role="dialog" aria-label="Note saved">
+        <section className={sheet("aw-sheet aw-sens-sheet")} role="dialog" aria-label="Note saved">
           <Grab />
           <SheetHead title={widget.title} />
           <SensFields rows={[{ label: "Note", value: widget.data.text, wide: true }, { label: "Client", value: widget.data.client }]} />
@@ -854,7 +870,7 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
       );
     case "price":
       return (
-        <section className="aw-sheet aw-sens-sheet" role="dialog" aria-label="Price">
+        <section className={sheet("aw-sheet aw-sens-sheet")} role="dialog" aria-label="Price">
           <Grab />
           <SheetHead title={widget.title} tag={<LockTag />} />
           <SensFields
@@ -869,7 +885,7 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
       );
     case "final_photo_confirm":
       return (
-        <section className="aw-sheet aw-final-sheet" role="dialog" aria-label="Save final photo">
+        <section className={sheet("aw-sheet aw-final-sheet")} role="dialog" aria-label="Save final photo">
           <Grab />
           <div className="aw-sheet__head">
             <span className="aw-sheet__ic" aria-hidden="true">
@@ -890,7 +906,7 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
       );
     case "final_result":
       return (
-        <section className="aw-sheet aw-result-sheet" role="dialog" aria-label="Final result">
+        <section className={sheet("aw-sheet aw-result-sheet")} role="dialog" aria-label="Final result">
           <div className="aw-sheet__head">
             <span className="aw-sheet__ic" aria-hidden="true">
               {CHECK_PLAIN_ICON}
@@ -924,7 +940,7 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
       );
     case "booked":
       return (
-        <section className="aw-sheet aw-booked" role="status" aria-label="Appointment booked">
+        <section className={sheet("aw-sheet aw-booked")} role="status" aria-label="Appointment booked">
           <Grab />
           <div className="aw-sheet__head">
             <span className="aw-booked__check" aria-hidden="true">
@@ -954,13 +970,15 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
       );
     case "session_summary":
       return (
-        <section className="aw-sheet aw-summary-sheet" role="dialog" aria-label="Session summary">
+        <section className={sheet("aw-sheet aw-summary-sheet")} role="dialog" aria-label="Session summary">
           <SheetHead icon={SUMMARY_ICON} title={widget.title} />
           <SummaryBody data={widget.data} />
         </section>
       );
     case "good_job":
     case "confirm":
+      return null;
+    default:
       return null;
   }
 }

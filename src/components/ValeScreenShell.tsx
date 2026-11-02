@@ -150,7 +150,7 @@ export function ValeScreenShell({
         ) : (
           <>
             {widget.kind === "goal" && (
-              <div className="aw-scrim" role="presentation" onClick={onCloseWidget} />
+              <div className="aw-scrim is-open" role="presentation" onClick={onCloseWidget} />
             )}
             <ValeSheets widget={widget} onClose={onCloseWidget} {...sheetCallbacks} />
           </>
