@@ -6,7 +6,7 @@ import { PhoneFrame } from "@/components/PhoneFrame";
 import { valeVars, type HomeMode } from "@/lib/vale-theme";
 import type { ValeState } from "@/lib/vale-state";
 import type { Widget } from "@/lib/widget";
-import { ValeSheets, type SheetCallbacks } from "@/components/ValeSheets";
+import { CareOverlay, ValeSheets, type SheetCallbacks } from "@/components/ValeSheets";
 import { WidgetSheet } from "@/components/WidgetSheet";
 import { WidgetCard } from "@/components/WidgetCard";
 import type { ValeLanguage } from "@/lib/vale-language";
@@ -116,10 +116,13 @@ export function ValeScreenShell({
 
       <div className={styles.stage}>
         <VoiceRobot state={robotState} level={level} className={styles.robot} />
-        <div className={styles.cap}>{title}</div>
-        <div className={styles.sub}>{subtitle}</div>
+        <div className={styles.cap}>{widget?.kind === "good_job" ? "Good job!" : title}</div>
+        {widget?.kind !== "good_job" && <div className={styles.sub}>{subtitle}</div>}
       </div>
 
+      {widget?.kind === "good_job" ? (
+        <CareOverlay />
+      ) : (
       <ol className={styles.chat} role="log" aria-label="Conversation" aria-live="polite">
         {visible.map((bubble) => (
           <li
@@ -133,6 +136,7 @@ export function ValeScreenShell({
           </li>
         ))}
       </ol>
+      )}
 
       {below}
 

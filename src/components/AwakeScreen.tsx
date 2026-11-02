@@ -8,6 +8,7 @@ import {
   ValeScreenShell,
   type ScreenBubble,
 } from "@/components/ValeScreenShell";
+import type { SheetCallbacks } from "@/components/ValeSheets";
 import styles from "./ValeScreens.module.css";
 
 /** Awake-screen bubbles: the session screen reuses the same shape. */
@@ -31,6 +32,7 @@ export function AwakeScreen({
   onSleep,
   onCloseWidget,
   onVote,
+  sheetCallbacks,
 }: {
   mode: HomeMode;
   robotState: ValeState;
@@ -45,6 +47,7 @@ export function AwakeScreen({
   onSleep: () => void;
   onCloseWidget: () => void;
   onVote: (vote: "yes" | "no") => void;
+  sheetCallbacks?: SheetCallbacks;
 }) {
   return (
     <ValeScreenShell
@@ -63,6 +66,7 @@ export function AwakeScreen({
       onToggleMute={onToggleMute}
       onSleep={onSleep}
       onCloseWidget={onCloseWidget}
+      sheetCallbacks={sheetCallbacks}
       onVote={onVote}
     />
   );

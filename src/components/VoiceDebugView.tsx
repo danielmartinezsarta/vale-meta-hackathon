@@ -2,7 +2,7 @@
 
 import { LevelMeter } from "@/components/LevelMeter";
 import { ValeBoard } from "@/components/ValeBoard";
-import { ValeSheets } from "@/components/ValeSheets";
+import { CareOverlay, ValeSheets, type SheetCallbacks } from "@/components/ValeSheets";
 import { VoiceControls } from "@/components/VoiceControls";
 import { WidgetCard } from "@/components/WidgetCard";
 import type { Board } from "@/lib/board";
@@ -53,6 +53,7 @@ export function VoiceDebugView({
   onSwitchLanguage,
   onVote,
   onCloseWidget,
+  sheetCallbacks,
 }: {
   status: DebugStatus;
   ui: UiStrings;
@@ -70,6 +71,7 @@ export function VoiceDebugView({
   onSwitchLanguage: (next: ValeLanguage) => void;
   onVote: (vote: "yes" | "no") => void;
   onCloseWidget: () => void;
+  sheetCallbacks?: SheetCallbacks;
 }) {
   return (
     <section>
@@ -169,8 +171,13 @@ export function VoiceDebugView({
 
       {widget?.kind === "confirm" ? (
         <WidgetCard widget={widget} language={language} onVote={onVote} />
+      ) : widget?.kind === "good_job" ? (
+        <>
+          <p>Good job!</p>
+          <CareOverlay />
+        </>
       ) : (
-        widget && <ValeSheets widget={widget} onClose={onCloseWidget} />
+        widget && <ValeSheets widget={widget} onClose={onCloseWidget} {...sheetCallbacks} />
       )}
 
       {notice && <p role="status">{notice}</p>}
