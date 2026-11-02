@@ -159,6 +159,7 @@ export function TapToTalk({
   const turnLostRef = useRef(0);
   const turnSrcRef = useRef(0);
   const turnEngineRef = useRef<"worklet" | "script" | null>(null);
+  const trackRateRef = useRef<number | null>(null);
   // Widget open at endStream: the sheet-loss measurement (point 10).
   const widgetRef = useRef<Widget | null>(null);
   useEffect(() => {
@@ -997,6 +998,12 @@ export function TapToTalk({
           // The live screen language rides every turn, so a switch that
           // raced the socket handshake still lands from the first speech.
           language: languageRef.current,
+          // Occlusion evidence: a covered tab gets throttled and the audio
+          // reaches the model slower than realtime.
+          visible:
+            typeof document !== "undefined" ? document.visibilityState : null,
+          actualRate: trackRateRef.current,
+          ctxState: captureRef.current?.state() ?? null,
           valeState: stateBeforeEnd,
           lostBlocks: turnLostRef.current,
           srcBlocks: turnSrcRef.current,
@@ -1570,6 +1577,14 @@ export function TapToTalk({
         },
       });
       streamRef.current = stream;
+      // Mic rate evidence: a rate surprise (headset, dock) reads here.
+      try {
+        const rate = stream.getAudioTracks()[0]?.getSettings?.()?.sampleRate;
+        trackRateRef.current =
+          typeof rate === "number" && Number.isFinite(rate) ? rate : null;
+      } catch {
+        trackRateRef.current = null;
+      }
       setStatus("live");
       void runSession(stream);
     } catch (error) {

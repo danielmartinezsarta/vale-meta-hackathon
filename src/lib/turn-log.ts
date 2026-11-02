@@ -57,6 +57,10 @@ export interface TurnLogFields {
   /** Audio thread feeding the VAD, and whether a sheet was open at end. */
   engine?: "worklet" | "script" | null;
   sheetOpen?: boolean | null;
+  /** Tab visibility at end (occluded tabs get throttled) + context rate/state. */
+  visible?: string | null;
+  actualRate?: number | null;
+  ctxState?: string | null;
   /** Muted-start room tone discarded before the gate and the model. */
   junk?: boolean;
 }
