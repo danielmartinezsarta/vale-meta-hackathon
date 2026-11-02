@@ -39,7 +39,9 @@ function silentFrame(): Int16Array {
   return new Int16Array(960).fill(0);
 }
 
-function sseVadNotice() {
+// The server no longer sends E-VAD notices; feeding one proves the client
+// ignores it instead of showing a banner.
+function sseIgnoredNotice() {
   const raw =
     `event: notice\ndata: {"message":"I didn't hear you. Speak, I'm listening.","code":"E-VAD"}\n\n` +
     "event: done\ndata: {}\n\n";
@@ -96,7 +98,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("silence-aware E-VAD banner (fix 3)", () => {
+describe("silence never banners (vad-continue removed)", () => {
   it("a discarded turn never seeds the silence banner", async () => {
     vi.stubEnv("NEXT_PUBLIC_QUIET_WINDOW_MS", "100");
     try {
@@ -165,7 +167,7 @@ describe("silence-aware E-VAD banner (fix 3)", () => {
     // so hide it and force the buffered-POST fallback path under test.
     vi.stubGlobal("WebSocket", undefined);
     // First posted turn gets a reply, later ones the E-VAD notice.
-    const bodies = [sseReply("Done."), sseVadNotice(), sseVadNotice()];
+    const bodies = [sseReply("Done."), sseIgnoredNotice(), sseIgnoredNotice()];
     const fetchMock = vi.fn(() =>
       Promise.resolve({
         ok: true,

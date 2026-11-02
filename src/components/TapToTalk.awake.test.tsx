@@ -97,7 +97,7 @@ describe("awake screen (VoiceRobot, bubbles, sheets)", () => {
     render(<TapToTalk autoStart onSleep={onSleep} />);
 
     expect(screen.getByText("Hi, I'm Vale")).toBeTruthy();
-    expect(screen.getByText("Just say it")).toBeTruthy();
+    expect(screen.getByText("Asleep")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Put Vale to sleep" }),
     ).toBeTruthy();

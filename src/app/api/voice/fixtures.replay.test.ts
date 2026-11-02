@@ -136,7 +136,7 @@ describe("fixture replay through the ASR path (B1)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("replays silence.webm: no model call, gentle notice instead", async () => {
+  it("replays silence.webm: no model call, no notice, stays silent", async () => {
     const path = join(process.cwd(), "fixtures/silence.webm");
     expect(existsSync(path)).toBe(true);
     const pcm = decodeToPcm24k(path);
@@ -149,7 +149,7 @@ describe("fixture replay through the ASR path (B1)", () => {
     const text = await postPcm(pcm);
     expect(receivedBytes).toBe(pcm.length);
     expect(receivedSilent).toBe(true);
-    expect(text).toContain("event: notice");
+    expect(text).not.toContain("event: notice");
     expect(text).not.toContain("event: reply");
     expect(modelFetch).not.toHaveBeenCalled();
     vi.unstubAllGlobals();

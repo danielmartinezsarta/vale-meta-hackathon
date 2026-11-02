@@ -585,11 +585,6 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       final: true,
       audioProcessedMs: null,
     });
-    sendJson(browser, {
-      type: "notice",
-      message: err("vad-continue"),
-      code: "E-VAD",
-    });
     logTurn({
       language: turnLanguage,
       ts: new Date(at).toISOString(),

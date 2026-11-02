@@ -521,8 +521,31 @@ export async function POST(request: Request): Promise<Response> {
         }
 
         if (!opened) {
+          // No audio arrived: log the empty turn, stay silent, no banner.
+          logTurn({
+            language,
+            ts: new Date().toISOString(),
+            transcript: "",
+            ttftMs: null,
+            inputTokens: 0,
+            outputTokens: 0,
+            audioSeconds: 0,
+            tool: null,
+            modelSkipped: true,
+            error: null,
+            ignored: false,
+            asrMs: null,
+            chain: "none",
+            key: clientKey,
+            slots: null,
+            gate: null,
+            sinceReplyS: null,
+            totalMs: 0,
+          });
+          settled = true;
+          send("done", {});
           clearTimeout(timeout);
-          finishError(turnErrorText("vad-tap", language), "E-VAD");
+          closeStream();
           return;
         }
         asr?.endTurn();
@@ -532,8 +555,7 @@ export async function POST(request: Request): Promise<Response> {
           return;
         }
         if (finalText.trim() === "") {
-          // Empty final: no model call, just the notice.
-          send("notice", { message: turnErrorText("vad-continue", language), code: "E-VAD" });
+          // Empty final: no model call, no banner; the log keeps the evidence.
           logTurn({
             language,
             ts: new Date(finalAtMs || Date.now()).toISOString(),

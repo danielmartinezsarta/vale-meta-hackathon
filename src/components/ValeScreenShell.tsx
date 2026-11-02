@@ -16,6 +16,28 @@ export interface ScreenBubble {
   id: string;
   text: string;
   from: "user" | "vale";
+  /** Interim user text, still being heard: shows "Heard you". */
+  live?: boolean;
+}
+
+/** Subtitle under her name on the awake screen: what she is doing now. */
+function stateLabel(state: ValeState, bubbles: ScreenBubble[]): string {
+  switch (state) {
+    case "speaking":
+      return "Speaking";
+    case "thinking":
+      return "Thinking";
+    case "error":
+      return "Didn't catch that";
+    case "done":
+      return "Listening";
+    case "listening":
+      return bubbles.some((bubble) => bubble.from === "user" && bubble.live)
+        ? "Heard you"
+        : "Listening";
+    default:
+      return "Asleep";
+  }
 }
 
 /**
@@ -50,7 +72,7 @@ export function ValeScreenShell({
   robotState: ValeState;
   level?: number;
   title: string;
-  subtitle: string;
+  subtitle?: string;
   bubbles: ScreenBubble[];
   widget: Widget | null;
   language: ValeLanguage;
@@ -117,7 +139,7 @@ export function ValeScreenShell({
       <div className={styles.stage}>
         <VoiceRobot state={robotState} level={level} className={styles.robot} />
         <div className={styles.cap}>{widget?.kind === "good_job" ? "Good job!" : title}</div>
-        {widget?.kind !== "good_job" && <div className={styles.sub}>{subtitle}</div>}
+        {widget?.kind !== "good_job" && <div className={styles.sub}>{subtitle ?? stateLabel(robotState, visible)}</div>}
       </div>
 
       {widget?.kind === "good_job" ? (

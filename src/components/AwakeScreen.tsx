@@ -56,7 +56,6 @@ export function AwakeScreen({
       robotState={robotState}
       level={level}
       title="Hi, I'm Vale"
-      subtitle="Just say it"
       bubbles={bubbles}
       widget={widget}
       language={language}
