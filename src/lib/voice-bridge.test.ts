@@ -252,7 +252,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     }
   });
 
-  it("answers silence with a gentle E-VAD notice and never calls the model", async () => {
+  it("answers silence with an empty turn, no notice, never calls the model", async () => {
     finalTranscript = "";
     const agent = vi.fn(fakeAgent());
     const logs: string[] = [];
@@ -271,11 +271,10 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       browser.peerMessage(JSON.stringify({ type: "endStream" }));
       await vi.waitFor(() => {
         expect(
-          browser.frames().some((frame) => frame.type === "notice"),
+          browser.frames().some((frame) => frame.type === "transcript"),
         ).toBe(true);
       });
-      const notice = browser.frames().find((frame) => frame.type === "notice");
-      expect(notice?.code).toBe("E-VAD");
+      expect(browser.frames().some((frame) => frame.type === "notice")).toBe(false);
       expect(agent).not.toHaveBeenCalled();
       const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
       expect(turns).toHaveLength(1);

@@ -145,6 +145,7 @@ export function TapToTalk({
   const controllersRef = useRef(new Set<AbortController>());
   const socketsRef = useRef(new Set<WebSocket>());
   const quietTimerRef = useRef(0);
+  const dropTimerRef = useRef(0);
   const watchdogRef = useRef(0);
   const visibilityHandlerRef = useRef<(() => void) | null>(null);
   const languageHandlerRef = useRef<((event: Event) => void) | null>(null);
@@ -153,8 +154,6 @@ export function TapToTalk({
   const repliesRef = useRef(new Map<number, string>());
   const finalReceivedRef = useRef(new Set<number>());
   const settledTurnsRef = useRef(new Set<number>());
-  // Silent streak: the banner shows only on repeated silence.
-  const silentStreakRef = useRef(0);
   // Strict turns: capture muted while she speaks, resumed ~300 ms after.
   const mutedRef = useRef(false);
   const resumeTimerRef = useRef(0);
@@ -334,6 +333,7 @@ export function TapToTalk({
   const stopSession = useCallback(() => {
     clearDoneTimer();
     clearWidgetTimer();
+    window.clearTimeout(dropTimerRef.current);
     sessionRef.current = false;
     stopSpeaking("tap");
     clearCaptureWatch();
@@ -694,21 +694,6 @@ export function TapToTalk({
         setNotice(message);
       };
 
-      const handleVadCandidate = (id: number) => {
-        const voiced = transports.get(id)?.voiced ?? 0;
-        if (voiced > 0) {
-          silentStreakRef.current = 0;
-          return;
-        }
-        silentStreakRef.current += 1;
-        if (silentStreakRef.current >= 2) {
-          showNotice(
-            turnErrorText("vad-continue", languageRef.current),
-            "E-VAD",
-          );
-        }
-      };
-
       const armQuiet = () => {
         window.clearTimeout(quietTimerRef.current);
         quietTimerRef.current = window.setTimeout(
@@ -720,7 +705,6 @@ export function TapToTalk({
             armQuiet();
             return;
           }
-          handleVadCandidate(currentId);
           // An empty turn never deletes a bubble: prune only contentless
           // rows, so history survives silence and only the trailing
           // empty row churns.
@@ -848,8 +832,6 @@ export function TapToTalk({
             }
           }
         }
-        // Voice was present: the silence streak must not bill this turn.
-        silentStreakRef.current = 0;
         removeTurn(id);
         try {
           console.log(`[cut] unaddressed phrase cut (${text.slice(0, 64)})`);
@@ -908,7 +890,6 @@ export function TapToTalk({
               // prunes contentless rows, and a row with interim text stays
               // as heard instead of blanking.
               if (message.transcript.trim() !== "") {
-                silentStreakRef.current = 0;
                 patchTurn(id, { final: message.transcript, interim: "" });
                 maybeDismissSheet(id, message.transcript);
               }
@@ -962,10 +943,7 @@ export function TapToTalk({
           }
           case "notice":
             if (typeof message.message !== "string") return;
-            if (typeof message.code === "string" && message.code === "E-VAD") {
-              handleVadCandidate(id);
-              break;
-            }
+            if (typeof message.code === "string" && message.code === "E-VAD") break;
             showNotice(
               message.message,
               typeof message.code === "string" ? message.code : null,
@@ -993,9 +971,6 @@ export function TapToTalk({
           }
           case "ignored":
             patchTurn(id, { ignored: true });
-            // Voice was heard, just not for her: a discarded turn never
-            // seeds the silence banner.
-            silentStreakRef.current = 0;
             break;
           case "done":
             transport.settled = true;
@@ -1284,7 +1259,6 @@ export function TapToTalk({
                 finalReceivedRef.current.add(id);
                 noteHeardName(transcript);
                 if (transcript.trim() !== "") {
-                  silentStreakRef.current = 0;
                   patchTurn(id, { final: transcript, interim: "" });
                   maybeDismissSheet(id, transcript);
                 }
@@ -1322,12 +1296,10 @@ export function TapToTalk({
               onWidget: (next) => handleWidget(next),
               onIgnored: () => {
               patchTurn(id, { ignored: true });
-              silentStreakRef.current = 0;
             },
               onNotice: (message, code) => {
-                // E-VAD notices pass the silence gate; anything else shows directly.
-                if (code === "E-VAD") handleVadCandidate(id);
-                else showNotice(message, code ?? null);
+                // Dropped and silent turns never banner; anything else shows.
+                if (code !== "E-VAD") showNotice(message, code ?? null);
               },
               onDone: () => {
                 controllersRef.current.delete(controller);
@@ -1600,9 +1572,12 @@ export function TapToTalk({
             // (the server only stamps attention on executed turns and replies).
             const transport = transports.get(currentId);
             if ((transport?.voiced ?? 0) * FRAME_MS < MIN_VOICED_MS) {
-              // The VAD fired, so somebody spoke: a dropped blip is heard
-              // voice, never silence toward the banner.
-              silentStreakRef.current = 0;
+              // Somebody spoke but nothing posted: say so, then listen.
+              valeStoreRef.current.set("error");
+              window.clearTimeout(dropTimerRef.current);
+              dropTimerRef.current = window.setTimeout(() => {
+                if (sessionRef.current) valeStoreRef.current.set("listening");
+              }, 2000);
               if (transport) {
                 transport.failed = true;
                 const socket = transport.socket;
@@ -1814,7 +1789,8 @@ export function TapToTalk({
     if (turn.ignored) continue;
     const text = turn.final ?? turn.interim;
     if (text.trim() !== "") {
-      bubbles.push({ id: `turn-${turn.id}-user`, text, from: "user" });
+      const live = turn.final == null && (turn.interim?.trim() ?? "") !== "";
+      bubbles.push({ id: `turn-${turn.id}-user`, text, from: "user" as const, ...(live ? { live: true as const } : {}) });
     }
     if (turn.reply?.trim()) {
       bubbles.push({ id: `turn-${turn.id}-vale`, text: turn.reply, from: "vale" });

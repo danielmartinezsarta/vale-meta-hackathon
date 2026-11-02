@@ -352,8 +352,7 @@ describe("POST /api/voice", () => {
       duplex: "half",
     });
     const text = await POST(request).then((response) => response.text());
-    expect(text).toContain("event: notice");
-    expect(text).toContain('"code":"E-VAD"');
+    expect(text).not.toContain("event: notice");
     expect(text).toContain("event: done");
     expect(text).not.toContain("event: reply");
     expect(modelFetch).not.toHaveBeenCalled();
