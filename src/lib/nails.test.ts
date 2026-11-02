@@ -157,6 +157,7 @@ describe("buildNailMosaic", () => {
       width: 256 + 128 + 256 + MOSAIC_PADDING * 4,
       height: MOSAIC_CELL_HEIGHT + MOSAIC_PADDING * 2,
       channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 1 },
     });
     expect(stub.state.layers?.map((layer) => [layer.left, layer.top])).toEqual([
       [MOSAIC_PADDING, MOSAIC_PADDING],

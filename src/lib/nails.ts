@@ -201,7 +201,16 @@ export interface SharpImage {
 }
 
 export type SharpFactory = (
-  input: Buffer | { create: { width: number; height: number; channels: number } },
+  input:
+    | Buffer
+    | {
+        create: {
+          width: number;
+          height: number;
+          channels: number;
+          background: { r: number; g: number; b: number; alpha: number };
+        };
+      },
 ) => SharpImage;
 
 function mosaicError(code: string, message: string): Error {
@@ -270,6 +279,7 @@ export async function buildNailMosaic(
       width: canvasWidth,
       height: MOSAIC_CELL_HEIGHT + MOSAIC_PADDING * 2,
       channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 1 },
     },
   })
     .composite(layers)
