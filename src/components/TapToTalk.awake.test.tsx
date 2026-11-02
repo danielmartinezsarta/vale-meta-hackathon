@@ -30,7 +30,7 @@ function sseBody(transcript: string, reply: string, widget = false): {
     `event: interim\ndata: {"transcript":"${transcript.slice(0, 5)}"}\n\n` +
     `event: final\ndata: {"transcript":"${transcript}","audioProcessedMs":800}\n\n` +
     (widget
-      ? `event: widget\ndata: {"widget":{"kind":"note","title":"Note saved","lines":[],"size":"half"}}\n\n`
+      ? `event: widget\ndata: {"widget":{"kind":"note","title":"Note saved","size":"half","data":{"text":"Likes neon colors","client":"David"}}}\n\n`
       : "") +
     `event: reply\ndata: {"text":${JSON.stringify(reply)}}\n\n` +
     "event: done\ndata: {}\n\n";
@@ -201,14 +201,15 @@ describe("awake screen (VoiceRobot, bubbles, sheets)", () => {
     expect(onSleep).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the tool widget in a half sheet and closes it", async () => {
+  it("opens the tool widget and closes it on a spoken close order", async () => {
     stubGetUserMedia();
-    driveTurns(["note this"], ["saved"], true);
+    driveTurns(["note this", "close it"], ["saved", "gone"], true);
     render(<TapToTalk autoStart />);
 
-    const sheet = await screen.findByRole("dialog", { name: "Note saved" });
-    expect(sheet.getAttribute("data-size")).toBe("half");
-    fireEvent.click(screen.getByRole("button", { name: "Close Note saved" }));
-    expect(screen.queryByRole("dialog", { name: "Note saved" })).toBeNull();
+    await screen.findByText("Note saved");
+    expect(screen.getByText("Likes neon colors")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.queryByText("Note saved")).toBeNull();
+    });
   });
 });

@@ -1693,6 +1693,7 @@ export function TapToTalk({
         onToggleEngine={toggleEngine}
         onSwitchLanguage={switchLanguage}
         onVote={(vote) => castVoteRef.current(vote)}
+        onCloseWidget={closeWidgetByHand}
       />
     );
   }

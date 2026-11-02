@@ -5,6 +5,7 @@ import {
   Josefin_Sans,
 } from "next/font/google";
 import "./globals.css";
+import "../components/vale-sheets.css";
 
 const wordmark = Josefin_Sans({
   weight: ["300"],

@@ -2,6 +2,7 @@
 
 import { LevelMeter } from "@/components/LevelMeter";
 import { ValeBoard } from "@/components/ValeBoard";
+import { ValeSheets } from "@/components/ValeSheets";
 import { VoiceControls } from "@/components/VoiceControls";
 import { WidgetCard } from "@/components/WidgetCard";
 import type { Board } from "@/lib/board";
@@ -51,6 +52,7 @@ export function VoiceDebugView({
   onToggleEngine,
   onSwitchLanguage,
   onVote,
+  onCloseWidget,
 }: {
   status: DebugStatus;
   ui: UiStrings;
@@ -67,6 +69,7 @@ export function VoiceDebugView({
   onToggleEngine: () => void;
   onSwitchLanguage: (next: ValeLanguage) => void;
   onVote: (vote: "yes" | "no") => void;
+  onCloseWidget: () => void;
 }) {
   return (
     <section>
@@ -164,8 +167,10 @@ export function VoiceDebugView({
 
       <ValeBoard board={board} language={language} />
 
-      {widget && (
+      {widget?.kind === "confirm" ? (
         <WidgetCard widget={widget} language={language} onVote={onVote} />
+      ) : (
+        widget && <ValeSheets widget={widget} onClose={onCloseWidget} />
       )}
 
       {notice && <p role="status">{notice}</p>}

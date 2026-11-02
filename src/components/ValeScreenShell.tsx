@@ -6,6 +6,7 @@ import { PhoneFrame } from "@/components/PhoneFrame";
 import { valeVars, type HomeMode } from "@/lib/vale-theme";
 import type { ValeState } from "@/lib/vale-state";
 import type { Widget } from "@/lib/widget";
+import { ValeSheets, type SheetCallbacks } from "@/components/ValeSheets";
 import { WidgetSheet } from "@/components/WidgetSheet";
 import { WidgetCard } from "@/components/WidgetCard";
 import type { ValeLanguage } from "@/lib/vale-language";
@@ -42,6 +43,7 @@ export function ValeScreenShell({
   onSleep,
   onCloseWidget,
   onVote,
+  sheetCallbacks,
 }: {
   frameClassName?: string;
   mode: HomeMode;
@@ -62,6 +64,7 @@ export function ValeScreenShell({
   onSleep: () => void;
   onCloseWidget: () => void;
   onVote: (vote: "yes" | "no") => void;
+  sheetCallbacks?: SheetCallbacks;
 }) {
   const visible = bubbles.slice(-3);
   const vars = valeVars(mode);
@@ -135,11 +138,19 @@ export function ValeScreenShell({
 
       {overlays}
 
-      {widget && (
-        <WidgetSheet size={widget.size} onClose={onCloseWidget} label={widget.title}>
-          <WidgetCard widget={widget} language={language} onVote={onVote} />
-        </WidgetSheet>
-      )}
+      {widget &&
+        (widget.kind === "confirm" ? (
+          <WidgetSheet size={widget.size} onClose={onCloseWidget} label={widget.title}>
+            <WidgetCard widget={widget} language={language} onVote={onVote} />
+          </WidgetSheet>
+        ) : (
+          <>
+            {widget.kind === "goal" && (
+              <div className="aw-scrim" role="presentation" onClick={onCloseWidget} />
+            )}
+            <ValeSheets widget={widget} onClose={onCloseWidget} {...sheetCallbacks} />
+          </>
+        ))}
 
       {notice && <p role="status">{notice}</p>}
 
