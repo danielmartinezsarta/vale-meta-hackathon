@@ -327,6 +327,37 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     }
   });
 
+  it("adopts the endStream language with no prior language frame", async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
+      logs.push(String(line));
+    });
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser);
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      // No language frame was ever sent: the turn still lands in Spanish.
+      browser.peerMessage(JSON.stringify({ type: "endStream", language: "es" }));
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+          true,
+        );
+      });
+      const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+      expect(turns).toHaveLength(1);
+      expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+        language: "es",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("hands prior turns as history and drops nothing after a failure", async () => {
     finalTranscript = "vale, si";
     const seen: { role: string; text: string }[][] = [];
@@ -1422,10 +1453,11 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
     expect(tryParseControl(JSON.stringify({ type: "endStream" }))).toEqual({
       type: "endStream",
       stats: emptyStats,
+      language: null,
     });
     expect(
       tryParseControl(Buffer.from(JSON.stringify({ type: "endStream" }))),
-    ).toEqual({ type: "endStream", stats: emptyStats });
+    ).toEqual({ type: "endStream", stats: emptyStats, language: null });
     expect(
       tryParseControl(
         JSON.stringify({
@@ -1451,6 +1483,7 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
         engine: null,
         sheetOpen: null,
       },
+      language: null,
     });
     expect(
       tryParseControl(
@@ -1463,7 +1496,7 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
           srcBlocks: -2,
         }),
       ),
-    ).toEqual({ type: "endStream", stats: emptyStats });
+    ).toEqual({ type: "endStream", stats: emptyStats, language: null });
     expect(tryParseControl(Buffer.from([0, 1, 2, 3]))).toBeNull();
     expect(tryParseControl('{"type":"other"}')).toBeNull();
     expect(tryParseControl(null)).toBeNull();

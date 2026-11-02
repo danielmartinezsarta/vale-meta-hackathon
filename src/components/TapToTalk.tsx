@@ -857,6 +857,9 @@ export function TapToTalk({
           peakLevel: turnPeakRef.current,
           voicedMs: (transport?.voiced ?? 0) * FRAME_MS,
           mutedMs: snapMutedMs(),
+          // The live screen language rides every turn, so a switch that
+          // raced the socket handshake still lands from the first speech.
+          language: languageRef.current,
           valeState: stateBeforeEnd,
           lostBlocks: turnLostRef.current,
           srcBlocks: turnSrcRef.current,
@@ -1350,7 +1353,7 @@ export function TapToTalk({
             convSocket.send(JSON.stringify({ type: "language", language: next }));
           }
         } catch {
-          /* the next turn carries the language frame instead */
+          /* the next endStream carries the fresh language instead */
         }
       };
       languageHandlerRef.current = onLanguage;
