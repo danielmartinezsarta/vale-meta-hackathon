@@ -176,7 +176,7 @@ export function languageMismatch(
   return content.some((token) => markers.has(token));
 }
 
-export type WakeGate = "nombre" | "ventana" | "ignorado" | "idioma";
+export type WakeGate = "nombre" | "ventana" | "ignorado" | "idioma" | "cierre";
 
 export interface WakeVerdict {
   execute: boolean;
@@ -184,6 +184,50 @@ export interface WakeVerdict {
   gate: WakeGate;
   /** Seconds since Vale's last reply (the previous executed turn). */
   sinceReplyS: number | null;
+}
+
+/** Spoken sheet close, either language: "close it", "cierra la agenda". */
+const CLOSE_SHEET_PHRASES = [
+  "close it",
+  "close that",
+  "close the agenda",
+  // ASR hears the Spanglish "de" for "the" (Daniel's own turn).
+  "close de agenda",
+  "close the sheet",
+  // Apostrophes never survive normalization ("that's" reads "thats").
+  "thanks thats all",
+  "thats all thanks",
+  "cierra la agenda",
+  "cierra eso",
+  "cierrala",
+  "gracias eso es todo",
+  "eso es todo gracias",
+];
+
+/**
+ * A short order to close the open sheet: no model, no spoken reply. Longer
+ * turns ride to the model untouched, so a compound order that mentions
+ * closing among other asks is never swallowed here.
+ */
+export const CLOSE_SHEET_WORDS = 8;
+
+export function isCloseSheetIntent(transcript: string): boolean {
+  const words = transcript
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word !== "");
+  if (words.length === 0 || words.length > CLOSE_SHEET_WORDS) return false;
+  const flat = ` ${normalizeWakeText(transcript)} `;
+  // The apostrophe never survives normalization ("don't" reads "dont").
+  if (
+    flat.includes(" dont close") ||
+    flat.includes(" do not close") ||
+    flat.includes(" no cierres") ||
+    flat.includes(" no la cierres")
+  ) {
+    return false;
+  }
+  return CLOSE_SHEET_PHRASES.some((phrase) => flat.includes(` ${phrase} `));
 }
 
 /**

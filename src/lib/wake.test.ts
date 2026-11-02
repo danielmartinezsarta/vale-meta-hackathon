@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   checkWake,
+  isCloseSheetIntent,
   isGreetingOnly,
   isUndoIntent,
   languageMismatch,
@@ -308,5 +309,27 @@ describe("shouldCutPhrase (client-side early cut)", () => {
     expect(
       shouldCutPhrase({ text, sessionOpen: false, windowOpen: true }),
     ).toBe(false);
+  });
+});
+
+describe("isCloseSheetIntent (spoken sheet close)", () => {
+  it("catches the short close orders in both languages", () => {
+    expect(isCloseSheetIntent("close it")).toBe(true);
+    expect(isCloseSheetIntent("Vale, close the agenda")).toBe(true);
+    expect(isCloseSheetIntent("Ok vale, close de agenda")).toBe(true);
+    expect(isCloseSheetIntent("thanks, that's all")).toBe(true);
+    expect(isCloseSheetIntent("cierra la agenda")).toBe(true);
+    expect(isCloseSheetIntent("ciérrala, por favor")).toBe(true);
+    expect(isCloseSheetIntent("gracias, eso es todo")).toBe(true);
+  });
+
+  it("leaves compound orders and negations to the model", () => {
+    expect(
+      isCloseSheetIntent("close the agenda and book Ana for tomorrow at five"),
+    ).toBe(false);
+    expect(isCloseSheetIntent("don't close it yet")).toBe(false);
+    expect(isCloseSheetIntent("no la cierres todavía")).toBe(false);
+    expect(isCloseSheetIntent("book Ana for tomorrow")).toBe(false);
+    expect(isCloseSheetIntent("")).toBe(false);
   });
 });

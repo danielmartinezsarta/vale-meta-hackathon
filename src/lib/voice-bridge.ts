@@ -163,6 +163,7 @@ export function tryParseControl(
   | { type: "wake" }
   | { type: "client-state"; state: Record<string, unknown> }
   | { type: "vote"; vote: "yes" | "no" }
+  | { type: "dismiss"; transcript: string | null }
   | null {
   let text: string | null = null;
   if (typeof data === "string") {
@@ -178,6 +179,7 @@ export function tryParseControl(
       language?: unknown;
       client?: unknown;
       state?: unknown;
+      transcript?: unknown;
       vote?: unknown;
       peakLevel?: unknown;
       voicedMs?: unknown;
@@ -203,6 +205,13 @@ export function tryParseControl(
       (message.vote === "yes" || message.vote === "no")
     ) {
       return { type: "vote", vote: message.vote };
+    }
+    if (message.type === "dismiss") {
+      return {
+        type: "dismiss",
+        transcript:
+          typeof message.transcript === "string" ? message.transcript : null,
+      };
     }
     if (
       message.type === "client-state" &&
@@ -572,6 +581,48 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       totalMs: 0,
     });
     sendJson(browser, { type: "done" });
+    finish(1000, "turn-complete");
+  };
+
+  // Spoken sheet close: the in-flight Meta turn is dropped before any
+  // reply, and the turn logs as a close (gate cierre), never as an error.
+  // A reply that already ran wins: its done already moved the turn on.
+  const dismissTurn = (transcript: string): void => {
+    if (settled || agentRan) return;
+    metaGen += 1;
+    try {
+      meta.close();
+    } catch {
+      /* already closed */
+    }
+    clearRetry();
+    clearTimeout(timer);
+    logTurn({
+      language: turnLanguage,
+      ts: new Date().toISOString(),
+      transcript,
+      ttftMs: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      audioSeconds: bufferedBytes / 48000,
+      tool: null,
+      modelSkipped: true,
+      error: null,
+      ignored: true,
+      asrMs: null,
+      chain: "none",
+      key: clientId,
+      slots: slotSnapshot(),
+      gate: "cierre",
+      sinceReplyS: null,
+      totalMs: null,
+    });
+    sendJson(browser, { type: "ignored" });
+    sendJson(browser, { type: "done" });
+    if (conversation) {
+      beginNextTurn();
+      return;
+    }
     finish(1000, "turn-complete");
   };
 
@@ -1074,6 +1125,12 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       // Touch on a confirm card: the exact equivalent of a spoken yes/no.
       if (control.type === "vote") {
         void answerVote(control.vote);
+        return;
+      }
+      // Spoken sheet close ("close it", "cierra la agenda"): the card goes
+      // away with no model call and no spoken reply.
+      if (control.type === "dismiss") {
+        dismissTurn(control.transcript ?? "");
         return;
       }
       // Only endStream reaches here: keep what the client saw this turn.

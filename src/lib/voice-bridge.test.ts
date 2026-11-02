@@ -358,6 +358,46 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     }
   });
 
+  it("closes the sheet on dismiss with no model call", async () => {
+    const agent = vi.fn(fakeAgent());
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
+      logs.push(String(line));
+    });
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser, agent);
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(
+        JSON.stringify({ type: "dismiss", transcript: "close the agenda" }),
+      );
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+          true,
+        );
+      });
+      expect(
+        browser.frames().some((frame) => frame.type === "ignored"),
+      ).toBe(true);
+      expect(agent).not.toHaveBeenCalled();
+      const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+      expect(turns).toHaveLength(1);
+      expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+        transcript: "close the agenda",
+        ignored: true,
+        modelSkipped: true,
+        gate: "cierre",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("hands prior turns as history and drops nothing after a failure", async () => {
     finalTranscript = "vale, si";
     const seen: { role: string; text: string }[][] = [];
