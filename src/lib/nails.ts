@@ -45,7 +45,7 @@ export function parseNailBoxes(text: string): NailBox[] {
 export const NAIL_DESCRIBE_INSTRUCTIONS = [
   "You describe nail designs from photos for a nail technician.",
   "Describe ONLY the visible design and finish on the given nail:",
-  "colors, lemon-lime drawing, matte or glossy appearance.",
+  "colors, finish, and nail art.",
   "Never promise or name exact materials or products.",
   "Reply in one or two short sentences. Plain text only.",
 ].join(" ");
@@ -54,10 +54,14 @@ export function buildNailDescribePrompt(index: number, box: NailBox): string {
   return [
     `Nail ${index + 1}, inside box x1=${box.x1} y1=${box.y1} x2=${box.x2} y2=${box.y2} (image ${box.w}x${box.h}).`,
     "Describe ONLY the visible design and finish on this nail: colors,",
-    "lemon-lime drawing, matte or glossy appearance.",
+    "finish, and nail art.",
     "Do not promise or name exact materials.",
   ].join(" ");
 }
+
+/** One Spark call over the cropped-nail mosaic; never exact material. */
+export const MOSAIC_DESCRIBE_PROMPT =
+  "Describe the nail design across these cropped nails: colors, finish, and nail art, without naming materials or products. Reply in one or two short sentences.";
 
 export interface NailFinding {
   box: NailBox;
@@ -174,6 +178,128 @@ export async function segmentNails(
     fetchFn,
   );
   return parseNailBoxes(text).slice(0, MAX_NAILS);
+}
+
+export const MOSAIC_CELL_HEIGHT = 128;
+export const MOSAIC_PADDING = 8;
+
+/** Minimal sharp surface the mosaic uses; tests pass a stub for this. */
+export interface SharpRegion {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export interface SharpImage {
+  metadata(): Promise<{ width?: number; height?: number }>;
+  extract(region: SharpRegion): SharpImage;
+  resize(width: number, height: number): SharpImage;
+  composite(images: { input: Buffer; left: number; top: number }[]): SharpImage;
+  png(): SharpImage;
+  toBuffer(): Promise<Buffer>;
+}
+
+export type SharpFactory = (
+  input: Buffer | { create: { width: number; height: number; channels: number } },
+) => SharpImage;
+
+function mosaicError(code: string, message: string): Error {
+  const error = new Error(message);
+  (error as NodeJS.ErrnoException).code = code;
+  return error;
+}
+
+/** Lazily imported so tests can stub it and serverless pays only on use. */
+async function loadSharp(): Promise<SharpFactory> {
+  try {
+    const mod = (await import("sharp")) as unknown as {
+      default?: SharpFactory;
+    };
+    const factory = mod.default ?? (mod as unknown as SharpFactory);
+    if (typeof factory !== "function") throw new Error("sharp export is not a factory");
+    return factory;
+  } catch {
+    throw mosaicError("E-NO-SHARP", "sharp is not available for the nail mosaic.");
+  }
+}
+
+/**
+ * One PNG tiling the boxed nails side by side with small padding on black.
+ * Every crop is scaled to the same cell height; boxes scale from the SAM
+ * image size to the stored photo size. Pass a stub factory in tests.
+ */
+export async function buildNailMosaic(
+  photo: Buffer,
+  boxes: NailBox[],
+  sharpImpl?: SharpFactory,
+): Promise<Buffer> {
+  const sharp = sharpImpl ?? (await loadSharp());
+  const meta = await sharp(photo).metadata();
+  const imgW = meta.width ?? 0;
+  const imgH = meta.height ?? 0;
+  if (imgW <= 0 || imgH <= 0) throw mosaicError("E-BAD-PHOTO", "Photo has no readable size.");
+  const cells = boxes.map((box) => {
+    const scaleX = box.w > 0 ? imgW / box.w : 1;
+    const scaleY = box.h > 0 ? imgH / box.h : 1;
+    const left = Math.min(Math.max(Math.round(box.x1 * scaleX), 0), imgW - 1);
+    const top = Math.min(Math.max(Math.round(box.y1 * scaleY), 0), imgH - 1);
+    const width = Math.min(Math.max(Math.round((box.x2 - box.x1) * scaleX), 1), imgW - left);
+    const height = Math.min(Math.max(Math.round((box.y2 - box.y1) * scaleY), 1), imgH - top);
+    return { left, top, width, height, cellWidth: Math.max(1, Math.round((width * MOSAIC_CELL_HEIGHT) / height)) };
+  });
+  const crops: Buffer[] = [];
+  for (const cell of cells) {
+    crops.push(
+      await sharp(photo)
+        .extract({ left: cell.left, top: cell.top, width: cell.width, height: cell.height })
+        .resize(cell.cellWidth, MOSAIC_CELL_HEIGHT)
+        .toBuffer(),
+    );
+  }
+  const canvasWidth =
+    cells.reduce((sum, cell) => sum + cell.cellWidth, 0) + MOSAIC_PADDING * (cells.length + 1);
+  let x = MOSAIC_PADDING;
+  const layers = crops.map((input, index) => {
+    const layer = { input, left: x, top: MOSAIC_PADDING };
+    x += cells[index].cellWidth + MOSAIC_PADDING;
+    return layer;
+  });
+  return sharp({
+    create: {
+      width: canvasWidth,
+      height: MOSAIC_CELL_HEIGHT + MOSAIC_PADDING * 2,
+      channels: 4,
+    },
+  })
+    .composite(layers)
+    .png()
+    .toBuffer();
+}
+
+/** Spark describes the mosaic design once; never exact material. */
+export async function describeMosaic(
+  key: string,
+  mosaicPng: Buffer,
+  fetchFn: typeof fetch = fetch,
+): Promise<string> {
+  const { text } = await postJson(
+    key,
+    {
+      model: AGENT_MODEL,
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: MOSAIC_DESCRIBE_PROMPT },
+            { type: "input_image", image_url: `data:image/png;base64,${mosaicPng.toString("base64")}` },
+          ],
+        },
+      ],
+    },
+    fetchFn,
+  );
+  return text.trim();
 }
 
 /** Spark describes design/finish for one nail; never exact material. */
