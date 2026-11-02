@@ -69,7 +69,7 @@ function driveTurns(
       window.setTimeout(fireNext, 10);
     };
     window.setTimeout(fireNext, 0);
-    return { stop: () => {}, state: () => "running" };
+    return { stop: () => {}, state: () => "running", engine: () => "script" as const };
   });
   const fetchMock = vi.fn((..._args: unknown[]) => {
     const call = fetchMock.mock.calls.length;

@@ -25,7 +25,7 @@ function stubSession() {
       onSpeechStart: callbacks.onSpeechStart,
       onSpeechEnd: callbacks.onSpeechEnd,
     };
-    return { stop: () => {}, state: () => "running" };
+    return { stop: () => {}, state: () => "running", engine: () => "script" as const };
   });
   vi.stubGlobal("navigator", {
     mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },

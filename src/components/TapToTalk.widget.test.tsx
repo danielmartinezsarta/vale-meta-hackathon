@@ -51,6 +51,7 @@ function stubSessionOnce() {
   mockStartCapture.mockImplementation(() => ({
     stop: () => {},
     state: () => "running",
+      engine: () => "script" as const,
   }));
 }
 

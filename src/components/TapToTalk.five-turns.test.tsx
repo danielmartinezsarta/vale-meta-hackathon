@@ -63,7 +63,7 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
         window.setTimeout(fireNext, 10);
       };
       window.setTimeout(fireNext, 0);
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
     const script: [string, string][] = [

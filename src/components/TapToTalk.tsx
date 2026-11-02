@@ -142,6 +142,12 @@ export function TapToTalk({
   const turnMutedMsRef = useRef(0);
   const turnLostRef = useRef(0);
   const turnSrcRef = useRef(0);
+  const turnEngineRef = useRef<"worklet" | "script" | null>(null);
+  // Widget open at endStream: the sheet-loss measurement (point 10).
+  const widgetRef = useRef<Widget | null>(null);
+  useEffect(() => {
+    widgetRef.current = widget;
+  }, [widget]);
   // Single source of truth for what Vale is doing; the indicator mirrors it.
   const valeStoreRef = useRef(createValeState());
   const [valeUiState, setValeUiState] = useState<ValeState>("idle");
@@ -691,6 +697,10 @@ export function TapToTalk({
                 }
               }
             }
+            // Settled turns never reconnect: drop the buffered frames so a
+            // long session never grows past the live turn (GC pressure was
+            // raising main-thread load and lostBlocks over minutes).
+            transports.delete(id);
             settledTurnsRef.current.add(id);
             pruneIfEmpty(id);
             settleToListening();
@@ -836,6 +846,8 @@ export function TapToTalk({
           valeState: valeStoreRef.current.get(),
           lostBlocks: turnLostRef.current,
           srcBlocks: turnSrcRef.current,
+          engine: turnEngineRef.current,
+          sheetOpen: widgetRef.current !== null,
         });
         if (transport) transport.endPayload = endPayload;
         if (
@@ -976,6 +988,7 @@ export function TapToTalk({
               onDone: () => {
                 controllersRef.current.delete(controller);
                 if (!sessionRef.current) return;
+                transports.delete(id);
                 settledTurnsRef.current.add(id);
                 pruneIfEmpty(id);
                 settleToListening();
@@ -1088,6 +1101,8 @@ export function TapToTalk({
       const snapshotState = (capture: string): Record<string, unknown> => ({
         capture,
         audio: captureRef.current?.state() ?? "unknown",
+        engine: captureRef.current?.engine() ?? turnEngineRef.current,
+        language: languageRef.current,
         visible:
           typeof document !== "undefined" ? document.visibilityState : "?",
         speaking: isSpeaking(),
@@ -1151,6 +1166,10 @@ export function TapToTalk({
         lastBeatAt = Date.now();
       };
       const captureCallbacks: CaptureCallbacks = {
+          onEngine: (engine) => {
+            turnEngineRef.current = engine;
+            logClientState(`engine-${engine}`);
+          },
           onHeartbeat: () => {
             lastBeatAt = Date.now();
           },

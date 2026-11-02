@@ -286,6 +286,47 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     }
   });
 
+  it("persists the client engine and sheet flag from endStream", async () => {
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
+      logs.push(String(line));
+    });
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser);
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(
+        JSON.stringify({
+          type: "endStream",
+          lostBlocks: 3,
+          srcBlocks: 100,
+          engine: "script",
+          sheetOpen: true,
+        }),
+      );
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+          true,
+        );
+      });
+      const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+      expect(turns).toHaveLength(1);
+      expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+        lostBlocks: 3,
+        srcBlocks: 100,
+        engine: "script",
+        sheetOpen: true,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("hands prior turns as history and drops nothing after a failure", async () => {
     finalTranscript = "vale, si";
     const seen: { role: string; text: string }[][] = [];
@@ -1375,6 +1416,8 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
       valeState: null,
       lostBlocks: null,
       srcBlocks: null,
+      engine: null,
+      sheetOpen: null,
     };
     expect(tryParseControl(JSON.stringify({ type: "endStream" }))).toEqual({
       type: "endStream",
@@ -1405,6 +1448,8 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
         valeState: "speaking",
         lostBlocks: 0,
         srcBlocks: 41,
+        engine: null,
+        sheetOpen: null,
       },
     });
     expect(
