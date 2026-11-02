@@ -238,7 +238,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "session_log_supply",
-    description: "Record a supply used in the open session. When it is unknown, ask first and call again with confirm_create true only after a yes.",
+    description: "Record a supply used in the open session. Unknown supplies save at once like notes; undo_last covers mistakes.",
     parameters: {
       type: "object",
       properties: {
@@ -846,20 +846,20 @@ export function logSupplyUse(db: ValeDb, args: { name?: unknown; confirm_create?
     if (link.changes === 0) return { ok: true, message: language === "en" ? `${found.row.name} was already logged.` : `${found.row.name} ya estaba anotado.` };
     return { ok: true, message: language === "en" ? `${found.row.name} logged for the session.` : `${found.row.name} anotado en la sesión.` };
   }
-  if (args.confirm_create === true) {
-    const created = db.prepare("INSERT INTO supplies (name) VALUES (?)").run(name);
-    const supplyId = Number(created.lastInsertRowid);
-    db.prepare("INSERT OR IGNORE INTO session_supplies (session_id, supply_id) VALUES (?, ?)").run(open.id, supplyId);
-    logWrite(db, "session_log_supply", "session_supplies", open.id, { supply_id: supplyId, auto_created: true });
-    return { ok: true, message: language === "en" ? `${name} created and logged for the session.` : `${name} creado y anotado en la sesión.` };
-  }
+  // Unknown supplies save at once like notes: extra stock in an open
+  // session is a low-risk write and undo_last covers mistakes.
+  const created = db.prepare("INSERT INTO supplies (name) VALUES (?)").run(name);
+  const supplyId = Number(created.lastInsertRowid);
+  db.prepare("INSERT OR IGNORE INTO session_supplies (session_id, supply_id) VALUES (?, ?)").run(open.id, supplyId);
+  logWrite(db, "session_log_supply", "session_supplies", open.id, { supply_id: supplyId, auto_created: true });
+  const owner = db.prepare("SELECT name FROM clients WHERE id = ?").get(open.client_id) as { name: string } | undefined;
+  const who = owner?.name ?? "";
   return {
-    ok: false,
+    ok: true,
     message:
       language === "en"
-        ? `I can't find "${name}". Should I save it and log it to this session?`
-        : `No encuentro "${name}". ¿lo guardo y lo anoto en la sesión?`,
-    pendingCreate: name,
+        ? `${name} added to ${who === "" ? "the" : who + "'s"} session.`
+        : `${name} anotado en la sesión${who === "" ? "" : ` de ${who}`}.`,
   };
 }
 
@@ -935,12 +935,21 @@ export function undoLastWrite(db: ValeDb, language: ValeLanguage = "es"): ToolRe
       // The reply names the removed text, unless it was private: health
       // text never reaches the voice. Either way the write is consumed.
       if (note && note.private_for_glimmer !== 1 && note.kind !== "health_note" && note.kind !== "health") {
-        const label = UNDO_LABELS[language][entry.action] ?? entry.action;
-        const prefix = language === "en" ? "Undone: " : "Deshecho: ";
         db.prepare("UPDATE write_log SET undone = 1 WHERE id = ?").run(entry.id);
-        return { ok: true, message: `${prefix}${label} "${note.text}".` };
+        return {
+          ok: true,
+          message:
+            language === "en"
+              ? `Done, I removed the note '${note.text}'.`
+              : `Listo, quité la nota '${note.text}'.`,
+        };
       }
-      break;
+      db.prepare("UPDATE write_log SET undone = 1 WHERE id = ?").run(entry.id);
+      return {
+        ok: true,
+        message:
+          language === "en" ? "Done, I removed the private note." : "Listo, quité la nota privada.",
+      };
     }
     case "shopping_add":
       db.prepare("DELETE FROM shopping_list WHERE id = ?").run(entry.row_id);
@@ -1085,6 +1094,43 @@ function computeQuote(
   };
 }
 
+/**
+ * Quote over the service recipe plus the extras logged in the open
+ * session, so "How much do I charge?" always prices what was used.
+ */
+function computeQuoteWithSessionExtras(
+  db: ValeDb,
+  serviceId: number,
+  minutes: number,
+  sessionId: number | null,
+): { breakdown: ReturnType<typeof quotePrice>; lines: RecipeLine[] } | { error: string } {
+  const lines = recipeForService(db, serviceId);
+  if (sessionId !== null) {
+    const logged = db
+      .prepare("SELECT supply_id FROM session_supplies WHERE session_id = ?")
+      .all(sessionId) as { supply_id: number }[];
+    for (const row of logged) {
+      if (lines.some((line) => line.supply_id === row.supply_id)) continue;
+      const extra = db
+        .prepare("SELECT id AS supply_id, name, es, price_per_product_usd, content_per_product FROM supplies WHERE id = ?")
+        .get(row.supply_id) as Omit<RecipeLine, "qty"> | undefined;
+      if (extra) lines.push({ ...extra, qty: 1 });
+    }
+  }
+  return {
+    breakdown: quotePrice(
+      PRICING,
+      minutes,
+      lines.map((line) => ({
+        qty: line.qty,
+        pricePerProductUsd: line.price_per_product_usd,
+        contentPerProduct: line.content_per_product,
+      })),
+    ),
+    lines,
+  };
+}
+
 /** Sessions whose quote was rejected: the next spoken amount registers. */
 const quoteAwaiting = new Set<number>();
 
@@ -1206,7 +1252,10 @@ export function quoteSession(
     const started = db.prepare("SELECT started_at FROM sessions WHERE id = ?").get(open.id) as { started_at: string };
     minutes = Math.max(1, Math.round((Date.now() - Date.parse(started.started_at)) / 60000));
   }
-  const computed = computeQuote(db, resolved.id, minutes, args.supply_names);
+  const computed =
+    Array.isArray(args.supply_names) && args.supply_names.length > 0
+      ? computeQuote(db, resolved.id, minutes, args.supply_names)
+      : computeQuoteWithSessionExtras(db, resolved.id, minutes, open?.id ?? null);
   if ("error" in computed) return { ok: false, message: computed.error };
   const data: QuoteData = {
     service: serviceDisplay || resolved.name,

@@ -279,11 +279,11 @@ describe("add_note", () => {
     addNote(db, { client_name: "Ana", text: "Likes neon colors", kind: "note" }, "en");
     const undone = undoLastWrite(db, "en");
     expect(undone.ok).toBe(true);
-    expect(undone.message).toBe('Undone: added note "Likes neon colors".');
+    expect(undone.message).toBe("Done, I removed the note 'Likes neon colors'.");
     addNote(db, { client_name: "Ana", text: "Allergic to monomer", kind: "health_note" }, "en");
     const hidden = undoLastWrite(db, "en");
     expect(hidden.ok).toBe(true);
-    expect(hidden.message).toBe("Undone: added note.");
+    expect(hidden.message).toBe("Done, I removed the private note.");
     expect(hidden.message).not.toContain("monomer");
     db.close();
   });
@@ -362,18 +362,16 @@ describe("log_supply_use", () => {
     db.close();
   });
 
-  it("offers to create unknown supplies and only creates on yes", () => {
+  it("saves unknown supplies at once like notes", () => {
     const db = freshTestDb();
     openAna(db);
-    const asked = logSupplyUse(db, { name: "Esmalte verde" });
-    expect(asked.ok).toBe(false);
-    expect(asked.pendingCreate).toBe("Esmalte verde");
-    expect(asked.message).toContain("¿lo guardo");
-    const countBefore = db.prepare("SELECT COUNT(*) AS n FROM supplies").get() as { n: number };
-    expect(countBefore.n).toBe(23);
-    const created = logSupplyUse(db, { name: "Esmalte verde", confirm_create: true });
-    expect(created.ok).toBe(true);
-    expect(created.message).toContain("creado y anotado");
+    const saved = logSupplyUse(db, { name: "Esmalte verde" }, "en");
+    expect(saved.ok).toBe(true);
+    expect(saved.message).toBe("Esmalte verde added to Ana's session.");
+    const rows = db.prepare(
+      "SELECT s.name FROM session_supplies ss JOIN supplies s ON s.id = ss.supply_id",
+    ).all() as { name: string }[];
+    expect(rows.map((row) => row.name)).toContain("Esmalte verde");
     db.close();
   });
 });
@@ -386,7 +384,7 @@ describe("undo_last_write", () => {
     db.prepare("DELETE FROM shopping_list").run();
     db.prepare("DELETE FROM reminders").run();
     addNote(db, { client_name: "Ana", text: "temporal", kind: "note" });
-    expect(undoLastWrite(db).message).toContain("Deshecho");
+    expect(undoLastWrite(db).message).toContain("quité la nota 'temporal'");
     const notes = db.prepare("SELECT COUNT(*) AS n FROM notes").get() as { n: number };
     expect(notes.n).toBe(seededNotes);
     addToShoppingList(db, { item_name: "Algodon" });
@@ -497,6 +495,20 @@ describe("session_quote", () => {
     expect((english.data as { final_price_usd: number }).final_price_usd).toBe(
       (spanish.data as { final_price_usd: number }).final_price_usd,
     );
+    db.close();
+  });
+
+  it("prices the extras logged in the open session", () => {
+    const db = freshTestDb();
+    openSession(db, { client_name: "Ana", service_name: "Gel removal" });
+    const before = quoteSession(db, {}, "en");
+    const base = (before.data as { final_price_usd: number }).final_price_usd;
+    logSupplyUse(db, { name: "Top coat" }, "en");
+    const after = quoteSession(db, {}, "en");
+    expect((after.data as { supplies_cost: number }).supplies_cost).toBeGreaterThan(
+      (before.data as { supplies_cost: number }).supplies_cost,
+    );
+    expect((after.data as { final_price_usd: number }).final_price_usd).toBeGreaterThanOrEqual(base);
     db.close();
   });
 
