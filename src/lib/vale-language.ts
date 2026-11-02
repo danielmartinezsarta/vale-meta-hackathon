@@ -7,6 +7,30 @@ export type ValeLanguage = "es" | "en";
 
 export const DEFAULT_LANGUAGE: ValeLanguage = "en";
 
+/** Persisted screen language: the menu selector survives reloads, EN default. */
+const LANGUAGE_KEY = "vale-language";
+
+export function storedLanguage(): ValeLanguage {
+  try {
+    return window.localStorage.getItem(LANGUAGE_KEY) === "es" ? "es" : "en";
+  } catch {
+    return "en";
+  }
+}
+
+export function storeLanguage(next: ValeLanguage): void {
+  try {
+    window.localStorage.setItem(LANGUAGE_KEY, next);
+  } catch {
+    /* private mode: the session still switches for this visit */
+  }
+  try {
+    window.dispatchEvent(new CustomEvent<ValeLanguage>("vale-language", { detail: next }));
+  } catch {
+    /* the next turn carries the language frame instead */
+  }
+}
+
 /** Unknown or missing values fall back to English; the set stays closed. */
 export function parseLanguage(value: unknown): ValeLanguage {
   return value === "es" ? "es" : "en";

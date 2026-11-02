@@ -1,0 +1,291 @@
+"use client";
+
+import { useEffect, useState, type CSSProperties } from "react";
+import { BRAND } from "@/lib/brand-tokens";
+import { homeVars, type HomeMode } from "@/lib/vale-theme";
+import { storeLanguage, type ValeLanguage } from "@/lib/vale-language";
+import type { HomeData } from "@/lib/home-data";
+import styles from "./HomeScreen.module.css";
+
+/**
+ * App home = Vale asleep. Today, month goal, supplies to buy, side menu
+ * and the round "Wake Vale" sleeper button. Modes follow the device.
+ */
+
+const c = BRAND.color;
+
+function Wordmark() {
+  return (
+    <span className={styles.logo} aria-label="vale" role="img">
+      <svg viewBox="26 34 148 136" aria-hidden="true">
+        <line x1="36" y1="44" x2="36" y2="124" stroke={c.blue} strokeWidth="20" strokeLinecap="round" />
+        <line x1="68" y1="68" x2="68" y2="140" stroke={c.blue} strokeWidth="20" strokeLinecap="round" />
+        <line x1="100" y1="92" x2="100" y2="160" stroke={c.cyan} strokeWidth="20" strokeLinecap="round" />
+        <line x1="132" y1="68" x2="132" y2="140" stroke={c.blue} strokeWidth="20" strokeLinecap="round" />
+        <line x1="164" y1="44" x2="164" y2="124" stroke={c.magenta} strokeWidth="20" strokeLinecap="round" />
+      </svg>
+      vale
+    </span>
+  );
+}
+
+function SleepingHead() {
+  return (
+    <svg className={styles.head} viewBox="40 -4 160 170" aria-hidden="true">
+      <defs>
+        <linearGradient id="vale-sleep-g" x1="0.15" y1="0" x2="0.85" y2="1">
+          <stop offset="0" stopColor={c.bodyLight} />
+          <stop offset="0.55" stopColor={c.blue} />
+          <stop offset="1" stopColor={c.bodyDark} />
+        </linearGradient>
+      </defs>
+      <line x1="120" y1="40" x2="120" y2="12" stroke={c.blue} strokeWidth="5" strokeLinecap="round" />
+      <circle cx="120" cy="10" r="9" fill={c.antennaError} />
+      <rect x="98" y="34" width="44" height="12" rx="6" fill={c.bodyDark} />
+      <path
+        d="M50 112 C50 64 82 40 120 40 C158 40 190 64 190 112 C190 146 178 160 150 160 H90 C62 160 50 146 50 112 Z"
+        fill="url(#vale-sleep-g)"
+      />
+      <ellipse cx="82" cy="74" rx="20" ry="9" transform="rotate(-32 82 74)" fill="#fff" opacity=".22" />
+      <rect x="64" y="82" width="112" height="60" rx="30" fill={c.night} />
+      <g fill="none" stroke={c.eye} strokeWidth="5" strokeLinecap="round">
+        <path d="M86 112 Q100 124 114 112" />
+        <path d="M126 112 Q140 124 154 112" />
+      </g>
+    </svg>
+  );
+}
+
+const MENU_ITEMS = [
+  { name: "Agenda", icon: '<rect x="4" y="5.5" width="16" height="14" rx="3"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/>' },
+  { name: "Client files", icon: '<circle cx="12" cy="9" r="3.4"/><path d="M5.5 19.5c.8-3.6 3.4-5.3 6.5-5.3s5.7 1.7 6.5 5.3"/>' },
+  { name: "Goals", icon: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/>' },
+  { name: "Supplies & stock", icon: '<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>' },
+  { name: "Collaborators", icon: '<circle cx="9" cy="9.5" r="3"/><circle cx="16.5" cy="10.5" r="2.4"/><path d="M3.5 19c.6-3.3 2.8-4.8 5.5-4.8s4.9 1.5 5.5 4.8M15.5 14.5c2.4-.2 4.3 1.1 5 4"/>' },
+  { name: "Suppliers", icon: '<path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>' },
+  { name: "Permissions", icon: '<rect x="5" y="10.5" width="14" height="9.5" rx="3"/><path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5"/>' },
+  { name: "Services", icon: '<path d="M9 7h11M9 12h11M9 17h11"/><path d="M3.5 7l1.2 1.2L6.8 6M3.5 12l1.2 1.2L6.8 11M3.5 17l1.2 1.2L6.8 16"/>' },
+];
+
+function monthLabel(month: string): string {
+  const date = new Date(`${month}-01T00:00:00`);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-US", { month: "long" });
+}
+
+export function HomeScreen({
+  data,
+  language,
+  onLanguageChange,
+  onWake,
+}: {
+  data: HomeData | null;
+  language: ValeLanguage;
+  onLanguageChange: (next: ValeLanguage) => void;
+  onWake: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [mode, setMode] = useState<HomeMode>("day");
+
+  useEffect(() => {
+    const query = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!query) return;
+    const apply = () => setMode(query.matches ? "night" : "day");
+    apply();
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
+  const now = new Date();
+  const hour = now.getHours();
+  const greeting =
+    hour < 12 ? "Good morning" : hour < 19 ? "Good afternoon" : "Good evening";
+  const dateLine = now.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+  const pct = data?.goal ? Math.min(100, Math.max(0, data.goal.pct)) : 0;
+
+  return (
+    <div
+      className={`${styles.vs} ${menuOpen ? styles.open : ""}`}
+      style={homeVars(mode) as CSSProperties}
+    >
+      <div className={styles.bg} aria-hidden="true" />
+      <header className={styles.top}>
+        <Wordmark />
+      </header>
+      <div className={styles.greet}>
+        <h1 className={styles.hi}>
+          {greeting}, {data?.userName ?? "…"}
+        </h1>
+        <button className={styles.menu} type="button" aria-label="Menu" onClick={() => setMenuOpen(true)}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <g fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="M5 8h14" />
+              <path d="M5 12h14" />
+              <path d="M5 16h14" />
+            </g>
+          </svg>
+        </button>
+      </div>
+
+      <section className={styles.card} aria-label="Today">
+        <h2 className={styles.h}>
+          <b>Today</b>, {dateLine}
+        </h2>
+        {data === null ? (
+          <div className={styles.row}>
+            <span>Loading…</span>
+          </div>
+        ) : data.today.length === 0 ? (
+          <div className={styles.row}>
+            <span>Nothing on the books.</span>
+          </div>
+        ) : (
+          data.today.map((appt) => (
+            <div className={styles.row} key={`${appt.time}-${appt.client}`}>
+              <span>
+                {appt.time} · {appt.client}
+              </span>
+              <span>{appt.service}</span>
+            </div>
+          ))
+        )}
+      </section>
+
+      <section className={styles.card} aria-label="Supplies to buy">
+        <h2 className={styles.h}>Supplies to buy</h2>
+        {data === null ? (
+          <div className={styles.row}>
+            <span>Loading…</span>
+          </div>
+        ) : data.supplies.length === 0 ? (
+          <div className={styles.row}>
+            <span>The list is empty.</span>
+          </div>
+        ) : (
+          data.supplies.map((item) => (
+            <div className={styles.row} key={item.name}>
+              <span>{item.name}</span>
+              <span>{item.qty}</span>
+            </div>
+          ))
+        )}
+      </section>
+
+      <section className={styles.goal} aria-label="Monthly goal">
+        <div className={styles.goaltop}>
+          <div>
+            <h2>Monthly goal</h2>
+            <p>{data?.goal ? monthLabel(data.goal.month) : ""}</p>
+          </div>
+          <div className={styles.pct}>
+            {pct}
+            <small>%</small>
+          </div>
+        </div>
+        <div
+          className={styles.track}
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={pct}
+          aria-label="Salary goal progress"
+        >
+          <div className={styles.fill} style={{ width: `${pct}%` }} />
+          <span className={styles.tick} style={{ left: "25%" }} />
+          <span className={styles.tick} style={{ left: "50%" }} />
+          <span className={styles.tick} style={{ left: "75%" }} />
+        </div>
+      </section>
+
+      <button className={styles.fab} type="button" aria-label="Wake Vale" onClick={onWake}>
+        <span className={styles.z} aria-hidden="true">
+          z
+        </span>
+        <span className={styles.z} aria-hidden="true">
+          z
+        </span>
+        <span className={styles.z} aria-hidden="true">
+          z
+        </span>
+        <SleepingHead />
+      </button>
+
+      <div className={styles.ov} role="dialog" aria-label="Menu" aria-hidden={menuOpen ? "false" : "true"}>
+        <div className={styles.scrim} onClick={() => setMenuOpen(false)} aria-hidden="true" />
+        <nav className={styles.panel}>
+          <div className={styles.ovtop}>
+            <h2>Menu</h2>
+            <button className={styles.menu} type="button" aria-label="Close menu" onClick={() => setMenuOpen(false)}>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <g fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <path d="M6.5 6.5l11 11" />
+                  <path d="M17.5 6.5l-11 11" />
+                </g>
+              </svg>
+            </button>
+          </div>
+          <ul className={styles.items}>
+            {MENU_ITEMS.map((item, index) => (
+              <li key={item.name}>
+                <button className={`${styles.item} ${styles[`i${(index % 3) + 1}`]}`} type="button">
+                  <span className={styles.ic}>
+                    <svg
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      dangerouslySetInnerHTML={{
+                        __html: `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${item.icon}</g>`,
+                      }}
+                    />
+                  </span>
+                  <span className={styles.lb}>{item.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <fieldset className={styles.lang}>
+            <legend>Language</legend>
+            <label>
+              <input
+                type="radio"
+                name="home-language"
+                value="en"
+                checked={language === "en"}
+                onChange={() => {
+                  storeLanguage("en");
+                  onLanguageChange("en");
+                }}
+              />{" "}
+              EN
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="home-language"
+                value="es"
+                checked={language === "es"}
+                onChange={() => {
+                  storeLanguage("es");
+                  onLanguageChange("es");
+                }}
+              />{" "}
+              ES
+            </label>
+          </fieldset>
+        </nav>
+      </div>
+    </div>
+  );
+}
