@@ -95,6 +95,14 @@ CREATE TABLE IF NOT EXISTS session_supplies (
   supply_id INTEGER NOT NULL REFERENCES supplies(id),
   PRIMARY KEY (session_id, supply_id)
 );
+-- HACK-018 demo payments: session_quote Accept (or a spoken amount after
+-- Reject) registers here. The session stays open; the sheet shows the total.
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL REFERENCES sessions(id),
+  amount_usd REAL NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 CREATE TABLE IF NOT EXISTS turns (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   client_key TEXT NOT NULL,
