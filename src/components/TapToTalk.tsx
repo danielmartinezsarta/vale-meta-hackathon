@@ -40,6 +40,12 @@ import {
 import { useValeLanguage } from "@/components/useValeLanguage";
 import { uiStrings } from "@/lib/vale-ui";
 import type { Widget } from "@/lib/widget";
+import {
+  AUTO_HIDE_MS,
+  GOODBYE_MS,
+  SUMMARY_MS,
+  widgetTitle,
+} from "@/lib/widget";
 import { AwakeScreen, type AwakeBubble } from "@/components/AwakeScreen";
 import { SessionScreen } from "@/components/SessionScreen";
 import { VoiceDebugView } from "@/components/VoiceDebugView";
@@ -209,23 +215,85 @@ export function TapToTalk({
       valeStoreRef.current.set("listening");
     }
   }, []);
+  // Sheet timers: booked/notes hide after 3 s, the summary hands a 5 s
+  // good job to a 5 s goodbye. Cleared on every widget change or close.
+  const widgetTimerRef = useRef(0);
+  const clearWidgetTimer = useCallback(() => {
+    window.clearTimeout(widgetTimerRef.current);
+    widgetTimerRef.current = 0;
+  }, []);
+
+  /** Local sheet (camera, photos, final chain): no tool ran, no timers. */
+  const openWidget = useCallback((widget: Widget) => {
+    setWidget(widget);
+  }, []);
+
+  /** Timed hides report back so the server restarts the window. */
+  const closeWidgetByHand = useCallback(() => {
+    if (widgetRef.current === null) return;
+    clearWidgetTimer();
+    setWidget(null);
+    try {
+      const socket = convSocketRef.current;
+      if (
+        socket &&
+        typeof WebSocket !== "undefined" &&
+        socket.readyState === WebSocket.OPEN
+      ) {
+        socket.send(JSON.stringify({ type: "sheet-closed" }));
+      }
+    } catch {
+      /* the next turn's stats still describe the screen */
+    }
+  }, [clearWidgetTimer]);
+
   /** A working tool shows done, then falls back ~1.5 s later; speech wins. */
   const handleWidget = useCallback(
     (incoming: unknown) => {
       if (incoming !== null && !(incoming && typeof incoming === "object"))
         return;
+      clearWidgetTimer();
       // buildWidget always stamps size: the single guarantor lives in lib.
-      setWidget((incoming ?? null) as Widget | null);
-      if (incoming !== null && valeStoreRef.current.get() !== "speaking") {
+      const next = (incoming ?? null) as Widget | null;
+      setWidget(next);
+      if (next === null || valeStoreRef.current.get() === "speaking") return;
+      if (next.kind === "good_job") {
+        // Held through goodbye: done face and care icons stay 5 s.
         clearDoneTimer();
         valeStoreRef.current.set("done");
-        doneTimerRef.current = window.setTimeout(() => {
-          doneTimerRef.current = 0;
+        widgetTimerRef.current = window.setTimeout(() => {
+          widgetTimerRef.current = 0;
+          closeWidgetByHand();
           settleToListening();
-        }, 1500);
+        }, GOODBYE_MS);
+        return;
+      }
+      clearDoneTimer();
+      valeStoreRef.current.set("done");
+      doneTimerRef.current = window.setTimeout(() => {
+        doneTimerRef.current = 0;
+        settleToListening();
+      }, 1500);
+      if (next.kind === "booked" || next.kind === "note" || next.kind === "health_note") {
+        widgetTimerRef.current = window.setTimeout(() => {
+          widgetTimerRef.current = 0;
+          closeWidgetByHand();
+        }, AUTO_HIDE_MS);
+      } else if (next.kind === "session_summary") {
+        widgetTimerRef.current = window.setTimeout(() => {
+          widgetTimerRef.current = 0;
+          clearDoneTimer();
+          valeStoreRef.current.set("done");
+          setWidget({ kind: "good_job", title: widgetTitle("good_job"), size: "full", data: {} });
+          widgetTimerRef.current = window.setTimeout(() => {
+            widgetTimerRef.current = 0;
+            closeWidgetByHand();
+            settleToListening();
+          }, GOODBYE_MS);
+        }, SUMMARY_MS);
       }
     },
-    [clearDoneTimer, settleToListening],
+    [clearDoneTimer, clearWidgetTimer, closeWidgetByHand, settleToListening],
   );
   const toggleMute = useCallback(() => {
     if (mutedOutRef.current) {
@@ -265,6 +333,7 @@ export function TapToTalk({
 
   const stopSession = useCallback(() => {
     clearDoneTimer();
+    clearWidgetTimer();
     sessionRef.current = false;
     stopSpeaking("tap");
     clearCaptureWatch();
@@ -298,7 +367,12 @@ export function TapToTalk({
     sessionEndRef.current?.();
     sessionEndRef.current = null;
     setStatus("idle");
-  }, [clearCaptureWatch, clearSpeechWatch, clearDoneTimer]);
+  }, [
+    clearCaptureWatch,
+    clearSpeechWatch,
+    clearDoneTimer,
+    clearWidgetTimer,
+  ]);
 
   /** zzz: stop the session and return to the home screen. */
   const sleep = useCallback(() => {
@@ -306,24 +380,48 @@ export function TapToTalk({
     onSleep?.();
   }, [stopSession, onSleep]);
 
-  // The X on a sheet Vale opened: close locally and restart her window.
-  const closeWidgetByHand = useCallback(() => {
-    if (widgetRef.current === null) return;
-    setWidget(null);
-    try {
-      const socket = convSocketRef.current;
-      if (
-        socket &&
-        typeof WebSocket !== "undefined" &&
-        socket.readyState === WebSocket.OPEN
-      ) {
-        socket.send(JSON.stringify({ type: "sheet-closed" }));
+  // Sheet buttons: price answers close; Final opens its confirm, whose
+  // Accept opens the result. Visits and the photo button open the photos.
+  const sheetCallbacks = {
+    onAccept: () => {
+      if (widgetRef.current?.kind === "final_photo_confirm") {
+        openWidget({
+          kind: "final_result",
+          title: widgetTitle("final_result"),
+          size: "full",
+          data: { photo: null, description: null },
+        });
+      } else {
+        closeWidgetByHand();
       }
-    } catch {
-      /* the next turn's stats still describe the screen */
-    }
-  }, []);
+    },
+    onReject: () => {
+      closeWidgetByHand();
+    },
+    onChoose: (choice: "before" | "final") => {
+      if (choice === "before") {
+        photoType("before");
+        closeWidgetByHand();
+      } else {
+        openWidget({
+          kind: "final_photo_confirm",
+          title: widgetTitle("final_photo_confirm"),
+          size: "full",
+          data: { photo: null },
+        });
+      }
+    },
+    onVisit: () => {
+      openWidget({
+        kind: "photos",
+        title: widgetTitle("photos"),
+        size: "full",
+        data: { before: null, reference: null, expected: null },
+      });
+    },
+  };
 
+  // The X on a sheet Vale opened: close locally and restart her window.
   useEffect(() => stopSession, [stopSession]);
 
   const patchTurn = useCallback((id: number, patch: Partial<Turn>) => {
@@ -343,6 +441,7 @@ export function TapToTalk({
   const endSessionWithAlert = useCallback(
     (message: string, code: string | null = null) => {
       clearDoneTimer();
+      clearWidgetTimer();
       sessionRef.current = false;
       clearCaptureWatch();
       controllersRef.current.forEach((controller) => {
@@ -380,7 +479,12 @@ export function TapToTalk({
       sessionEndRef.current = null;
       clearSpeechWatch();
     },
-    [clearCaptureWatch, clearSpeechWatch, clearDoneTimer],
+    [
+      clearCaptureWatch,
+      clearSpeechWatch,
+      clearDoneTimer,
+      clearWidgetTimer,
+    ],
   );
 
   const runSession = useCallback(
@@ -670,6 +774,7 @@ export function TapToTalk({
         const transport = transports.get(id);
         if (transport?.dismissed) return;
         if (transport) transport.dismissed = true;
+        clearWidgetTimer();
         setWidget(null);
         posted = true;
         // The remainder drains until the pause like a cut phrase: no frames,
@@ -1606,6 +1711,7 @@ export function TapToTalk({
       pruneIfEmpty,
       endSessionWithAlert,
       clearCaptureWatch,
+      clearWidgetTimer,
       clientId,
       handleWidget,
       settleToListening,
@@ -1694,6 +1800,7 @@ export function TapToTalk({
         onSwitchLanguage={switchLanguage}
         onVote={(vote) => castVoteRef.current(vote)}
         onCloseWidget={closeWidgetByHand}
+        sheetCallbacks={sheetCallbacks}
       />
     );
   }
@@ -1738,9 +1845,10 @@ export function TapToTalk({
         alert={alert}
         onToggleMute={toggleMute}
         onSleep={sleep}
-        onPhotoType={photoType}
+        onOpenWidget={openWidget}
         onCloseWidget={closeWidgetByHand}
         onVote={(vote) => castVoteRef.current(vote)}
+        sheetCallbacks={sheetCallbacks}
       />
     );
   }
@@ -1760,6 +1868,7 @@ export function TapToTalk({
       onSleep={sleep}
       onCloseWidget={closeWidgetByHand}
       onVote={(vote) => castVoteRef.current(vote)}
+      sheetCallbacks={sheetCallbacks}
     />
   );
 }

@@ -89,8 +89,8 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
     expect(screen.getByText(/01:02:0[3-9]/)).toBeTruthy();
   });
 
-  it("opens the camera options and fires the photo type", async () => {
-    const onPhotoType = vi.fn();
+  it("opens the camera sheet through the widget", async () => {
+    const onOpenWidget = vi.fn();
     render(
       <SessionScreen
         mode="day"
@@ -104,20 +104,22 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
         alert={null}
         onToggleMute={() => {}}
         onSleep={() => {}}
-        onPhotoType={onPhotoType}
+        onOpenWidget={onOpenWidget}
         onCloseWidget={() => {}}
         onVote={() => {}}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Open camera" }));
-    expect(
-      screen.getByRole("dialog", { name: "Photo type" }),
-    ).toBeTruthy();
-    fireEvent.click(screen.getByText("Final photo"));
-    expect(onPhotoType).toHaveBeenCalledWith("final");
+    expect(onOpenWidget).toHaveBeenCalledWith({
+      kind: "camera_save_as",
+      title: "Save photo as",
+      size: "half",
+      data: {},
+    });
   });
 
-  it("opens the full photos sheet with the Muse Image preview tag", () => {
+  it("opens the full photos sheet with the Muse Spark tag", () => {
+    const onOpenPhotos = vi.fn();
     render(
       <SessionScreen
         mode="day"
@@ -131,7 +133,7 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
         alert={null}
         onToggleMute={() => {}}
         onSleep={() => {}}
-        onPhotoType={() => {}}
+        onOpenWidget={onOpenPhotos}
         onCloseWidget={() => {}}
         onVote={() => {}}
       />,
@@ -141,9 +143,11 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
         name: "Photos: before, reference and expected result",
       }),
     );
-    expect(screen.getByRole("dialog", { name: "Photos" })).toBeTruthy();
-    expect(screen.getByText("Preview by Muse Image")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close photos" }));
-    expect(screen.queryByRole("dialog", { name: "Photos" })).toBeNull();
+    expect(onOpenPhotos).toHaveBeenCalledWith({
+      kind: "photos",
+      title: "Photos",
+      size: "full",
+      data: { before: null, reference: null, expected: null },
+    });
   });
 });

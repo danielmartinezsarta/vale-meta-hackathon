@@ -7,6 +7,13 @@
 
 export type WidgetSize = "half" | "full";
 
+/** Booked and note sheets confirm, then hide by themselves. */
+export const AUTO_HIDE_MS = 3000;
+/** The summary reads 5 s before the good job takes over. */
+export const SUMMARY_MS = 5000;
+/** Good job shows 5 s, then Vale is awake again. */
+export const GOODBYE_MS = 5000;
+
 export type WidgetKind =
   | "client_card"
   | "goal"
