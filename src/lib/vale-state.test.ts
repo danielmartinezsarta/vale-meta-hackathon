@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import { createValeState } from "./vale-state";
+import { createValeState, settledSpeechState } from "./vale-state";
 
 describe("vale state", () => {
   it("starts idle and notifies once per change", () => {
@@ -25,5 +25,14 @@ describe("vale state", () => {
     });
     store.set("speaking");
     expect(store.get()).toBe("speaking");
+  });
+
+  it("settled speech falls back to listening, never out of thinking", () => {
+    expect(settledSpeechState("speaking")).toBe("listening");
+    expect(settledSpeechState("done")).toBe("listening");
+    expect(settledSpeechState("thinking")).toBe("thinking");
+    expect(settledSpeechState("listening")).toBe("listening");
+    expect(settledSpeechState("idle")).toBe("idle");
+    expect(settledSpeechState("error")).toBe("error");
   });
 });

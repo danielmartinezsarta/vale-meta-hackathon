@@ -22,7 +22,11 @@ import {
   finishStream,
   speakStream,
 } from "@/lib/speak";
-import { createValeState, type ValeState } from "@/lib/vale-state";
+import {
+  createValeState,
+  settledSpeechState,
+  type ValeState,
+} from "@/lib/vale-state";
 import {
   turnErrorText,
   type ValeLanguage,
@@ -394,6 +398,13 @@ export function TapToTalk({
               valeStoreRef.current.set("listening");
             }
           }, SPEECH_RESUME_DELAY_MS);
+        } else {
+          // Her voice settled with the mic open: speaking and done fall
+          // back to listening, so a done that landed mid-speech no longer
+          // sticks. Thinking (a turn in flight) is untouched.
+          valeStoreRef.current.set(
+            settledSpeechState(valeStoreRef.current.get()),
+          );
         }
       }, 250);
       // One conversation socket when /voice is up, else one bridge socket
@@ -835,6 +846,9 @@ export function TapToTalk({
 
       // Speech end: conversation socket first, then the turn socket, then POST.
       const endTurnTransport = (id: number) => {
+        // The log keeps what she was doing when speech ended; thinking
+        // starts after, so the evidence is not always "thinking".
+        const stateBeforeEnd = valeStoreRef.current.get();
         valeStoreRef.current.set("thinking");
         const transport = transports.get(id);
         // Freeze what the client saw: the same evidence on every (re)send.
@@ -843,7 +857,7 @@ export function TapToTalk({
           peakLevel: turnPeakRef.current,
           voicedMs: (transport?.voiced ?? 0) * FRAME_MS,
           mutedMs: snapMutedMs(),
-          valeState: valeStoreRef.current.get(),
+          valeState: stateBeforeEnd,
           lostBlocks: turnLostRef.current,
           srcBlocks: turnSrcRef.current,
           engine: turnEngineRef.current,

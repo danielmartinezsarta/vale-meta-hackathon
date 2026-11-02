@@ -46,3 +46,12 @@ export function createValeState(initial: ValeState = "idle"): {
 }
 
 export type ValeStateStore = ReturnType<typeof createValeState>;
+
+/**
+ * Her voice settled with the mic open: speaking and done fall back to
+ * listening. Thinking (a turn in flight) never flips here; only the turn
+ * done event moves it, so the indicator cannot stick past her reply.
+ */
+export function settledSpeechState(current: ValeState): ValeState {
+  return current === "speaking" || current === "done" ? "listening" : current;
+}
