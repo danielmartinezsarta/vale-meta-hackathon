@@ -30,13 +30,13 @@ export interface UiStrings {
   valeState: (state: ValeStateName) => string;
 }
 
-/** The six Vale states the indicator can show. */
+/** The six Vale states the robot can show. */
 export type ValeStateName =
   | "idle"
-  | "attentive"
-  | "hearing"
+  | "listening"
   | "thinking"
   | "speaking"
+  | "done"
   | "error";
 
 const EN: UiStrings = {
@@ -66,10 +66,10 @@ const EN: UiStrings = {
   valeState: (state: ValeStateName) =>
     ({
       idle: "Idle",
-      attentive: "Listening",
-      hearing: "Hearing you",
+      listening: "Listening",
       thinking: "Thinking",
       speaking: "Speaking",
+      done: "Done",
       error: "Something is wrong",
     })[state],
 };
@@ -101,10 +101,10 @@ const ES: UiStrings = {
   valeState: (state: ValeStateName) =>
     ({
       idle: "Inactiva",
-      attentive: "Escuchando",
-      hearing: "Te oigo",
+      listening: "Escuchando",
       thinking: "Pensando",
       speaking: "Hablando",
+      done: "Listo",
       error: "Algo falla",
     })[state],
 };

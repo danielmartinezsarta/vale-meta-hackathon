@@ -58,3 +58,52 @@ const NIGHT: Record<string, string> = {
 export function homeVars(mode: HomeMode): Record<string, string> {
   return mode === "night" ? { ...NIGHT } : { ...DAY };
 }
+
+type ValeMode = HomeMode;
+
+const AW_DAY: Record<string, string> = {
+  "--aw-bg": "#D5E0FF",
+  "--aw-card": "#FFFFFF",
+  "--aw-line": "#B9C8F5",
+  "--aw-fg": c.night,
+  "--aw-muted": "#505B7E",
+  "--aw-user": c.blue,
+  "--aw-sheet": "#FFFFFF",
+  "--aw-field-line": "#B9C8F5",
+  "--aw-link": c.blue,
+  "--aw-ok": c.blue,
+  "--aw-on-ok": "#FFFFFF",
+  "--aw-a1": c.blue,
+  "--aw-a1bg": "rgba(47,91,255,.12)",
+  "--aw-a3": "#D12A8A",
+  "--aw-a3bg": "rgba(230,50,155,.12)",
+  "--aw-t1": "rgba(47,91,255,.16)",
+  "--aw-t2": "rgba(24,184,224,.22)",
+  "--aw-t3": "rgba(230,50,155,.14)",
+};
+
+const AW_NIGHT: Record<string, string> = {
+  "--aw-bg": c.night,
+  "--aw-card": "#22347C",
+  "--aw-line": "#3A4E9C",
+  "--aw-fg": c.mist,
+  "--aw-muted": "#B4BFE6",
+  "--aw-user": c.blue,
+  "--aw-sheet": "#2F4283",
+  "--aw-field-line": "#5B71BC",
+  "--aw-link": "#9CC7FF",
+  "--aw-ok": "#A6CEFF",
+  "--aw-on-ok": c.night,
+  "--aw-a1": c.blueLight,
+  "--aw-a1bg": "rgba(143,169,255,.18)",
+  "--aw-a3": c.magentaLight,
+  "--aw-a3bg": "rgba(255,107,190,.18)",
+  "--aw-t1": "rgba(143,169,255,.14)",
+  "--aw-t2": "rgba(127,221,235,.16)",
+  "--aw-t3": "rgba(255,107,190,.14)",
+};
+
+/** Custom properties for the awake/session screens, one mode. */
+export function valeVars(mode: ValeMode): Record<string, string> {
+  return mode === "night" ? { ...AW_NIGHT } : { ...AW_DAY };
+}

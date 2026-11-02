@@ -67,7 +67,7 @@ describe("buffered turn upload (Safari iOS has no streaming request body)", () =
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {

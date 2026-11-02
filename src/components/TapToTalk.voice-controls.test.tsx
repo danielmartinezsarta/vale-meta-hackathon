@@ -47,7 +47,7 @@ function renderTalk() {
   vi.stubGlobal("navigator", {
     mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
   });
-  render(<TapToTalk />);
+  render(<TapToTalk debug />);
 }
 
 afterEach(() => {

@@ -76,6 +76,30 @@ export function formatTurnLog(fields: TurnLogFields): string {
 }
 
 /**
+ * One brief line per Meta model call, for the demo video evidence:
+ * which model ran, how long it took, what text it got.
+ */
+export function formatModelLog(
+  model: string,
+  responseMs: number | null,
+  content: string,
+): string {
+  const clipped = content.length > 80 ? `${content.slice(0, 80)}…` : content;
+  const safe = clipped.replace(/"/g, "'");
+  const response = responseMs === null ? "-" : `${Math.round(responseMs)}ms`;
+  return `[vale-model] content="${safe}" model="${model}" response=${response}`;
+}
+
+/** Console-only: demo evidence, never persisted to the turn log. */
+export function emitModelLog(
+  model: string,
+  responseMs: number | null,
+  content: string,
+): void {
+  console.log(formatModelLog(model, responseMs, content));
+}
+
+/**
  * Persistent ear log: every [voice-turn] line lands in data/turns.jsonl,
  * ignored turns with their gate included. VALE_TURNS_PATH overrides the file
  * (evals point it elsewhere so test turns never mix into Daniel's log).

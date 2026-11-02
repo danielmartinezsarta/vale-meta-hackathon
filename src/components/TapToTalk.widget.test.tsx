@@ -69,7 +69,7 @@ async function openConversation() {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("no post", { status: 500 })));
   stubSessionOnce();
 
-  render(<TapToTalk />);
+  render(<TapToTalk debug />);
   fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
   await waitFor(() => {
     expect(FakeWs.instances).toHaveLength(1);

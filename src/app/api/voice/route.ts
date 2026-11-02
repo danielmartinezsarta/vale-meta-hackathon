@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { upgradeWebSocket } from "@vercel/functions";
-import { runAgentTurn } from "@/lib/agent";
+import { AGENT_MODEL, runAgentTurn } from "@/lib/agent";
 import { getDb, recentTurns, recordTurn } from "@/lib/db";
 import { getBoard } from "@/lib/board";
 import { getSlots } from "@/lib/slot-memory";
@@ -19,8 +19,8 @@ import {
   type WakeVerdict,
 } from "@/lib/wake";
 import { getOpenSession } from "@/lib/vale-tools";
-import { openAsrConnection } from "@/lib/asr";
-import { emitTurnLog, estimateCost } from "@/lib/turn-log";
+import { ASR_MODEL, openAsrConnection } from "@/lib/asr";
+import { emitModelLog, emitTurnLog, estimateCost } from "@/lib/turn-log";
 import { saveTurnWav } from "@/lib/turn-audio";
 import { attachVoiceBridge } from "@/lib/voice-bridge";
 import {
@@ -354,6 +354,11 @@ export async function POST(request: Request): Promise<Response> {
             slotKey: clientKey,
           });
           if (!aborted) recordTurn(getDb(), clientKey, "vale", result.text, result.toolUsed);
+          emitModelLog(
+            AGENT_MODEL,
+            result.firstTokenMs ?? Date.now() - speechEndAt,
+            transcript,
+          );
           send("reply", { text: result.text });
           // Her reply restarts the window: the next turn counts from here.
           noteAttention(clientKey);
@@ -479,6 +484,11 @@ export async function POST(request: Request): Promise<Response> {
                       gotFinal = true;
                       finalAtMs = Date.now();
                       finalText = event.transcript;
+                      emitModelLog(
+                        ASR_MODEL,
+                        asrStartMs > 0 ? finalAtMs - asrStartMs : null,
+                        finalText,
+                      );
                       audioSeconds = (event.audioProcessedMs ?? 0) / 1000;
                       send("final", {
                         transcript: finalText,

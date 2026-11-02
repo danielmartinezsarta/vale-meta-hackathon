@@ -29,7 +29,7 @@ describe("microphone permission", () => {
     const stream = { getTracks: () => [] } as unknown as MediaStream;
     const getUserMedia = stubGetUserMedia(async () => stream);
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     expect(getUserMedia).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
@@ -50,7 +50,7 @@ describe("microphone permission", () => {
     const stream = { getTracks: () => [] } as unknown as MediaStream;
     stubGetUserMedia(async () => stream);
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     // In-gesture unlock runs before any await.
     expect(unlockAudioContext).toHaveBeenCalledTimes(1);
@@ -73,7 +73,7 @@ describe("microphone permission", () => {
       throw denied;
     });
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     const alert = await screen.findByRole("alert");
@@ -96,7 +96,7 @@ describe("microphone permission", () => {
       throw missing;
     });
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     const alert = await screen.findByRole("alert");

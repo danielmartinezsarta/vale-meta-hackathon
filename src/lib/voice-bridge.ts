@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { runAgentTurn } from "./agent";
+import { AGENT_MODEL, runAgentTurn } from "./agent";
 import { getDb, recentTurns, recordTurn, type HistoryTurn } from "./db";
 import { getBoard } from "./board";
 import {
@@ -9,7 +9,7 @@ import {
   type WakeVerdict,
 } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
-import { emitTurnLog, estimateCost } from "./turn-log";
+import { emitModelLog, emitTurnLog, estimateCost } from "./turn-log";
 import { isMutedJunkTurn, saveTurnWav } from "./turn-audio";
 import {
   clearPendingAction,
@@ -730,6 +730,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         },
       );
       if (!browserGone) recordTurn(getDb(), clientId, "vale", result.text, result.toolUsed);
+      emitModelLog(
+        AGENT_MODEL,
+        result.firstTokenMs ?? Date.now() - speechEndAt,
+        transcript,
+      );
       sendJson(browser, { type: "reply", text: result.text });
       // Her reply restarts the window: the next turn counts from here.
       noteAttention(clientId);
@@ -836,6 +841,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           audioProcessedMs,
         });
         const asrMs = endStreamAt === null ? null : speechEndAt - endStreamAt;
+        emitModelLog(ASR_MODEL, asrMs, finalText);
         if (finalText.trim() === "") {
           finishEmptyTurn(
             audioProcessedMs !== null

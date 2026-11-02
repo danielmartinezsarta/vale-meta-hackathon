@@ -111,7 +111,7 @@ describe("browser voice output", () => {
     });
     speakAudibleRef.current = false;
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -186,7 +186,7 @@ describe("browser voice output", () => {
     });
     speakAudibleRef.current = false;
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -249,7 +249,7 @@ describe("voice engine switch", () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     const toggle = screen.getByRole("button", { name: "Use Seamless voice" });
     expect(toggle.textContent).toContain("Voice: browser");
     fireEvent.click(toggle);
@@ -266,7 +266,7 @@ describe("voice engine switch", () => {
   it("requests echo cancellation and noise suppression on the mic", async () => {
     const getUserMedia = vi.fn(async () => ({ getTracks: () => [] }));
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(getUserMedia).toHaveBeenCalledWith({
@@ -294,7 +294,7 @@ describe("voice engine switch", () => {
       return { stop: () => {}, state: () => "running" };
     });
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
@@ -331,7 +331,7 @@ describe("voice engine switch", () => {
       return { stop: () => {}, state: () => "running" };
     });
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -371,7 +371,7 @@ describe("voice engine switch", () => {
       return { stop: () => {}, state: () => "running" };
     });
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
@@ -422,7 +422,7 @@ describe("voice engine switch", () => {
     });
     speakAudibleRef.current = false;
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {

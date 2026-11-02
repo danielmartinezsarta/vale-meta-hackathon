@@ -1,12 +1,16 @@
 /** Single source of truth for what Vale is doing right now. */
 
-/** idle: no session. attentive: live session, listening. hearing: VAD speech. thinking: turn posted, reply pending. speaking: her voice audible. error: tap to retry. */
+/**
+ * idle: at rest. listening: the VAD hears voice. thinking: turn sent, no
+ * reply yet. speaking: her voice is audible. done: a tool just worked.
+ * error: something failed.
+ */
 export type ValeState =
   | "idle"
-  | "attentive"
-  | "hearing"
+  | "listening"
   | "thinking"
   | "speaking"
+  | "done"
   | "error";
 
 type Listener = (state: ValeState) => void;

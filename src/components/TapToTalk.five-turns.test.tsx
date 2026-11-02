@@ -83,7 +83,7 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     expect(getUserMedia).toHaveBeenCalledTimes(1);
 

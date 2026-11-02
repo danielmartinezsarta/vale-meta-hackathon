@@ -5,10 +5,26 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   emitTurnLog,
+  formatModelLog,
   formatTurnLog,
   persistTurnLog,
   turnsLogFile,
 } from "./turn-log";
+
+describe("model call log", () => {
+  it("names the Meta model, its time and the sent text", () => {
+    expect(formatModelLog("muse-voice-transcribe-1.0", 820, "vale abre sesion")).toBe(
+      '[vale-model] content="vale abre sesion" model="muse-voice-transcribe-1.0" response=820ms',
+    );
+    expect(formatModelLog("muse-spark-1.3", null, 'di "hola"')).toBe(
+      '[vale-model] content="di \'hola\'" model="muse-spark-1.3" response=-',
+    );
+    const long = "x".repeat(100);
+    expect(formatModelLog("m", 1, long)).toBe(
+      `[vale-model] content="${"x".repeat(80)}…" model="m" response=1ms`,
+    );
+  });
+});
 
 describe("turn log persistence", () => {
   it("formats one [voice-turn] JSON line per turn", () => {

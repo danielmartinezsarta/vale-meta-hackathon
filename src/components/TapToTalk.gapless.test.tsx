@@ -82,7 +82,7 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {

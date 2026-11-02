@@ -118,7 +118,7 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
     vi.stubGlobal("fetch", fetchMock);
     stubSessionOnce();
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();

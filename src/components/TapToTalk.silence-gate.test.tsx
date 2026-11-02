@@ -115,7 +115,7 @@ describe("silence-aware E-VAD banner (fix 3)", () => {
     vi.stubGlobal("fetch", fetchMock);
     stubSessionOnce();
 
-    render(<TapToTalk />);
+    render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
       expect(driver).not.toBeNull();
