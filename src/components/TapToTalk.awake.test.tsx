@@ -130,33 +130,34 @@ describe("awake screen (VoiceRobot, bubbles, sheets)", () => {
       `event: ignored\ndata: {}\n\n` +
       `event: done\ndata: {}\n\n`;
     const bytes = encoder.encode(raw);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          body: {
-            getReader: () => {
-              let step = 0;
-              return {
-                read: async () => {
-                  step += 1;
-                  if (step === 1) return { done: false, value: bytes };
-                  return { done: true, value: undefined };
-                },
-                releaseLock: () => {},
-              };
-            },
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        body: {
+          getReader: () => {
+            let step = 0;
+            return {
+              read: async () => {
+                step += 1;
+                if (step === 1) return { done: false, value: bytes };
+                return { done: true, value: undefined };
+              },
+              releaseLock: () => {},
+            };
           },
-        }),
-      ),
+        },
+      }),
     );
+    vi.stubGlobal("fetch", fetchMock);
     render(<TapToTalk autoStart />);
 
     await waitFor(() => {
       expect(screen.getByText("Hi, I'm Vale")).toBeTruthy();
     });
-    // The ignored phrase leaves no bubble, no label, no partial text.
+    // The turn really posted (no vacuous pass) but leaves no trace on screen.
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
     expect(screen.queryByText("background chat here")).toBeNull();
     expect(screen.queryByText("background chat")).toBeNull();
     expect(screen.queryByText("ignored (no name)")).toBeNull();
