@@ -62,7 +62,7 @@ function stubSessionOnce() {
         onSpeechEnd: callbacks.onSpeechEnd,
       };
     }
-    return { stop: () => {}, state: () => "running" };
+    return { stop: () => {}, state: () => "running", engine: () => "script" as const };
   });
 }
 

@@ -107,7 +107,7 @@ describe("browser voice output", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
     speakAudibleRef.current = false;
 
@@ -182,7 +182,7 @@ describe("browser voice output", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
     speakAudibleRef.current = false;
 
@@ -291,7 +291,7 @@ describe("voice engine switch", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
     render(<TapToTalk debug />);
@@ -328,7 +328,7 @@ describe("voice engine switch", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
     render(<TapToTalk debug />);
@@ -368,7 +368,7 @@ describe("voice engine switch", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
     render(<TapToTalk debug />);
@@ -418,7 +418,7 @@ describe("voice engine switch", () => {
         onSpeechEnd: callbacks.onSpeechEnd,
         onFrame: callbacks.onFrame,
       };
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
     speakAudibleRef.current = false;
 

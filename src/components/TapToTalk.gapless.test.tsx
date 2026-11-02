@@ -63,7 +63,11 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
     const stopMock = vi.fn();
     mockStartCapture.mockImplementation((_stream, callbacks) => {
       seen.push(callbacks);
-      return { stop: stopMock, state: () => "running" };
+      return {
+        stop: stopMock,
+        state: () => "running",
+        engine: () => "script" as const,
+      };
     });
 
     const fetchMock = vi.fn((..._args: unknown[]) => {

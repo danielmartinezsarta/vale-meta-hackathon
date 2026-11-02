@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   floatToPcm16,
   framePcmBlocks,
+  isWorkletReady,
   resampleLinear,
   SpeechDetector,
   startCapture,
@@ -176,6 +177,52 @@ describe("utterance accounting (lost blocks vs wall time)", () => {
   it("counts missing frames, never negative for surplus", () => {
     expect(utteranceLoss(1000, 20)).toBe(5);
     expect(utteranceLoss(400, 12)).toBe(0);
+  });
+});
+
+describe("capture engine reporting (worklet vs ScriptProcessor)", () => {
+  it("reports script when the context has no worklet module", () => {
+    stubAudio();
+    const engines: string[] = [];
+    const handle = startCapture({} as MediaStream, {
+      ...quietCallbacks(),
+      onEngine: (engine) => engines.push(engine),
+    });
+    expect(handle.engine()).toBe("script");
+    expect(engines).toEqual(["script"]);
+    handle.stop();
+  });
+
+  it("isWorkletReady needs the warmed module flag on the context", () => {
+    stubAudio();
+    expect(isWorkletReady({} as AudioContext)).toBe(false);
+    expect(
+      isWorkletReady({ audioWorklet: {} } as unknown as AudioContext),
+    ).toBe(false);
+    expect(
+      isWorkletReady(
+        { audioWorklet: {}, __valeWorklet: "warming" } as unknown as AudioContext,
+      ),
+    ).toBe(false);
+    expect(
+      isWorkletReady(
+        { audioWorklet: {}, __valeWorklet: "ready" } as unknown as AudioContext,
+      ),
+    ).toBe(true);
+  });
+
+  it("the kill-switch forces the fallback even with a ready module", () => {
+    stubAudio();
+    vi.stubEnv("NEXT_PUBLIC_CAPTURE_WORKLET", "0");
+    try {
+      expect(
+        isWorkletReady(
+          { audioWorklet: {}, __valeWorklet: "ready" } as unknown as AudioContext,
+        ),
+      ).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

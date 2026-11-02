@@ -139,10 +139,20 @@ export function utteranceLoss(spanMs: number, framesOut: number): number {
   return Math.max(0, Math.round(spanMs / 40) - framesOut);
 }
 
+/**
+ * Which audio thread feeds the VAD. The worklet runs off the main thread,
+ * so occluded tabs and render bursts cannot skip mic blocks; the
+ * ScriptProcessor runs on it and drops blocks under load. Logged per turn
+ * so a lossy session names its engine instead of guessing.
+ */
+export type CaptureEngine = "worklet" | "script";
+
 export interface CaptureCallbacks {
   onFrame: (frame: Int16Array) => void;
   onSpeechStart: () => void;
   onSpeechEnd: (stats?: UtteranceStats) => void;
+  /** Fires once per startCapture with the engine above; keep it ref-only. */
+  onEngine?: (engine: CaptureEngine) => void;
   /** Fires on every audio block, speech or silence: the stall watchdog. */
   onHeartbeat?: () => void;
   /** Listening feedback, 0..1 mic level; optional. */
@@ -257,6 +267,8 @@ export interface CaptureHandle {
   stop: () => void;
   /** Live AudioContext state: the stall watchdog reports it, never blocks on it. */
   state: () => string;
+  /** Which thread feeds this capture; the turn log persists it. */
+  engine: () => CaptureEngine;
   /**
    * Strict turns: while paused, blocks still heartbeat (the watchdog stays
    * alive) but feed neither the detector nor the frames. Resuming clears
@@ -265,6 +277,24 @@ export interface CaptureHandle {
    * provides it and the app guards the call.
    */
   setPaused?: (paused: boolean) => void;
+}
+
+/**
+ * The worklet path is only taken when its module finished loading on this
+ * context. Anything else (old browser, blocked Blob, tap-race) falls back
+ * to the ScriptProcessor and the turn log says so via onEngine.
+ */
+export function isWorkletReady(context: AudioContext): boolean {
+  try {
+    return (
+      workletEnabled() &&
+      typeof context.audioWorklet !== "undefined" &&
+      (context as unknown as { __valeWorklet?: string }).__valeWorklet ===
+        "ready"
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function startCapture(
@@ -414,11 +444,7 @@ export function startCapture(
   let workletNode: AudioWorkletNode | null = null;
   let scriptProcessor: ScriptProcessorNode | null = null;
   try {
-    const ready =
-      workletEnabled() &&
-      typeof context.audioWorklet !== "undefined" &&
-      (context as unknown as { __valeWorklet?: string }).__valeWorklet ===
-        "ready";
+    const ready = isWorkletReady(context);
     if (ready) {
       const node = new AudioWorkletNode(context, CAPTURE_WORKLET_NAME);
       node.port.onmessage = (event: MessageEvent) => {
@@ -483,7 +509,15 @@ export function startCapture(
     scriptProcessor = processor;
   }
 
+  const engine: CaptureEngine = workletNode ? "worklet" : "script";
+  try {
+    callbacks.onEngine?.(engine);
+  } catch {
+    /* engine reporting never breaks capture */
+  }
+
   return {
+    engine: () => engine,
     stop() {
       stopped = true;
       try {

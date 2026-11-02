@@ -54,6 +54,9 @@ export interface TurnLogFields {
   /** Blocks lost under load and source blocks spanned (client accounting). */
   lostBlocks?: number | null;
   srcBlocks?: number | null;
+  /** Audio thread feeding the VAD, and whether a sheet was open at end. */
+  engine?: "worklet" | "script" | null;
+  sheetOpen?: boolean | null;
   /** Muted-start room tone discarded before the gate and the model. */
   junk?: boolean;
 }

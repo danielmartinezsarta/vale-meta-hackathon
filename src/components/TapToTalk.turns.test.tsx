@@ -70,7 +70,7 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
         window.setTimeout(fireNext, 10);
       };
       window.setTimeout(fireNext, 0);
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
     const turns: [string, string][] = [

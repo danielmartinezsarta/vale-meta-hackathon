@@ -67,7 +67,7 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
         for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
         callbacks.onSpeechEnd();
       }, 0);
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
     vi.stubGlobal(
       "fetch",

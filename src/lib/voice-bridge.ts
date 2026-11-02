@@ -107,6 +107,8 @@ export interface TurnClientStats {
   /** Blocks lost under load (wall vs frames) and source blocks spanned. */
   lostBlocks: number | null;
   srcBlocks: number | null;
+  engine: "worklet" | "script" | null;
+  sheetOpen: boolean | null;
 }
 
 function parseClientStats(message: {
@@ -116,6 +118,8 @@ function parseClientStats(message: {
   valeState?: unknown;
   lostBlocks?: unknown;
   srcBlocks?: unknown;
+  engine?: unknown;
+  sheetOpen?: unknown;
 }): TurnClientStats {
   const num = (value: unknown, max: number): number | null =>
     typeof value === "number" &&
@@ -142,6 +146,11 @@ function parseClientStats(message: {
     valeState: state,
     lostBlocks: int(message.lostBlocks, 3600000),
     srcBlocks: int(message.srcBlocks, 3600000),
+    engine:
+      message.engine === "worklet" || message.engine === "script"
+        ? message.engine
+        : null,
+    sheetOpen: typeof message.sheetOpen === "boolean" ? message.sheetOpen : null,
   };
 }
 
@@ -257,6 +266,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     valeState: null,
     lostBlocks: null,
     srcBlocks: null,
+    engine: null,
+    sheetOpen: null,
   };
   let pendingEnd = false;
   let agentRan = false;
@@ -333,6 +344,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       valeState: null,
       lostBlocks: null,
       srcBlocks: null,
+      engine: null,
+      sheetOpen: null,
     };
     pendingEnd = false;
     agentRan = false;
@@ -449,6 +462,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       valeState: turnStats.valeState,
       lostBlocks: turnStats.lostBlocks,
       srcBlocks: turnStats.srcBlocks,
+      engine: turnStats.engine,
+      sheetOpen: turnStats.sheetOpen,
       costUsd: estimateCost(
         {
           inputTokens: fields.inputTokens,

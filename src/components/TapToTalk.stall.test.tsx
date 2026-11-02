@@ -27,7 +27,7 @@ function stubSession() {
       onSpeechEnd: callbacks.onSpeechEnd,
       onHeartbeat: callbacks.onHeartbeat,
     };
-    return { stop: () => {}, state: () => "running" };
+    return { stop: () => {}, state: () => "running", engine: () => "script" as const };
   });
 }
 

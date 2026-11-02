@@ -51,6 +51,7 @@ describe("empty turns stay hidden (fix 1)", () => {
     mockStartCapture.mockImplementation(() => ({
       stop: () => {},
       state: () => "running",
+      engine: () => "script" as const,
     }));
     const fetchMock = vi.fn(() => new Promise(() => {}));
     vi.stubGlobal("fetch", fetchMock);
@@ -81,7 +82,7 @@ describe("empty turns stay hidden (fix 1)", () => {
     // Later turns stay silent so the session waits.
     let fired = false;
     mockStartCapture.mockImplementation((_stream, callbacks) => {
-      if (fired) return { stop: () => {}, state: () => "running" };
+      if (fired) return { stop: () => {}, state: () => "running", engine: () => "script" as const };
       fired = true;
       const frame = new Int16Array(960).fill(4000);
       window.setTimeout(() => {
@@ -90,7 +91,7 @@ describe("empty turns stay hidden (fix 1)", () => {
         for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
         callbacks.onSpeechEnd();
       }, 0);
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
     const fetchMock = vi.fn((..._args: unknown[]) => {
