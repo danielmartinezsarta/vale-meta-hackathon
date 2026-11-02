@@ -59,6 +59,7 @@ describe("tool definitions", () => {
         "agenda_show",
         "client_card_show",
         "client_create",
+        "client_note_add",
         "goal_show",
         "session_close",
         "session_log_supply",
@@ -83,7 +84,6 @@ describe("tool definitions", () => {
   it("keeps booking and card lookups internal-only", () => {
     const names = VALE_TOOLS.map((tool) => tool.name);
     for (const internal of [
-      "client_note_add",
       "agenda_move_appointment",
       "agenda_cancel_appointment",
       "agenda_get_next",
@@ -368,7 +368,7 @@ describe("log_supply_use", () => {
     const asked = logSupplyUse(db, { name: "Esmalte verde" });
     expect(asked.ok).toBe(false);
     expect(asked.pendingCreate).toBe("Esmalte verde");
-    expect(asked.message).toContain("¿lo creo");
+    expect(asked.message).toContain("¿lo guardo");
     const countBefore = db.prepare("SELECT COUNT(*) AS n FROM supplies").get() as { n: number };
     expect(countBefore.n).toBe(23);
     const created = logSupplyUse(db, { name: "Esmalte verde", confirm_create: true });
