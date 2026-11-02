@@ -215,7 +215,7 @@ describe("POST /api/voice", () => {
     vi.stubGlobal("fetch", modelFetch);
     const { setPendingAction } = await import("@/lib/pending-action");
     setPendingAction("pend-yes-1", [
-      { tool: "find_client", args: { name: "Ana" } },
+      { tool: "client_card_show", args: { name: "Ana" } },
     ]);
     const text = await POST(
       new Request("http://localhost/api/voice", {
@@ -228,7 +228,7 @@ describe("POST /api/voice", () => {
       }),
     ).then((response) => response.text());
     expect(text).toContain("event: reply");
-    expect(text).toContain("ficha de Ana");
+    expect(text).toContain("card is on screen");
     expect(modelFetch).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
@@ -240,7 +240,7 @@ describe("POST /api/voice", () => {
       "@/lib/pending-action"
     );
     setPendingAction("pend-no-1", [
-      { tool: "find_client", args: { name: "Ana" } },
+      { tool: "client_card_show", args: { name: "Ana" } },
     ]);
     const text = await POST(
       new Request("http://localhost/api/voice", {

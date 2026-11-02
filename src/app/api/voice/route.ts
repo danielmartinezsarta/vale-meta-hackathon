@@ -9,9 +9,12 @@ import {
   isConfirmYes,
   isRefusalNo,
   peekPendingAction,
+  quoteAcceptSessionId,
   runPendingActions,
   takePendingAction,
 } from "@/lib/pending-action";
+import { rejectQuote } from "@/lib/vale-tools";
+import { buildWidget } from "@/lib/widget";
 import {
   checkWake,
   noteAttention,
@@ -312,8 +315,49 @@ export async function POST(request: Request): Promise<Response> {
           }
           // A no to Vale's pending proposal discards it at once: the card
           // goes away with a short decline, no model, no second question.
+          // A no on the quote sheet rejects it instead and waits for the
+          // spoken amount, with the sheet still open.
           if (isRefusalNo(transcript) && peekPendingAction(clientKey)) {
-            clearPendingAction(clientKey);
+            const stored = takePendingAction(clientKey);
+            const quoteSession = quoteAcceptSessionId(stored ?? []);
+            if (quoteSession !== null) {
+              const rejected = rejectQuote(getDb(), quoteSession, language);
+              recordTurn(getDb(), clientKey, "user", transcript);
+              recordTurn(getDb(), clientKey, "vale", rejected.message, "session_quote");
+              send("reply", { text: rejected.message });
+              noteAttention(clientKey);
+              send("board", { board: getBoard(getDb()) });
+              send("widget", {
+                widget: buildWidget(
+                  "session_quote",
+                  {},
+                  (rejected as { data?: unknown }).data ?? null,
+                  language,
+                ),
+              });
+              logTurn({
+                language,
+                ts,
+                transcript,
+                ttftMs: Date.now() - speechEndAt,
+                inputTokens: 0,
+                outputTokens: 0,
+                audioSeconds,
+                tool: "session_quote",
+                modelSkipped: true,
+                error: null,
+                ignored: false,
+                asrMs: measuredAsrMs,
+                chain: "none",
+                key: clientKey,
+                slots: slotSnapshot(),
+                gate: verdict.gate,
+                sinceReplyS: verdict.sinceReplyS,
+                totalMs: Date.now() - speechEndAt,
+              });
+              send("done", {});
+              return;
+            }
             const declined = declineText(language);
             recordTurn(getDb(), clientKey, "vale", declined, null);
             send("reply", { text: declined });
