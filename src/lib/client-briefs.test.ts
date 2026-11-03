@@ -82,6 +82,21 @@ describe("client briefs store (HACK-005)", () => {
     db.close();
   });
 
+  it("lists the clients with appointments today", async () => {
+    const { todayClientIds } = await import("./client-briefs");
+    const db = freshTestDb();
+    const names = db
+      .prepare("SELECT name FROM clients WHERE id IN (SELECT client_id FROM appointments WHERE day = ?)")
+      .all("2099-01-01") as { name: string }[];
+    expect(names).toEqual([]);
+    const ids = todayClientIds(db);
+    const today = db
+      .prepare("SELECT c.name AS name FROM clients c WHERE c.id IN (" + ids.map(() => "?").join(",") + ")")
+      .all(...ids) as { name: string }[];
+    expect(today.map((row) => row.name).sort()).toEqual(["David", "Paola", "Sofia"]);
+    db.close();
+  });
+
   it("treats the brief as stale after a new note", async () => {
     vi.stubEnv("GLIMMER_URL", "https://glimmer.test");
     vi.stubEnv("GLIMMER_TOKEN", "secret");

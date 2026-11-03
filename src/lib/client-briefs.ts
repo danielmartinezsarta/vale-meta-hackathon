@@ -5,6 +5,7 @@
 // sent back. Tests stub the Glimmer fetch; no network in the suite.
 import { createHash } from "node:crypto";
 import type { ValeDb } from "./db";
+import { bogotaDay } from "./natural-date";
 
 /** Fixed Glimmer schema: what the voice says, what the card shows. */
 export interface ClientBrief {
@@ -254,9 +255,19 @@ export function refreshClientBriefInBackground(db: ValeDb, clientId: number): vo
 }
 
 /**
- * Precompute for later wiring (server start, db:reset): every listed
- * client gets a fresh brief. Not called anywhere yet: HACK-024 owns the
- * seed and start paths, so this stays an export until the rebase.
+ * Clients with an appointment today, oldest booking first. The server
+ * warms exactly these briefs on start; db:reset chains the same call.
+ */
+export function todayClientIds(db: ValeDb, when = new Date()): number[] {
+  const rows = db
+    .prepare("SELECT DISTINCT client_id AS id FROM appointments WHERE day = ? ORDER BY id")
+    .all(bogotaDay(when)) as { id: number }[];
+  return rows.map((row) => row.id);
+}
+
+/**
+ * Precompute for server start and db:reset: every listed client gets a
+ * fresh brief. Failures resolve to null and never throw.
  */
 export async function precomputeBriefsForClients(
   db: ValeDb,
