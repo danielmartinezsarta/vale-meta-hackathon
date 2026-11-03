@@ -8,6 +8,7 @@ import {
   usdWhole,
   widgetTitle,
   WIDGET_SIZE,
+  type CardStore,
 } from "./widget";
 
 const NO_DB = undefined;
@@ -63,6 +64,46 @@ describe("buildWidget (typed payloads per kind)", () => {
         visitsMore: 0,
         healthNotes: ["Allergic to monomer"],
         noteTags: ["Always on time"],
+      },
+    });
+  });
+
+  it("fills visit photos from the session photo path, null when absent", () => {
+    const store: CardStore = {
+      prepare: (sql: string) => ({
+        get: (..._params: unknown[]) => undefined,
+        all: (..._params: unknown[]) =>
+          sql.includes("photo_path")
+            ? [
+                {
+                  started: "2026-10-20T10:00:00.000Z",
+                  service: "Gel removal",
+                  photo: "/data/session-photos/post_3.jpg",
+                },
+                { started: "2026-10-01T10:00:00.000Z", service: "Manicure", photo: null },
+              ]
+            : [],
+      }),
+    };
+    expect(
+      buildWidget("find_client", {}, { id: 7, name: "David", notes: [] }, store),
+    ).toEqual({
+      kind: "client_card",
+      title: "Client card",
+      size: "full",
+      data: {
+        name: "David",
+        birthday: null,
+        sex: null,
+        phone: null,
+        email: null,
+        visits: [
+          { date: "2026-10-20", service: "Gel removal", photo: "/api/photos?file=post_3.jpg" },
+          { date: "2026-10-01", service: "Manicure", photo: null },
+        ],
+        visitsMore: 0,
+        healthNotes: [],
+        noteTags: [],
       },
     });
   });

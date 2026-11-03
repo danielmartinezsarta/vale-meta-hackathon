@@ -5,7 +5,7 @@ import { PRIVATE_NOTE_LABEL } from "@/lib/db";
 import type { Board } from "@/lib/board";
 
 const board: Board = {
-  session: { clientName: "Ana Beltran", serviceName: "Retiro de gel", startedAt: new Date().toISOString() },
+  session: { id: 1, clientName: "Ana Beltran", serviceName: "Retiro de gel", startedAt: new Date().toISOString() },
   card: {
     name: "Ana Beltran",
     notes: [

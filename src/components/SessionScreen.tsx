@@ -12,6 +12,7 @@ import type { AwakeBubble } from "@/components/AwakeScreen";
 import styles from "./ValeScreens.module.css";
 
 export interface ValeSession {
+  id: number;
   clientName: string;
   serviceName: string;
   startedAt: string;
@@ -113,14 +114,18 @@ export function SessionScreen({
             className={styles.abtn}
             type="button"
             aria-label="Photos: before, reference and expected result"
-            onClick={() =>
-              onOpenWidget({
-                kind: "photos",
-                title: "Photos",
-                size: "full",
-                data: { before: null, reference: null, expected: null },
-              })
-            }
+            onClick={() => {
+              if (sheetCallbacks?.onPhotos) {
+                sheetCallbacks.onPhotos();
+              } else {
+                onOpenWidget({
+                  kind: "photos",
+                  title: "Photos",
+                  size: "full",
+                  data: { before: null, reference: null, expected: null },
+                });
+              }
+            }}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <g

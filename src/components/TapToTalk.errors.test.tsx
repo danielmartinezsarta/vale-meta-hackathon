@@ -124,6 +124,47 @@ describe("plain-language errors (fake-device fallback)", () => {
     ).toBeTruthy();
   });
 
+  it("voices the five-nails tool failure as her reply, not an alert", async () => {
+    const seen = setupDevice();
+    const message = "I need a photo with all five nails visible.";
+    const raw =
+      'event: final\ndata: {"transcript":"check my nails","audioProcessedMs":800}\n\n' +
+      `event: reply\ndata: ${JSON.stringify({ text: message })}\n\n` +
+      "event: done\ndata: {}\n\n";
+    const bytes = new TextEncoder().encode(raw);
+    let served = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (!served) {
+                served = true;
+                return { done: false, value: bytes };
+              }
+              return { done: true, value: undefined };
+            },
+            releaseLock: () => {},
+          }),
+        },
+      })) as unknown as typeof fetch,
+    );
+
+    render(<TapToTalk debug />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(seen.length).toBeGreaterThan(0);
+    });
+    burst(seen[0]);
+
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    // Success path: the session stays live instead of ending with an alert.
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+  });
+
   it("hides the service code when the connection drops (E-NET)", async () => {
     const seen = setupDevice();
     vi.stubGlobal(

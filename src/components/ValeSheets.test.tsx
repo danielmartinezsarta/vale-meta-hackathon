@@ -24,7 +24,9 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
         sex: "Male",
         phone: "+1 (555) 014-2200",
         email: "david@example.com",
-        visits: [{ date: "2026-10-12", service: "Gel manicure" }],
+        visits: [
+          { date: "2026-10-12", service: "Gel manicure", photo: "/api/photos?file=post_3.jpg" },
+        ],
         visitsMore: 2,
         healthNotes: ["Allergic to monomer"],
         noteTags: ["Always on time"],
@@ -35,13 +37,37 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
     expect(screen.getByText("Allergic to monomer")).toBeTruthy();
     expect(screen.getByText("Oct 12, 2026")).toBeTruthy();
     expect(screen.getByText("+ 2 earlier visits")).toBeTruthy();
-    // No camera affordance until a visit carries real photos.
+    // The camera affordance returns once a visit carries real photos.
+    expect(
+      screen
+        .getByRole("button", { name: /open the photos of this visit/ })
+        .querySelector("svg"),
+    ).not.toBeNull();
+    expect(screen.getByText("Always on time")).toBeTruthy();
+  });
+
+  it("shows no camera affordance when the visit carries no photo", () => {
+    renderSheet({
+      kind: "client_card",
+      title: "Client card",
+      size: "full",
+      data: {
+        name: "David",
+        birthday: null,
+        sex: null,
+        phone: null,
+        email: null,
+        visits: [{ date: "2026-10-12", service: "Gel manicure", photo: null }],
+        visitsMore: 0,
+        healthNotes: [],
+        noteTags: [],
+      },
+    });
     expect(
       screen
         .getByRole("button", { name: /open the photos of this visit/ })
         .querySelector("svg"),
     ).toBeNull();
-    expect(screen.getByText("Always on time")).toBeTruthy();
   });
 
   it("hides the card health block when there are no health notes", () => {

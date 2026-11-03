@@ -262,6 +262,14 @@ describe("Ali sheet flows", () => {
   it("opens the photos sheet from a visit tap", async () => {
     const ws = await openConversation();
     ws.serverMessage({
+      type: "board",
+      board: {
+        session: { id: 7, clientName: "David", serviceName: "Gel manicure", startedAt: "2026-11-02T10:00:00.000Z" },
+        card: null,
+        list: [],
+      },
+    });
+    ws.serverMessage({
       type: "widget",
       widget: {
         kind: "client_card",
@@ -273,7 +281,7 @@ describe("Ali sheet flows", () => {
           sex: null,
           phone: null,
           email: null,
-          visits: [{ date: "2026-10-20", service: "Gel removal" }],
+          visits: [{ date: "2026-10-20", service: "Gel removal", photo: null }],
           visitsMore: 0,
           healthNotes: [],
           noteTags: [],
@@ -322,8 +330,35 @@ describe("Ali sheet flows", () => {
     expect(ws.sentStrings()).toContain(JSON.stringify({ type: "sheet-closed" }));
   });
 
-  it("runs Final photo then Accept into the result sheet", async () => {
+  it("runs Final photo upload then Accept into the mosaic result sheet", async () => {
     const ws = await openConversation();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        if (String(url).startsWith("/api/session-photo")) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              sessionId: 7,
+              slot: "post",
+              photoUrl: "/api/photos?file=post_7.jpg",
+              mosaicUrl: "/api/photos?file=mosaic_7.png",
+              description: "Matte nude with black lace and copper foil.",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response("no", { status: 404 });
+      }),
+    );
+    ws.serverMessage({
+      type: "board",
+      board: {
+        session: { id: 7, clientName: "David", serviceName: "Gel manicure", startedAt: "2026-11-02T10:00:00.000Z" },
+        card: null,
+        list: [],
+      },
+    });
     ws.serverMessage({
       type: "widget",
       widget: { kind: "camera_save_as", title: "Save photo as", size: "half", data: {} },
@@ -331,18 +366,34 @@ describe("Ali sheet flows", () => {
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: "Save photo as" })).toBeTruthy();
     });
-    fireEvent.click(screen.getByText("Final photo"));
-    await waitFor(() => {
-      expect(screen.getByRole("dialog", { name: "Save final photo" })).toBeTruthy();
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Accept" }));
-    await waitFor(() => {
-      expect(screen.getByRole("dialog", { name: "Final result" })).toBeTruthy();
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Close final result" }));
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Final result" })).toBeNull();
-    });
+    const created: HTMLInputElement[] = [];
+    const origCreate = document.createElement.bind(document);
+    const spy = vi.spyOn(document, "createElement").mockImplementation(((tagName: string, options?: ElementCreationOptions) => {
+      const el = origCreate(tagName, options);
+      if (tagName === "input") created.push(el as HTMLInputElement);
+      return el;
+    }) as typeof document.createElement);
+    try {
+      fireEvent.click(screen.getByText("Final photo"));
+      expect(created).toHaveLength(1);
+      const file = new File([new Uint8Array([1, 2, 3])], "nail.jpg", { type: "image/jpeg" });
+      Object.defineProperty(created[0], "files", { value: [file], configurable: true });
+      created[0].dispatchEvent(new window.Event("change", { bubbles: true }));
+      await waitFor(() => {
+        expect(screen.getByRole("dialog", { name: "Save final photo" })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+      await waitFor(() => {
+        expect(screen.getByRole("dialog", { name: "Final result" })).toBeTruthy();
+      });
+      expect(screen.getByText("Matte nude with black lace and copper foil.")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Close final result" }));
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog", { name: "Final result" })).toBeNull();
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("dismisses the price sheet on Accept with no vote", async () => {
