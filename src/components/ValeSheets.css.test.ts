@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-/** Every Ali class the renderer references must have a rule in the port. */
+/** Every design class the renderer references must have a rule in the port. */
 describe("ValeSheets CSS coverage", () => {
   it("defines every aw- class used by the sheet markup", () => {
     const dir = join(__dirname);
@@ -15,9 +15,9 @@ describe("ValeSheets CSS coverage", () => {
       }
     }
     expect(used.size).toBeGreaterThan(0);
-    // Ali styles some elements through the block selector, so a __part
+    // The design styles some elements through the block selector, so a __part
     // is covered when its block carries rules. Four sheet markers carry
-    // no rule in Ali either: the base half sheet sizes them.
+    // no rule in the design either: the base half sheet sizes them.
     const ruleless = new Set([
       "aw-goal-sheet",
       "aw-cam-sheet",

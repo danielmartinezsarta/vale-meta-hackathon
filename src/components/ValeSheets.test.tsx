@@ -12,7 +12,7 @@ function renderSheet(widget: Widget) {
   return render(<ValeSheets widget={widget} onClose={vi.fn()} />);
 }
 
-describe("ValeSheets (Ali's sheet per kind)", () => {
+describe("ValeSheets (sheet per kind)", () => {
   it("renders the client card with health first, then visits and notes", () => {
     renderSheet({
       kind: "client_card",
@@ -233,7 +233,7 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
     expect(screen.getByText("Stretch")).toBeTruthy();
   });
 
-  it("marks the mounted sheet open so Ali's CSS shows it", async () => {
+  it("marks the mounted sheet open so the design CSS shows it", async () => {
     renderSheet({
       kind: "goal",
       title: "Monthly goal",
@@ -246,7 +246,7 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
     });
   });
 
-  it("marks every Ali sheet open so each kind can show", async () => {
+  it("marks every sheet open so each kind can show", async () => {
     const sheets: Widget[] = [
       { kind: "client_card", title: "Client card", size: "full", data: { name: "David", birthday: null, sex: null, phone: null, email: null, visits: [], visitsMore: 0, healthNotes: [], noteTags: [] } },
       { kind: "goal", title: "Monthly goal", size: "half", data: { name: null, goal: 600, earned: 120 } },

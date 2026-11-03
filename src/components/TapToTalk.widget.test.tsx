@@ -200,7 +200,7 @@ describe("confirm card (touch equals voice)", () => {
   });
 });
 
-describe("Ali sheet flows", () => {
+describe("sheet flows", () => {
   it("auto-hides the booked sheet after 3 s", { timeout: 15000 }, async () => {
     const ws = await openConversation();
     ws.serverMessage({
