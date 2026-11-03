@@ -35,6 +35,7 @@ function stubSpeechSynthesis(voices: SpeechSynthesisVoice[] = []) {
   const utterances: string[] = [];
   const synth = {
     cancel: vi.fn(),
+    resume: vi.fn(),
     getVoices: vi.fn(() => voices),
     speak: vi.fn((utterance: SpeechSynthesisUtterance) => {
       utterances.push(utterance.text);
@@ -380,6 +381,20 @@ describe("seamless voice engine", () => {
       setVoiceEngine("browser");
       vi.useRealTimers();
     }
+  });
+
+  it("reclaims a paused utterance at once", async () => {
+    const { synth } = stubSpeechSynthesis();
+    speak("Hola");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
+    const said = synth.speak.mock.calls[0][0] as unknown as {
+      onpause: (() => void) | null;
+    };
+    expect(typeof said.onpause).toBe("function");
+    said.onpause?.();
+    expect(synth.resume).toHaveBeenCalledTimes(1);
   });
 
   it("releases a browser utterance cut with no event", async () => {

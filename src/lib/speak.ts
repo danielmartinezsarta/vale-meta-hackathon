@@ -770,6 +770,15 @@ function queueBrowserSentences(
       };
       utterance.onend = release;
       utterance.onerror = release;
+      // iOS pauses speech on session interruptions with no end event:
+      // reclaim it at once instead of holding the queue behind it.
+      utterance.onpause = () => {
+        try {
+          s.resume();
+        } catch {
+          /* best-effort; the timeout watchdog still frees accounting */
+        }
+      };
       pendingUtterances += 1;
       s.speak(utterance);
       // iOS can cut an utterance with no event: the queue stalls behind

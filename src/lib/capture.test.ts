@@ -351,6 +351,20 @@ describe("strict-turn pause (mute while Vale speaks)", () => {
     };
   };
 
+  it("pausing suspends the session and resume reopens it", () => {
+    stubAudio();
+    const handle = startCapture({} as MediaStream, quietCallbacks());
+    const context = FakeAudioContext.instances[0];
+    const resumedBefore = context.resumed;
+    handle.setPaused?.(true);
+    expect(context.suspended).toBe(1);
+    expect(context.state).toBe("suspended");
+    handle.setPaused?.(false);
+    expect(context.resumed).toBe(resumedBefore + 1);
+    expect(context.state).toBe("running");
+    handle.stop();
+  });
+
   it("pausing drops detector and frames but keeps the heartbeat", () => {
     stubAudio();
     const { seen, callbacks } = counters();
@@ -483,6 +497,7 @@ class FakeAudioContext {
     | undefined = FakeAudioContext.workletStub;
   requestedOptions: { sampleRate?: number } | undefined;
   resumed = 0;
+  suspended = 0;
   closedCount = 0;
   destination = {};
   onaudioprocess: ((event: unknown) => void) | null = null;
@@ -495,6 +510,11 @@ class FakeAudioContext {
   resume(): Promise<void> {
     this.resumed += 1;
     if (FakeAudioContext.resumeUnlocks) this.state = "running";
+    return Promise.resolve();
+  }
+  suspend(): Promise<void> {
+    this.suspended += 1;
+    this.state = "suspended";
     return Promise.resolve();
   }
   close(): Promise<void> {

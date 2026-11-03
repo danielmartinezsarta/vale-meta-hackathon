@@ -769,6 +769,16 @@ export function startCapture(
       } catch {
         /* torn down; the local flags still hold */
       }
+      // While she speaks the mic is useless: suspend the whole session so
+      // iOS never mediates two live audio clients mid-reply (the cut).
+      // Resume reopens the same context; a dead one rebuilds on the stall
+      // tick below, which skips muted stretches for the same reason.
+      try {
+        if (next) void context.suspend().catch(() => {});
+        else void context.resume().catch(() => {});
+      } catch {
+        /* suspend is best-effort; frame pause still holds */
+      }
       if (!next) {
         resetListening();
         resumeQuietUntil = Date.now() + RESUME_QUIET_MS;

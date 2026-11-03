@@ -1908,6 +1908,9 @@ export function TapToTalk({
       watchdogRef.current = window.setInterval(() => {
         void (async () => {
           if (!sessionRef.current) return;
+          // Her voice owns the session: the context is suspended on
+          // purpose, so rebuilding here would yank her audio mid-reply.
+          if (mutedRef.current) return;
           if (Date.now() - lastBeatAt < STALL_MS) return;
         const tracks =
           typeof stream.getTracks === "function" ? stream.getTracks() : [];
