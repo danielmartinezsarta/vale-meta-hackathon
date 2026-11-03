@@ -68,6 +68,34 @@ describe("buildWidget (typed payloads per kind)", () => {
     });
   });
 
+  it("reads health notes under their migrated kind", () => {
+    const store: CardStore = {
+      prepare: (sql: string) => ({
+        get: (..._params: unknown[]) => undefined,
+        all: (..._params: unknown[]) =>
+          sql.includes("health_note") ? [{ text: "Latex allergy" }] : [],
+      }),
+    };
+    expect(
+      buildWidget("find_client", {}, { id: 7, name: "David", notes: [] }, store),
+    ).toEqual({
+      kind: "client_card",
+      title: "Client card",
+      size: "full",
+      data: {
+        name: "David",
+        birthday: null,
+        sex: null,
+        phone: null,
+        email: null,
+        visits: [],
+        visitsMore: 0,
+        healthNotes: ["Latex allergy"],
+        noteTags: [],
+      },
+    });
+  });
+
   it("carries the private brief on top of the card when present", () => {
     expect(
       buildWidget(
