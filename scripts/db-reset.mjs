@@ -6,6 +6,7 @@
 // Never touches any other file.
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
+import { connect } from "node:net";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,6 +17,26 @@ const file = override
     ? override
     : join(root, override)
   : join(root, "data", "vale.db");
+
+// Replacing the file under a running server breaks its writes, so the flow
+// stays db:reset first, then npm start: refuse while the port answers.
+const port = Number(process.env.PORT ?? process.env.VOICE_PORT ?? 3000);
+const serverUp = await new Promise((resolve) => {
+  const socket = connect({ host: "127.0.0.1", port });
+  socket.on("connect", () => {
+    socket.destroy();
+    resolve(true);
+  });
+  socket.on("error", () => resolve(false));
+  socket.setTimeout(2000, () => {
+    socket.destroy();
+    resolve(false);
+  });
+});
+if (serverUp) {
+  console.log("Stop the server first (Ctrl-C), then run db:reset.");
+  process.exit(1);
+}
 
 const started = Date.now();
 for (const suffix of ["", "-wal", "-shm", "-journal"]) {
