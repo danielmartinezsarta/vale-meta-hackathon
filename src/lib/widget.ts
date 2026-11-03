@@ -301,7 +301,7 @@ function healthNotesOf(db: CardStore | undefined, id: number): string[] {
   if (!db) return [];
   try {
     const rows = db
-      .prepare("SELECT text FROM notes WHERE client_id = ? AND kind = 'health' ORDER BY id")
+      .prepare("SELECT text FROM notes WHERE client_id = ? AND kind = 'health_note' ORDER BY id")
       .all(id) as { text?: unknown }[];
     return rows.map((row) => text(row.text)).filter((line) => line !== "");
   } catch {
