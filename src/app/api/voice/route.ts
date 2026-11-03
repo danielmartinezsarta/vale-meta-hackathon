@@ -14,7 +14,7 @@ import {
   takePendingAction,
 } from "@/lib/pending-action";
 import { rejectQuote } from "@/lib/vale-tools";
-import { buildWidget } from "@/lib/widget";
+import { buildWidget, type Widget } from "@/lib/widget";
 import {
   checkWake,
   noteAttention,
@@ -23,9 +23,9 @@ import {
 } from "@/lib/wake";
 import { getOpenSession } from "@/lib/vale-tools";
 import { ASR_MODEL, openAsrConnection } from "@/lib/asr";
-import { emitModelLog, emitTurnLog, estimateCost, modelElapsedMs } from "@/lib/turn-log";
+import { emitTurnLog, estimateCost, modelElapsedMs, vlog } from "@/lib/turn-log";
 import { saveTurnWav } from "@/lib/turn-audio";
-import { attachVoiceBridge } from "@/lib/voice-bridge";
+import { attachVoiceBridge, parseTurnTag } from "@/lib/voice-bridge";
 import {
   DEFAULT_LANGUAGE,
   declineText,
@@ -40,7 +40,12 @@ export const runtime = "nodejs";
 export async function GET(): Promise<Response> {
   const key = process.env.META_API_KEY;
   if (!key) {
-    console.error("[voice] META_API_KEY is not configured; rejecting turn.");
+    vlog({
+      turn: "-",
+      process: "ERROR",
+      status: "error",
+      content: "META_API_KEY is not configured; rejecting turn",
+    });
     return Response.json(
       {
         error: turnErrorText("setup"),
@@ -92,11 +97,18 @@ export async function POST(request: Request): Promise<Response> {
   const language = parseLanguage(
     new URL(request.url).searchParams.get("language") ?? DEFAULT_LANGUAGE,
   );
+  // Shared turn id from the client (t042); the WS bridge parses its own.
+  const turnTag = parseTurnTag(new URL(request.url).searchParams.get("turn"));
   // Slots and pending proposals live per client, like the wake window.
   const clientKey = requestClientId(request);
   if (!key) {
     // Server-side log only; the key itself is never logged.
-    console.error("[voice] META_API_KEY is not configured; rejecting turn.");
+    vlog({
+      turn: turnTag ?? "-",
+      process: "ERROR",
+      status: "error",
+      content: "META_API_KEY is not configured; rejecting turn",
+    });
     return Response.json(
       {
         error: turnErrorText("setup", language),
@@ -143,6 +155,30 @@ export async function POST(request: Request): Promise<Response> {
         } catch {
           /* already closed */
         }
+      };
+      // Every screen payload also lands in the JSONL recording with its
+      // turn, so replay sees exactly what the screen showed.
+      const sendBoard = () => {
+        const board = getBoard(getDb());
+        send("board", { board });
+        vlog({
+          turn: turnTag ?? "-",
+          process: "DB",
+          status: "ok",
+          detail: { board: true },
+          extra: { board },
+        });
+      };
+      const sendWidget = (widget: Widget | null) => {
+        send("widget", { widget });
+        vlog({
+          turn: turnTag ?? "-",
+          process: "VOICE",
+          status: "ok",
+          detail: { widget: widget === null ? "none" : widget.kind },
+          content: widget === null ? null : widget.title,
+          extra: { widget },
+        });
       };
       // Error codes name the failing layer: E-VAD silence, E-NET service, E-ASR transcription, E-MODEL reply.
       const finishError = (message: string, code: string) => {
@@ -213,6 +249,7 @@ export async function POST(request: Request): Promise<Response> {
       const logTurn = (fields: {
         // ts is the caller-supplied end-of-speech moment.
         ts: string;
+        turn?: string | null;
         language: ValeLanguage;
         transcript: string;
         ttftMs: number | null;
@@ -242,6 +279,7 @@ export async function POST(request: Request): Promise<Response> {
         }
         emitTurnLog({
           ...fields,
+          turn: fields.turn ?? turnTag,
           wav: turnWav,
           costUsd: estimateCost(
             {
@@ -289,7 +327,7 @@ export async function POST(request: Request): Promise<Response> {
               send("reply", { text: executed.text });
               // Her reply restarts the window: the next turn counts from here.
               noteAttention(clientKey);
-              send("board", { board: getBoard(getDb()) });
+              sendBoard();
               logTurn({
                 language,
                 ts,
@@ -326,14 +364,14 @@ export async function POST(request: Request): Promise<Response> {
               recordTurn(getDb(), clientKey, "vale", rejected.message, "session_quote");
               send("reply", { text: rejected.message });
               noteAttention(clientKey);
-              send("board", { board: getBoard(getDb()) });
-              send("widget", {
-                widget: buildWidget(
+              sendBoard();
+              sendWidget(
+                buildWidget(
                   "quote_price",
                   {},
                   (rejected as { data?: unknown }).data ?? null,
                 ),
-              });
+              );
               logTurn({
                 language,
                 ts,
@@ -361,8 +399,8 @@ export async function POST(request: Request): Promise<Response> {
             recordTurn(getDb(), clientKey, "vale", declined, null);
             send("reply", { text: declined });
             noteAttention(clientKey);
-            send("board", { board: getBoard(getDb()) });
-            send("widget", { widget: null });
+            sendBoard();
+            sendWidget(null);
             logTurn({
               language,
               ts,
@@ -395,19 +433,24 @@ export async function POST(request: Request): Promise<Response> {
             onDelta: (text) => send("reply-delta", { text }),
             language,
             slotKey: clientKey,
+            turn: turnTag ?? undefined,
           });
           if (!aborted) recordTurn(getDb(), clientKey, "vale", result.text, result.toolUsed);
-          emitModelLog(
-            AGENT_MODEL,
-            modelElapsedMs(result.firstTokenMs, speechEndAt),
-            transcript,
-          );
+          vlog({
+            turn: turnTag ?? "-",
+            process: "AGENT",
+            model: AGENT_MODEL,
+            durationMs: modelElapsedMs(result.firstTokenMs, speechEndAt),
+            status: "ok",
+            detail: { tool: result.toolUsed },
+            content: result.text,
+          });
           send("reply", { text: result.text });
           // Her reply restarts the window: the next turn counts from here.
           noteAttention(clientKey);
-          send("board", { board: getBoard(getDb()) });
+          sendBoard();
           if (result.widget) {
-            send("widget", { widget: result.widget });
+            sendWidget(result.widget);
           }
           logTurn({
             language,
@@ -527,11 +570,15 @@ export async function POST(request: Request): Promise<Response> {
                       gotFinal = true;
                       finalAtMs = Date.now();
                       finalText = event.transcript;
-                      emitModelLog(
-                        ASR_MODEL,
-                        asrStartMs > 0 ? finalAtMs - asrStartMs : null,
-                        finalText,
-                      );
+                      vlog({
+                        turn: turnTag ?? "-",
+                        process: "ASR",
+                        model: ASR_MODEL,
+                        durationMs:
+                          asrStartMs > 0 ? finalAtMs - asrStartMs : null,
+                        status: "ok",
+                        content: finalText,
+                      });
                       audioSeconds = (event.audioProcessedMs ?? 0) / 1000;
                       send("final", {
                         transcript: finalText,
@@ -544,7 +591,14 @@ export async function POST(request: Request): Promise<Response> {
                       settled = true;
                       clearTimeout(timeout);
                       // Plain text to the user; raw provider text stays in the server log only.
-                      console.error(`[voice-asr] transcription error: ${message}`);
+                      vlog({
+                        turn: turnTag ?? "-",
+                        process: "ASR",
+                        model: ASR_MODEL,
+                        status: "error",
+                        detail: { code: "E-ASR" },
+                        content: message,
+                      });
                       finishError(turnErrorText("lost", language), "E-ASR");
                     }
                   },
@@ -664,10 +718,16 @@ export async function POST(request: Request): Promise<Response> {
         closeStream();
       } catch (error) {
         // The client only sees E-NET; the cause stays in the server log.
-        console.error(
-          "[voice] turn failed:",
-          error instanceof Error ? (error.stack ?? error.message) : error,
-        );
+        vlog({
+          turn: turnTag ?? "-",
+          process: "ERROR",
+          status: "error",
+          detail: { code: "E-NET" },
+          content:
+            error instanceof Error
+              ? (error.stack ?? error.message)
+              : String(error),
+        });
         if (!settled) finishError(turnErrorText("lost", language), "E-NET");
       } finally {
         clearTimeout(timeout);

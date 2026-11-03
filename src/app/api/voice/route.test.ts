@@ -1,7 +1,44 @@
 // @vitest-environment node
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { WebSocketServer, WebSocket } from "ws";
 import { POST } from "./route";
+
+// Every turn-logging test owns its [voice-turn] file: the console now shows
+// the aligned vlog row, and the full JSON lives in the file for the harness.
+let turnsFile = "";
+beforeEach(() => {
+  turnsFile = join(
+    tmpdir(),
+    `route-turns-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  );
+  process.env.VALE_TURNS_PATH = turnsFile;
+});
+
+/** Full turn JSON rows logged since the test started, oldest first. */
+function loggedTurns(): Record<string, unknown>[] {
+  let text = "";
+  try {
+    text = readFileSync(turnsFile, "utf8");
+  } catch {
+    return [];
+  }
+  return text
+    .trim()
+    .split("\n")
+    .filter((line) => line.startsWith("[voice-turn] "))
+    .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
+}
 
 let server: WebSocketServer;
 let url = "";
@@ -127,12 +164,7 @@ function pcmBody(bytes: number, silent = false): ReadableStream<Uint8Array> {
 describe("POST /api/voice", () => {
   it("streams PCM to Meta and returns SSE interim/final/reply events", async () => {
     vi.stubGlobal("fetch", stubAgent("All set, see you soon."));
-    const lines: string[] = [];
-    const logSpy = vi
-      .spyOn(console, "log")
-      .mockImplementation((line: string) => {
-        lines.push(String(line));
-      });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const request = new Request("http://localhost/api/voice", {
         method: "POST",
@@ -155,15 +187,13 @@ describe("POST /api/voice", () => {
       expect(text).toContain("event: done");
       expect(text).not.toContain("test-key");
       // The turn's PCM is kept as a WAV and its path rides the turn log.
-      const served = lines
-        .filter((line) => line.startsWith("[voice-turn] "))
-        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
+      const served = loggedTurns();
       expect(served.length).toBeGreaterThan(0);
       const entry = served[served.length - 1];
       expect(typeof entry.wav).toBe("string");
-      const { existsSync, readFileSync } = await import("node:fs");
-      expect(existsSync(entry.wav)).toBe(true);
-      const wav = readFileSync(entry.wav);
+      const { existsSync } = await import("node:fs");
+      expect(existsSync(entry.wav as string)).toBe(true);
+      const wav = readFileSync(entry.wav as string);
       expect(wav.subarray(0, 4).toString()).toBe("RIFF");
       expect(wav.length).toBe(44 + 4800);
     } finally {
@@ -299,10 +329,7 @@ describe("POST /api/voice", () => {
 
   it("emits one per-turn log line with timings, tokens and cost", async () => {
     vi.stubGlobal("fetch", stubAgent("Done."));
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     const sendTurn = () =>
       POST(
         new Request("http://localhost/api/voice", {
@@ -319,9 +346,9 @@ describe("POST /api/voice", () => {
         body: JSON.stringify({ transcript: "vale, second turn" }),
       }),
     ).then((response) => response.text());
-    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    const turns = loggedTurns();
     expect(turns).toHaveLength(2);
-    const first = JSON.parse(turns[0].replace("[voice-turn] ", ""));
+    const first = turns[0];
     expect(first.transcript).toBe("vale, first turn");
     expect(typeof first.ttftMs).toBe("number");
     expect(first.inputTokens).toBe(100);
@@ -330,9 +357,7 @@ describe("POST /api/voice", () => {
     expect(typeof first.ts).toBe("string");
     expect(first.tool).toBeNull();
     expect(first.error).toBeNull();
-    expect(JSON.parse(turns[1].replace("[voice-turn] ", "")).transcript).toBe(
-      "vale, second turn",
-    );
+    expect(turns[1].transcript).toBe("vale, second turn");
     spy.mockRestore();
     vi.unstubAllGlobals();
   });
@@ -340,10 +365,7 @@ describe("POST /api/voice", () => {
   it("stays silent and skips the model when the ASR final is empty", async () => {
     const modelFetch = vi.fn(async () => fakeAgentReply("should not happen"));
     vi.stubGlobal("fetch", modelFetch);
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     const request = new Request("http://localhost/api/voice", {
       method: "POST",
       headers: { "content-type": "audio/l16" },
@@ -356,11 +378,9 @@ describe("POST /api/voice", () => {
     expect(text).toContain("event: done");
     expect(text).not.toContain("event: reply");
     expect(modelFetch).not.toHaveBeenCalled();
-    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    const turns = loggedTurns();
     expect(turns).toHaveLength(1);
-    const logged = JSON.parse(turns[0].replace("[voice-turn] ", ""));
-    expect(logged.modelSkipped).toBe(true);
-    expect(logged.ttftMs).toBeNull();
+    expect(turns[0]).toMatchObject({ modelSkipped: true, ttftMs: null });
     spy.mockRestore();
     vi.unstubAllGlobals();
   });
@@ -400,10 +420,8 @@ describe("POST /api/voice", () => {
       "fetch",
       vi.fn(async () => new Response("nope", { status: 500 })),
     );
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const request = new Request("http://localhost/api/voice", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -414,12 +432,11 @@ describe("POST /api/voice", () => {
     expect(text).toContain("hello, book a gel refill");
     expect(text).toContain("Sorry, I had a problem.");
     expect(text).toContain('"code":"E-MODEL"');
-    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    const turns = loggedTurns();
     expect(turns).toHaveLength(1);
-    expect(JSON.parse(turns[0].replace("[voice-turn] ", "")).error).toMatch(
-      /model error: 500/,
-    );
+    expect(turns[0].error).toMatch(/model error: 500/);
     spy.mockRestore();
+    errSpy.mockRestore();
     vi.unstubAllGlobals();
   });
 
@@ -470,7 +487,7 @@ describe("POST /api/voice", () => {
         body: JSON.stringify({ transcript: "hi" }),
       }),
     );
-    expect(errors.some((line) => line.includes("[voice]"))).toBe(true);
+    expect(errors.some((line) => line.includes("META_API_KEY"))).toBe(true);
     expect(errors.join("\n")).not.toMatch(/test-key|Bearer/);
     spy.mockRestore();
     vi.stubEnv("META_API_KEY", "test-key");
@@ -480,10 +497,8 @@ describe("POST /api/voice", () => {
     process.env.VOICE_TURN_TIMEOUT_MS = "150";
     holdFinal = true;
     vi.stubGlobal("fetch", stubAgent("unused"));
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const text = await POST(
       new Request("http://localhost/api/voice", {
         method: "POST",
@@ -494,12 +509,13 @@ describe("POST /api/voice", () => {
       }),
     ).then((response) => response.text());
     expect(text).toContain("ran out");
-    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    const turns = loggedTurns();
     expect(turns).toHaveLength(1);
-    expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+    expect(turns[0]).toMatchObject({
       error: "timeout",
     });
     spy.mockRestore();
+    errSpy.mockRestore();
     vi.unstubAllGlobals();
     holdFinal = false;
     delete process.env.VOICE_TURN_TIMEOUT_MS;
@@ -551,10 +567,7 @@ describe("POST /api/voice", () => {
   it("ignores background chatter without the name", async () => {
     const modelFetch = vi.fn(async () => fakeAgentReply("should not happen"));
     vi.stubGlobal("fetch", modelFetch);
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     const text = await POST(
       new Request("http://localhost/api/voice", {
         method: "POST",
@@ -570,9 +583,9 @@ describe("POST /api/voice", () => {
     expect(text).not.toContain("event: reply");
     expect(text).not.toContain("event: board");
     expect(modelFetch).not.toHaveBeenCalled();
-    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    const turns = loggedTurns();
     expect(turns).toHaveLength(1);
-    expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+    expect(turns[0]).toMatchObject({
       modelSkipped: true,
       ignored: true,
     });

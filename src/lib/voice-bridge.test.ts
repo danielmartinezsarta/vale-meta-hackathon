@@ -1,6 +1,17 @@
 // @vitest-environment node
 import { EventEmitter } from "node:events";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   attachVoiceBridge,
@@ -131,7 +142,34 @@ type AgentFn = (args: {
   onDelta: (text: string) => void;
   language?: string;
   slotKey?: string;
+  turn?: string;
 }) => Promise<BridgeAgentResult>;
+
+// Every turn-logging test owns its [voice-turn] file: the console now shows
+// the aligned vlog row, and the full JSON lives in the file for the harness.
+let turnsFile = "";
+beforeEach(() => {
+  turnsFile = join(
+    tmpdir(),
+    `bridge-turns-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  );
+  process.env.VALE_TURNS_PATH = turnsFile;
+});
+
+/** Full turn JSON rows logged since the test started, oldest first. */
+function loggedTurns(): Record<string, unknown>[] {
+  let text = "";
+  try {
+    text = readFileSync(turnsFile, "utf8");
+  } catch {
+    return [];
+  }
+  return text
+    .trim()
+    .split("\n")
+    .filter((line) => line.startsWith("[voice-turn] "))
+    .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
+}
 
 function attachForTest(
   browser: FakeBrowser,
@@ -153,10 +191,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     receivedBinaryBytes = 0;
     receivedEndStream = 0;
     finalTranscript = "vale, live from the bridge";
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       attachForTest(browser);
@@ -215,9 +250,9 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       expect(interimAt).toBeGreaterThan(-1);
       expect(finalAt).toBeGreaterThan(interimAt);
 
-      const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+      const turns = loggedTurns();
       expect(turns).toHaveLength(1);
-      const logged = JSON.parse(turns[0].replace("[voice-turn] ", ""));
+      const logged = turns[0];
       expect(logged.transcript).toBe("vale, live from the bridge");
       expect(logged.inputTokens).toBe(100);
       expect(logged.outputTokens).toBe(20);
@@ -255,10 +290,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
   it("answers silence with an empty turn, no notice, never calls the model", async () => {
     finalTranscript = "";
     const agent = vi.fn(fakeAgent());
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       attachForTest(browser, agent);
@@ -276,9 +308,9 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       });
       expect(browser.frames().some((frame) => frame.type === "notice")).toBe(false);
       expect(agent).not.toHaveBeenCalled();
-      const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+      const turns = loggedTurns();
       expect(turns).toHaveLength(1);
-      expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+      expect(turns[0]).toMatchObject({
         modelSkipped: true,
       });
     } finally {
@@ -288,10 +320,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
   });
 
   it("persists the client engine and sheet flag from endStream", async () => {
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       attachForTest(browser);
@@ -304,6 +333,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       browser.peerMessage(
         JSON.stringify({
           type: "endStream",
+          turn: "t042",
           lostBlocks: 3,
           srcBlocks: 100,
           engine: "script",
@@ -315,9 +345,10 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
           true,
         );
       });
-      const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+      const turns = loggedTurns();
       expect(turns).toHaveLength(1);
-      expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+      expect(turns[0]).toMatchObject({
+        turn: "t042",
         lostBlocks: 3,
         srcBlocks: 100,
         engine: "script",
@@ -329,10 +360,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
   });
 
   it("adopts the endStream language with no prior language frame", async () => {
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       attachForTest(browser);
@@ -349,9 +377,9 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
           true,
         );
       });
-      const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+      const turns = loggedTurns();
       expect(turns).toHaveLength(1);
-      expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+      expect(turns[0]).toMatchObject({
         language: "es",
       });
     } finally {
@@ -381,10 +409,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
 
   it("closes the sheet on dismiss with no model call", async () => {
     const agent = vi.fn(fakeAgent());
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       attachForTest(browser, agent);
@@ -406,9 +431,9 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
         browser.frames().some((frame) => frame.type === "ignored"),
       ).toBe(true);
       expect(agent).not.toHaveBeenCalled();
-      const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+      const turns = loggedTurns();
       expect(turns).toHaveLength(1);
-      expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+      expect(turns[0]).toMatchObject({
         transcript: "close the agenda",
         ignored: true,
         modelSkipped: true,
@@ -966,7 +991,10 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
         );
       });
       expect(
-        logs.some((line) => line.startsWith("[client-state]")),
+        logs.some(
+          (line) =>
+            line.includes("| VOICE ") && line.includes('"capture":"live"'),
+        ),
       ).toBe(true);
       expect(
         browser.frames().some((frame) => frame.type === "error"),
@@ -1246,19 +1274,17 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
       expect(
         browser.frames().some((frame) => frame.type === "ignored"),
       ).toBe(false);
-      expect(lines.some((line) => line.includes('"gate":"eco"'))).toBe(false);
+      expect(lines.some((line) => line.includes("gate=eco"))).toBe(false);
       const ventana = lines.filter((line) =>
-        line.includes('"gate":"ventana"'),
+        line.includes("gate=ventana"),
       );
       expect(ventana.length).toBeGreaterThan(0);
       // The served turn carries a real measured ASR time.
-      const served = lines
-        .filter((line) => line.startsWith("[voice-turn] "))
-        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
-      const first = served.find(
+      const first = loggedTurns().find(
         (entry) => entry.transcript === "vale, book Emma for gel refill",
       );
-      expect(typeof first.asrMs).toBe("number");
+      expect(first).toBeDefined();
+      expect(typeof first?.asrMs).toBe("number");
     } finally {
       logSpy.mockRestore();
       finalTranscript = "vale, live from the bridge";
@@ -1307,12 +1333,7 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
     receivedEndStream = 0;
     const agent = vi.fn(fakeAgent("WAV heard you."));
     finalTranscript = "vale, wav check";
-    const lines: string[] = [];
-    const logSpy = vi
-      .spyOn(console, "log")
-      .mockImplementation((line: string) => {
-        lines.push(String(line));
-      });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       const client = `conv-wav-${Date.now()}`;
@@ -1346,17 +1367,15 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
           browser.frames().some((frame) => frame.type === "reply"),
         ).toBe(true);
       });
-      const served = lines
-        .filter((line) => line.startsWith("[voice-turn] "))
-        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
-      const entry = served.find(
+      const entry = loggedTurns().find(
         (e) => e.transcript === "vale, wav check",
       );
       expect(entry).toBeDefined();
+      if (entry === undefined) throw new Error("wav turn was not logged");
       expect(typeof entry.wav).toBe("string");
       const { readFileSync, existsSync } = await import("node:fs");
-      expect(existsSync(entry.wav)).toBe(true);
-      const wav = readFileSync(entry.wav);
+      expect(existsSync(entry.wav as string)).toBe(true);
+      const wav = readFileSync(entry.wav as string);
       expect(wav.subarray(0, 4).toString()).toBe("RIFF");
       expect(wav.readUInt32LE(24)).toBe(24000);
       expect(entry.peakLevel).toBe(0.5);
@@ -1375,12 +1394,7 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
     const agent = vi.fn(fakeAgent("Should never run."));
     // Named, so only the junk gate can stop it: without it the agent runs.
     finalTranscript = "vale, junk check";
-    const lines: string[] = [];
-    const logSpy = vi
-      .spyOn(console, "log")
-      .mockImplementation((line: string) => {
-        lines.push(String(line));
-      });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       const client = `conv-junk-${Date.now()}`;
@@ -1418,16 +1432,11 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
         ).toBe(true);
       });
       expect(agent).not.toHaveBeenCalled();
-      const served = lines
-        .filter((line) => line.startsWith("[voice-turn] "))
-        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
-      const entry = served.find(
+      const entry = loggedTurns().find(
         (e) => e.transcript === "vale, junk check",
       );
-      expect(entry).toBeDefined();
-      expect(entry.junk).toBe(true);
-      expect(entry.ignored).toBe(true);
-      expect(typeof entry.wav).toBe("string");
+      expect(entry).toMatchObject({ junk: true, ignored: true });
+      expect(typeof entry?.wav).toBe("string");
       browser.close(1000, "test done");
     } finally {
       logSpy.mockRestore();
@@ -1448,12 +1457,7 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
     // Named, so only the junk gate can stop it: without the voice guard
     // this turn dies as junk and the agent never runs.
     finalTranscript = "vale, servicio semipermanente";
-    const lines: string[] = [];
-    const logSpy = vi
-      .spyOn(console, "log")
-      .mockImplementation((line: string) => {
-        lines.push(String(line));
-      });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       const client = `conv-voice-${Date.now()}`;
@@ -1495,15 +1499,12 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
         ).toBe(true);
       });
       expect(agent).toHaveBeenCalledTimes(1);
-      const served = lines
-        .filter((line) => line.startsWith("[voice-turn] "))
-        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
-      const entry = served.find(
+      const entry = loggedTurns().find(
         (e) => e.transcript === "vale, servicio semipermanente",
       );
       expect(entry).toBeDefined();
-      expect(entry.ignored).toBe(false);
-      expect(entry.junk).toBeUndefined();
+      expect(entry?.ignored).toBe(false);
+      expect(entry?.junk).toBeUndefined();
       browser.close(1000, "test done");
     } finally {
       logSpy.mockRestore();
@@ -1517,12 +1518,7 @@ describe("empty finals (noise, not Daniel)", () => {
     receivedEndStream = 0;
     const agent = vi.fn(fakeAgent("Should never run."));
     finalTranscript = "   ";
-    const lines: string[] = [];
-    const logSpy = vi
-      .spyOn(console, "log")
-      .mockImplementation((line: string) => {
-        lines.push(String(line));
-      });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       const client = `conv-empty-${Date.now()}`;
@@ -1554,10 +1550,7 @@ describe("empty finals (noise, not Daniel)", () => {
       expect(
         browser.frames().filter((frame) => frame.type === "board"),
       ).toHaveLength(0);
-      const served = lines
-        .filter((line) => line.startsWith("[voice-turn] "))
-        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
-      const empty = served.find((entry) => entry.transcript === "");
+      const empty = loggedTurns().find((entry) => entry.transcript === "");
       expect(empty).toMatchObject({ modelSkipped: true, gate: null });
       browser.close(1000, "test done");
     } finally {
@@ -1587,10 +1580,16 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
       type: "endStream",
       stats: emptyStats,
       language: null,
+      turn: null,
     });
     expect(
       tryParseControl(Buffer.from(JSON.stringify({ type: "endStream" }))),
-    ).toEqual({ type: "endStream", stats: emptyStats, language: null });
+    ).toEqual({
+      type: "endStream",
+      stats: emptyStats,
+      language: null,
+      turn: null,
+    });
     expect(
       tryParseControl(
         JSON.stringify({
@@ -1621,6 +1620,7 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
         rebuilds: null,
       },
       language: null,
+      turn: null,
     });
     expect(
       tryParseControl(
@@ -1633,7 +1633,12 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
           srcBlocks: -2,
         }),
       ),
-    ).toEqual({ type: "endStream", stats: emptyStats, language: null });
+    ).toEqual({
+      type: "endStream",
+      stats: emptyStats,
+      language: null,
+      turn: null,
+    });
     expect(tryParseControl(Buffer.from([0, 1, 2, 3]))).toBeNull();
     expect(tryParseControl('{"type":"other"}')).toBeNull();
     expect(tryParseControl(null)).toBeNull();
@@ -1666,10 +1671,40 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
       tryParseControl(
         Buffer.from(JSON.stringify({ type: "vote", vote: "yes" })),
       ),
-    ).toEqual({ type: "vote", vote: "yes" });
+    ).toEqual({ type: "vote", vote: "yes", turn: null });
     expect(
       tryParseControl(JSON.stringify({ type: "vote", vote: "maybe" })),
     ).toBeNull();
+  });
+
+  it("carries the shared turn tag on endStream, vote and dismiss", () => {
+    expect(
+      tryParseControl(JSON.stringify({ type: "endStream", turn: "t042" })),
+    ).toMatchObject({ type: "endStream", turn: "t042" });
+    expect(
+      tryParseControl(
+        JSON.stringify({ type: "vote", vote: "yes", turn: "t043" }),
+      ),
+    ).toEqual({ type: "vote", vote: "yes", turn: "t043" });
+    expect(
+      tryParseControl(
+        JSON.stringify({
+          type: "dismiss",
+          transcript: "close it",
+          turn: "t044",
+        }),
+      ),
+    ).toEqual({
+      type: "dismiss",
+      transcript: "close it",
+      turn: "t044",
+    });
+    // Anything off-shape rides as "-": never the raw client string.
+    for (const bad of ["abc", "t", "t42x", "T042", 42, "t0000001"]) {
+      expect(
+        tryParseControl(JSON.stringify({ type: "endStream", turn: bad })),
+      ).toMatchObject({ turn: null });
+    }
   });
 });
 

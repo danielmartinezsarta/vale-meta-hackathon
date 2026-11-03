@@ -20,6 +20,7 @@ import {
   slotContext,
   updateSlotsFromTool,
 } from "./slot-memory";
+import { scrubSecrets, vlog } from "./turn-log";
 
 export const AGENT_MODEL = "muse-spark-1.3";
 export const RESPONSES_URL = "https://api.meta.ai/v1/responses";
@@ -270,13 +271,7 @@ const WRITE_TOOLS = new Set([
  * goes in a header), but Bearer-looking values are scrubbed anyway.
  */
 function redactSecrets(text: string): string {
-  return text
-    .replace(/bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
-    .replace(
-      /"(api_?key|token|secret)"\s*:\s*"[^"]*"/gi,
-      '"$1":"[redacted]"',
-    )
-    .slice(0, 500);
+  return scrubSecrets(text).slice(0, 500);
 }
 
 interface ResponsesOutputItem {
@@ -343,6 +338,7 @@ async function postResponses(
   body: Record<string, unknown>,
   onDelta: (text: string) => void,
   startedAt: number,
+  turn?: string,
 ): Promise<{
   id: string;
   text: string;
@@ -366,7 +362,14 @@ async function postResponses(
     } catch {
       /* empty or unreadable body: the status alone is the signal */
     }
-    console.error(`[agent] model error ${response.status}: ${detail}`);
+    vlog({
+      turn: turn ?? "-",
+      process: "AGENT",
+      model: AGENT_MODEL,
+      status: "error",
+      detail: { http: response.status },
+      content: detail || "model error",
+    });
     throw new Error(`model error: ${response.status}${detail ? ` ${detail}` : ""}`);
   }
   let firstTokenMs: number | null = null;
@@ -432,7 +435,13 @@ async function postResponses(
                 ? data.error
                 : JSON.stringify(data.error ?? null);
             const detail = redactSecrets(raw);
-            console.error(`[agent] response failed: ${detail}`);
+            vlog({
+              turn: turn ?? "-",
+              process: "AGENT",
+              model: AGENT_MODEL,
+              status: "error",
+              content: detail || "response failed",
+            });
             throw new Error(`model error: ${detail}`);
           }
           if (functionCalls(completed?.output).length === 0) flushDeltas();
@@ -511,6 +520,8 @@ export interface AgentTurnOptions {
   slotKey?: string;
   /** Overrides the seeded user name in the prompt. */
   userName?: string;
+  /** Shared turn id (t042) from the client; "-" off-turn. */
+  turn?: string;
 }
 
 export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResult> {
@@ -586,6 +597,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       },
       onDelta,
       startedAt,
+      options.turn,
     );
     usage.inputTokens += turn.usage.inputTokens;
     usage.outputTokens += turn.usage.outputTokens;
@@ -604,7 +616,17 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     } catch {
       parsed = {};
     }
+    const toolAt = Date.now();
     const toolResult = runValeTool(db, call.name, parsed, language);
+    vlog({
+      turn: options.turn ?? "-",
+      process: "TOOL",
+      status: toolResult.ok ? "ok" : "error",
+      durationMs: Date.now() - toolAt,
+      detail: { tool: call.name },
+      content: toolResult.message,
+      extra: { args: parsed },
+    });
     if (!toolResult.ok) {
       // A complete proposal waits for the yes; anything else retires
       // a stale one instead of confirming the wrong thing.

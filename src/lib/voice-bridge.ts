@@ -10,7 +10,7 @@ import {
   type WakeVerdict,
 } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
-import { emitModelLog, emitTurnLog, estimateCost, modelElapsedMs } from "./turn-log";
+import { emitTurnLog, estimateCost, modelElapsedMs, vlog } from "./turn-log";
 import { isMutedJunkTurn, saveTurnWav } from "./turn-audio";
 import {
   clearPendingAction,
@@ -92,6 +92,7 @@ export interface VoiceBridgeOptions {
     onDelta: (text: string) => void;
     language?: ValeLanguage;
     slotKey?: string;
+    turn?: string;
   }) => Promise<BridgeAgentResult>;
   now?: () => number;
   turnTimeoutMs?: number;
@@ -172,16 +173,26 @@ function parseClientStats(message: {
   };
 }
 
+/** Shared turn id from the client (t042); anything else rides as "-". */
+export function parseTurnTag(value: unknown): string | null {
+  return typeof value === "string" && /^t\d{1,6}$/.test(value) ? value : null;
+}
+
 export function tryParseControl(
   data: unknown,
 ):
-  | { type: "endStream"; stats: TurnClientStats; language: ValeLanguage | null }
+  | {
+      type: "endStream";
+      stats: TurnClientStats;
+      language: ValeLanguage | null;
+      turn: string | null;
+    }
   | { type: "language"; language: ValeLanguage }
   | { type: "client"; client: string }
   | { type: "wake" }
   | { type: "client-state"; state: Record<string, unknown> }
-  | { type: "vote"; vote: "yes" | "no" }
-  | { type: "dismiss"; transcript: string | null }
+  | { type: "vote"; vote: "yes" | "no"; turn: string | null }
+  | { type: "dismiss"; transcript: string | null; turn: string | null }
   | { type: "spoken" }
   | { type: "sheet-closed" }
   | null {
@@ -196,6 +207,7 @@ export function tryParseControl(
   try {
     const message = JSON.parse(text) as {
       type?: unknown;
+      turn?: unknown;
       language?: unknown;
       client?: unknown;
       state?: unknown;
@@ -222,6 +234,7 @@ export function tryParseControl(
           message.language === "en" || message.language === "es"
             ? message.language
             : null,
+        turn: parseTurnTag(message.turn),
       };
     if (message.type === "wake") return { type: "wake" };
     // Her real last word: the window counts from here, not the send time.
@@ -231,13 +244,18 @@ export function tryParseControl(
       message.type === "vote" &&
       (message.vote === "yes" || message.vote === "no")
     ) {
-      return { type: "vote", vote: message.vote };
+      return {
+        type: "vote",
+        vote: message.vote,
+        turn: parseTurnTag(message.turn),
+      };
     }
     if (message.type === "dismiss") {
       return {
         type: "dismiss",
         transcript:
           typeof message.transcript === "string" ? message.transcript : null,
+        turn: parseTurnTag(message.turn),
       };
     }
     if (
@@ -295,6 +313,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   let metaOpen = false;
   let gotFinal = false;
   let finalText = "";
+  /** Shared turn id from the latest endStream/dismiss/vote frame. */
+  let turnTag: string | null = null;
   let audioProcessedMs: number | null = null;
   let bufferedBytes = 0;
   const pendingAudio: Buffer[] = [];
@@ -379,6 +399,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     endStreamAt = null;
     gotFinal = false;
     finalText = "";
+    turnTag = null;
     audioProcessedMs = null;
     bufferedBytes = 0;
     pendingAudio.length = 0;
@@ -478,6 +499,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     "unknown";
   const logTurn = (fields: {
     ts: string;
+    turn?: string | null;
     language: ValeLanguage;
     transcript: string;
     ttftMs: number | null;
@@ -508,6 +530,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     }
     emitTurnLog({
       ...fields,
+      turn: fields.turn ?? turnTag,
       wav: turnWav,
       peakLevel: turnStats.peakLevel,
       voicedMs: turnStats.voicedMs,
@@ -536,6 +559,32 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     return slots.client !== undefined || slots.service !== undefined
       ? slots
       : null;
+  };
+
+  // Every screen payload also lands in the JSONL recording with its turn,
+  // so replay sees exactly what the screen showed.
+  const sendBoard = () => {
+    const board = getBoard(getDb());
+    sendJson(browser, { type: "board", board });
+    vlog({
+      turn: turnTag ?? "-",
+      process: "DB",
+      status: "ok",
+      detail: { board: true },
+      extra: { board },
+    });
+  };
+
+  const sendWidget = (widget: Widget | null) => {
+    sendJson(browser, { type: "widget", widget });
+    vlog({
+      turn: turnTag ?? "-",
+      process: "VOICE",
+      status: "ok",
+      detail: { widget: widget === null ? "none" : widget.kind },
+      content: widget === null ? null : widget.title,
+      extra: { widget },
+    });
   };
 
   let browserGone = false;
@@ -678,15 +727,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     recordTurn(getDb(), clientId, "vale", rejected.message, "session_quote");
     sendJson(browser, { type: "reply", text: rejected.message });
     noteAttention(clientId);
-    sendJson(browser, { type: "board", board: getBoard(getDb()) });
-    sendJson(browser, {
-      type: "widget",
-      widget: buildWidget(
+    sendBoard();
+    sendWidget(
+      buildWidget(
         "quote_price",
         {},
         (rejected as { data?: unknown }).data ?? null,
       ),
-    });
+    );
     logTurn({
       language: turnLanguage,
       ts,
@@ -722,8 +770,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       recordTurn(getDb(), clientId, "vale", said, null);
       sendJson(browser, { type: "reply", text: said });
       noteAttention(clientId);
-      sendJson(browser, { type: "board", board: getBoard(getDb()) });
-      sendJson(browser, { type: "widget", widget: null });
+      sendBoard();
+      sendWidget(null);
       logTurn({
         language: turnLanguage,
         ts,
@@ -758,9 +806,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
       sendJson(browser, { type: "reply", text: executed.text });
       noteAttention(clientId);
-      sendJson(browser, { type: "board", board: getBoard(getDb()) });
+      sendBoard();
       // The proposal is decided: the card goes away.
-      sendJson(browser, { type: "widget", widget: null });
+      sendWidget(null);
       logTurn({
         language: turnLanguage,
         ts,
@@ -817,7 +865,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           sendJson(browser, { type: "reply", text: executed.text });
           // Her reply restarts the window: the next turn counts from here.
           noteAttention(clientId);
-          sendJson(browser, { type: "board", board: getBoard(getDb()) });
+          sendBoard();
           logTurn({
             language: turnLanguage,
             ts,
@@ -869,8 +917,8 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         recordTurn(getDb(), clientId, "vale", declined, null);
         sendJson(browser, { type: "reply", text: declined });
         noteAttention(clientId);
-        sendJson(browser, { type: "board", board: getBoard(getDb()) });
-        sendJson(browser, { type: "widget", widget: null });
+        sendBoard();
+        sendWidget(null);
         logTurn({
           language: turnLanguage,
           ts,
@@ -907,20 +955,25 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           onDelta: (text) => sendJson(browser, { type: "reply-delta", text }),
           language: turnLanguage,
           slotKey: clientId,
+          turn: turnTag ?? undefined,
         },
       );
       if (!browserGone) recordTurn(getDb(), clientId, "vale", result.text, result.toolUsed);
-      emitModelLog(
-        AGENT_MODEL,
-        modelElapsedMs(result.firstTokenMs, speechEndAt),
-        transcript,
-      );
+      vlog({
+        turn: turnTag ?? "-",
+        process: "AGENT",
+        model: AGENT_MODEL,
+        durationMs: modelElapsedMs(result.firstTokenMs, speechEndAt),
+        status: "ok",
+        detail: { tool: result.toolUsed },
+        content: result.text,
+      });
       sendJson(browser, { type: "reply", text: result.text });
       // Her reply restarts the window: the next turn counts from here.
       noteAttention(clientId);
-      sendJson(browser, { type: "board", board: getBoard(getDb()) });
+      sendBoard();
       if (result.widget) {
-        sendJson(browser, { type: "widget", widget: result.widget });
+        sendWidget(result.widget);
       }
       logTurn({
         language: turnLanguage,
@@ -1021,7 +1074,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           audioProcessedMs,
         });
         const asrMs = endStreamAt === null ? null : speechEndAt - endStreamAt;
-        emitModelLog(ASR_MODEL, asrMs, finalText);
+        vlog({
+          turn: turnTag ?? "-",
+          process: "ASR",
+          model: ASR_MODEL,
+          durationMs: asrMs,
+          status: "ok",
+          content: finalText,
+        });
         // A bare name call stays silent and keeps listening in the same
         // turn: answering here drops the words that follow (trial 9.1).
         if (isBareNameCall(finalText)) {
@@ -1165,9 +1225,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     }
     if (message.type === "error") {
       if (!settled) {
-        console.error(
-          `[voice-asr] transcription error: ${message.message ?? "unknown"}`,
-        );
+        vlog({
+          turn: turnTag ?? "-",
+          process: "ASR",
+          model: ASR_MODEL,
+          status: "error",
+          detail: { code: "E-ASR" },
+          content: message.message ?? "unknown",
+        });
         failTurn(err("lost"), "E-ASR");
       }
     }
@@ -1230,7 +1295,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       if (settled) return;
       if (gotFinal) return; // Meta closes after the final; the reply is on its way.
       metaDialPending = false;
-      console.error("[voice-asr] connection closed before final transcript");
+      vlog({
+        turn: turnTag ?? "-",
+        process: "ASR",
+        model: ASR_MODEL,
+        status: "error",
+        detail: { code: "E-ASR" },
+        content: "connection closed before final transcript",
+      });
       failTurn(err("lost"), "E-ASR");
     });
   }
@@ -1264,13 +1336,18 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       // Field diagnostics: capture, AudioContext, tab visibility, speech
       // and echo-hold state. Logged, never answered, never a turn.
       if (control.type === "client-state") {
-        console.log(
-          `[client-state] client=${clientId} ${JSON.stringify(control.state).slice(0, 500)}`,
-        );
+        vlog({
+          turn: turnTag ?? "-",
+          process: "VOICE",
+          status: "ok",
+          detail: { client: clientId },
+          content: JSON.stringify(control.state),
+        });
         return;
       }
       // Touch on a confirm card: the exact equivalent of a spoken yes/no.
       if (control.type === "vote") {
+        turnTag = control.turn;
         void answerVote(control.vote);
         return;
       }
@@ -1278,6 +1355,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       // away with no model call and no spoken reply. Closing restarts the
       // window like any executed turn.
       if (control.type === "dismiss") {
+        turnTag = control.turn;
         noteAttention(clientId);
         dismissTurn(control.transcript ?? "");
         return;
@@ -1293,6 +1371,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       if (control.type === "endStream") {
         turnStats = control.stats;
         if (control.language !== null) turnLanguage = control.language;
+        turnTag = control.turn;
       }
       // Nothing ever voiced: answer locally instead of dialing Meta for it.
       if (!metaOpen && bufferedBytes === 0 && pendingAudio.length === 0) {
