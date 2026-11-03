@@ -145,6 +145,55 @@ describe("agent prompt", () => {
     db.close();
   });
 
+  it("answers today in one round, naming appointments and reminders", async () => {
+    const db = freshTestDb();
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        return sseResponse([toolCall("resp_1", "agenda_show", { range: "today" }, "call_1")]);
+      }),
+    );
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "what do I have today",
+      language: "en",
+      db,
+    });
+    expect(calls).toBe(1);
+    expect(result.toolUsed).toBe("agenda_show");
+    expect(result.text).toContain("David at 3 PM");
+    expect(result.text).toContain("Reminders:");
+    expect(result.text).toContain("Buy acetone");
+    expect(result.text).toContain("cleaning company");
+    db.close();
+  });
+
+  it("still runs a second round for other agenda ranges", async () => {
+    const db = freshTestDb();
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        return calls === 1
+          ? sseResponse([toolCall("resp_1", "agenda_show", { range: "week" }, "call_1")])
+          : sseResponse([spoken("resp_2", "A busy week.")]);
+      }),
+    );
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "what do I have this week",
+      language: "en",
+      db,
+    });
+    expect(calls).toBe(2);
+    expect(result.toolUsed).toBe("agenda_show");
+    expect(result.text).toBe("A busy week.");
+    db.close();
+  });
+
   it("carries the warm coworker persona and capabilities in English", () => {
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/trusted colleague/i);
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/a coworker, not a friend/i);
