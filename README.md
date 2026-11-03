@@ -52,16 +52,16 @@ the card with the summary on top, labeled "Prepared privately by Muse Glimmer
 sentence "I don't have a private model set up to read client records, so
 here's David's card."
 
-Deploy the model from `modal/glimmer.py` (validated spike: 10/10 briefs,
-warm brief ~19 s, about $0.006 per brief, $0 while idle):
+Deploy the model from `modal/glimmer.py` (warm brief ~19 s, about $0.006
+per brief, $0 while idle):
 
 ```
-modal deploy modal/glimmer.py        # serve and serve_draft (drafter, faster)
-modal app stop vale-glimmer-spike    # scale to zero when done
+modal deploy modal/glimmer.py  # serve and serve_draft (drafter, faster)
+modal app stop vale-glimmer    # scale to zero when done
 ```
 
 Production uses the drafter endpoint
-(`https://<username>--vale-glimmer-spike-serve-draft.us-east.modal.run`).
+(`https://<username>--vale-glimmer-serve-draft.us-east.modal.run`).
 Set it as `GLIMMER_URL` (see `.env.example`) and export `GLIMMER_TOKEN`
 from the Modal secret in the shell; the token never lives in the repo.
 
