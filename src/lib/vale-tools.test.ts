@@ -64,6 +64,7 @@ describe("tool definitions", () => {
         "client_card_show",
         "client_create",
         "client_note_add",
+        "client_summary",
         "goal_show",
         "photo_preview_design",
         "photo_show",
@@ -232,6 +233,92 @@ describe("client_card_show (1.1)", () => {
     const kinds = (card.data as { card: { notes: { kind: string }[] } }).card.notes.map((note) => note.kind);
     expect(kinds[0]).toBe("health_note");
     expect(kinds).toContain("note");
+    db.close();
+  });
+});
+
+describe("client_summary (HACK-005)", () => {
+  const SUMMARY_BRIEF = {
+    spoken: "David comes every 3 weeks and likes dark matte. He also has a health note; it's on screen.",
+    summary: ["Prefers dark matte designs", "Hockey fan, ask about the Rangers"],
+    has_health_note: true,
+  };
+
+  function glimmerStub() {
+    return vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify(SUMMARY_BRIEF) } }] }),
+    }));
+  }
+
+  function davidId(db: ReturnType<typeof freshTestDb>): number {
+    return (db.prepare("SELECT id FROM clients WHERE name = ?").get("David") as { id: number }).id;
+  }
+
+  async function storeBrief(db: ReturnType<typeof freshTestDb>) {
+    vi.stubEnv("GLIMMER_URL", "https://glimmer.test");
+    vi.stubEnv("GLIMMER_TOKEN", "secret");
+    const { refreshClientBrief } = await import("./client-briefs");
+    const stored = await refreshClientBrief(db, davidId(db), glimmerStub() as unknown as typeof fetch);
+    vi.unstubAllEnvs();
+    expect(stored?.brief).toEqual(SUMMARY_BRIEF);
+  }
+
+  it("speaks the stored brief and opens the card with the summary on top", async () => {
+    const db = freshTestDb();
+    await storeBrief(db);
+    const result = runValeTool(db, "client_summary", { name: "David" }, "en");
+    expect(result.ok).toBe(true);
+    expect(result.message).toBe(SUMMARY_BRIEF.spoken);
+    const data = result.data as {
+      card: { name: string };
+      brief: { label: string; summary: string[] } | null;
+      needsBrief: boolean;
+    };
+    expect(data.card.name).toBe("David");
+    expect(data.brief?.label).toBe("Prepared privately by Muse Glimmer (open weights)");
+    expect(data.brief?.summary).toEqual(SUMMARY_BRIEF.summary);
+    expect(data.needsBrief).toBe(false);
+    db.close();
+  });
+
+  it("generates on demand when the brief is missing and the model answers", async () => {
+    vi.stubEnv("GLIMMER_URL", "https://glimmer.test");
+    vi.stubEnv("GLIMMER_TOKEN", "secret");
+    const db = freshTestDb();
+    const result = await runValeToolAsync(db, "client_summary", { name: "David" }, "en", glimmerStub() as unknown as typeof fetch);
+    expect(result.ok).toBe(true);
+    expect(result.message).toBe(SUMMARY_BRIEF.spoken);
+    expect((result.data as { brief: { summary: string[] } | null }).brief?.summary).toEqual(
+      SUMMARY_BRIEF.summary,
+    );
+    vi.unstubAllEnvs();
+    db.close();
+  });
+
+  it("falls back to the card without the private model and never sends the record", async () => {
+    const db = freshTestDb();
+    const fetchImpl = glimmerStub();
+    const result = await runValeToolAsync(db, "client_summary", { name: "David" }, "en", fetchImpl as unknown as typeof fetch);
+    expect(result.ok).toBe(true);
+    expect(result.message).toBe(
+      "I don't have a private model set up to read client records, so here's David's card.",
+    );
+    const data = result.data as {
+      card: { name: string };
+      brief: null;
+      needsBrief: boolean;
+    };
+    expect(data.card.name).toBe("David");
+    expect(data.brief).toBeNull();
+    expect(data.needsBrief).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    db.close();
+  });
+
+  it("says when nobody matches", () => {
+    const db = freshTestDb();
+    expect(runValeTool(db, "client_summary", { name: "Nadie" }, "en").ok).toBe(false);
     db.close();
   });
 });
@@ -1104,6 +1191,7 @@ afterEach(() => {
   if (savedPreviewPhotoDir === undefined) delete process.env.VALE_PHOTO_DIR;
   else process.env.VALE_PHOTO_DIR = savedPreviewPhotoDir;
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   if (previewPhotoDir) {
     rmSync(previewPhotoDir, { recursive: true, force: true });
     previewPhotoDir = "";

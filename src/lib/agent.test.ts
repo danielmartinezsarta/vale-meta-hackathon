@@ -14,7 +14,8 @@ import {
   sessionContext,
   toolWaitPhrase,
 } from "./agent";
-import { freshTestDb } from "./db";
+import { freshTestDb, recordTurn, recentTurns } from "./db";
+import { refreshClientBrief } from "./client-briefs";
 import { openSession } from "./vale-tools";
 import {
   clearPendingAction,
@@ -1042,6 +1043,89 @@ describe("client card privacy (HACK-005)", () => {
     expect(bodies).toHaveLength(1);
     const seen = JSON.stringify(bodies);
     for (const secret of CARD_SECRETS) expect(seen).not.toContain(secret);
+    db.close();
+  });
+
+  it("names the wait line for reading the record privately", () => {
+    expect(toolWaitPhrase("client_summary", "en")).toBe(
+      "Give me a few seconds, I'm reading the client's record privately.",
+    );
+    expect(toolWaitPhrase("client_summary", "es")).toBe(
+      "Dame unos segundos, estoy leyendo la ficha en privado.",
+    );
+    expect(contractWidgetFor("client_summary", {}, { card: { name: "David" }, brief: null })).toEqual({
+      tool: "find_client",
+      args: { client_name: "David" },
+      data: { id: undefined, name: "David", notes: [] },
+    });
+  });
+
+  it("answers the brief in one round and stores only its label in history", async () => {
+    const SUMMARY_BRIEF = {
+      spoken:
+        "David comes every 3 weeks and likes dark matte. He also has a health note; it's on screen.",
+      summary: ["Prefers dark matte designs", "Hockey fan, ask about the Rangers"],
+      has_health_note: true,
+    };
+    const db = freshTestDb();
+    vi.stubEnv("GLIMMER_URL", "https://glimmer.test");
+    vi.stubEnv("GLIMMER_TOKEN", "secret");
+    const davidId = (db.prepare("SELECT id FROM clients WHERE name = ?").get("David") as { id: number }).id;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: JSON.stringify(SUMMARY_BRIEF) } }] }),
+      })),
+    );
+    await refreshClientBrief(db, davidId, fetch);
+    vi.unstubAllEnvs();
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(JSON.parse((init as { body: string }).body) as Record<string, unknown>);
+        return sseResponse([toolCall("resp_1", "client_summary", { name: "David" }, "call_1")]);
+      }),
+    );
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "David is here, what do I have on him?",
+      language: "en",
+      slotKey: "brief-leak-1",
+      db,
+    });
+    expect(result.toolUsed).toBe("client_summary");
+    expect(result.text).toBe(SUMMARY_BRIEF.spoken);
+    expect(result.widget?.kind).toBe("client_card");
+    expect(bodies).toHaveLength(1);
+    // The route stores the reply in history: only the label may land there.
+    recordTurn(db, "brief-client", "user", "David is here, what do I have on him?");
+    recordTurn(db, "brief-client", "vale", result.text, result.toolUsed);
+    const history = recentTurns(db, "brief-client");
+    expect(history[1].text).toBe("(client summary shown)");
+    // Next turn: no record text, note text or summary text reaches Meta.
+    bodies.length = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(JSON.parse((init as { body: string }).body) as Record<string, unknown>);
+        return sseResponse([spoken("resp_2", "Anything else?")]);
+      }),
+    );
+    await runAgentTurn({
+      key: "test-key",
+      transcript: "thanks",
+      language: "en",
+      slotKey: "brief-leak-2",
+      db,
+      history,
+    });
+    expect(bodies).toHaveLength(1);
+    const seen = JSON.stringify(bodies);
+    for (const secret of [...CARD_SECRETS, SUMMARY_BRIEF.spoken, ...SUMMARY_BRIEF.summary]) {
+      expect(seen).not.toContain(secret);
+    }
     db.close();
   });
 
