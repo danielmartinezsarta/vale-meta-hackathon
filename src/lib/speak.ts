@@ -561,10 +561,12 @@ async function playSentence(
     const audio = new Audio(url);
     seamlessAudio = audio;
     let audioDone = false;
+    let progressTimer: ReturnType<typeof setInterval> | undefined;
     clearSentenceAudio = (): void => {
       if (audioDone) return;
       audioDone = true;
       clearTimeout(watchdog);
+      if (progressTimer !== undefined) clearInterval(progressTimer);
       try {
         audio.pause();
       } catch {
@@ -573,6 +575,29 @@ async function playSentence(
       URL.revokeObjectURL(url);
       if (seamlessAudio === audio) seamlessAudio = null;
     };
+    // Mid-play freeze (element stops advancing with no event): a few
+    // seconds of still audio ends the sentence instead of holding it.
+    let playStarted = false;
+    let lastTime = 0;
+    let stillCount = 0;
+    progressTimer = setInterval(() => {
+      if (audioDone || !playStarted) return;
+      try {
+        if (audio.readyState < 2 || audio.paused || audio.ended || audio.seeking) {
+          stillCount = 0;
+          lastTime = audio.currentTime;
+          return;
+        }
+        if (audio.currentTime === lastTime) stillCount += 1;
+        else {
+          stillCount = 0;
+          lastTime = audio.currentTime;
+        }
+        if (stillCount >= 3) endSentence();
+      } catch {
+        /* read-only probe, never breaks playback */
+      }
+    }, 1000);
     // iOS can drop onended: without this the reply holds the mic
     // forever (mute clears it, which is why mute unblocked the field).
     // next() ignores a stale playId, so forcing the end is safe.
@@ -587,6 +612,7 @@ async function playSentence(
     audio.onended = endSentence;
     audio.onerror = endSentence;
     await audio.play();
+    playStarted = true;
   } catch {
     clearSentenceAudio();
     if (playId === seamlessPlayId) {
