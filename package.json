@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:audio": "vitest run asr route capture agent",
-    "db:seed": "node scripts/seed.mjs"
+    "db:seed": "node scripts/seed.mjs",
+    "db:reset": "node scripts/db-reset.mjs"
   },
   "dependencies": {
     "@types/ws": "^8.18.2",
