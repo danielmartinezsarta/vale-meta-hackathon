@@ -49,16 +49,30 @@ describe("unified server log", () => {
     }
   });
 
-  it("clips console content to 100 chars and flattens newlines", () => {
+  it("clips console content to 64 chars and flattens newlines", () => {
     const content = formatVlog({
       turn: "-",
       process: "AGENT",
       status: "ok",
       content: `one\ntwo\r\n${"x".repeat(200)}`,
     }).split(" | ")[7];
-    expect(content).toHaveLength(101);
+    expect(content).toHaveLength(65);
     expect(content.endsWith("…")).toBe(true);
     expect(content).not.toMatch(/[\r\n]/);
+  });
+
+  it("keeps the model column narrow and typical rows short", () => {
+    const short = formatVlog({ turn: "-", process: "DB", status: "ok" });
+    expect(short.split(" | ")[3]).toHaveLength(14);
+    const typical = formatVlog({
+      turn: "t007",
+      process: "VOICE",
+      durationMs: 6566,
+      status: "ok",
+      detail: { gate: "ventana", tool: "session_open" },
+      content: `Ballet, open a session with Emma. ${"y".repeat(200)}`,
+    });
+    expect(typical.length).toBeLessThanOrEqual(170);
   });
 
   it("sends errors and timeouts to stderr", () => {
