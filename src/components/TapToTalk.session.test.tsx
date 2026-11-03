@@ -147,7 +147,7 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
       kind: "photos",
       title: "Photos",
       size: "full",
-      data: { before: null, reference: null, expected: null },
+      data: { before: null, reference: null, expected: null, final: null },
     });
   });
 });

@@ -173,11 +173,11 @@ describe("buildWidget (typed payloads per kind)", () => {
       kind: "photos",
       title: "Photos",
       size: "full",
-      data: { before: "b-url", reference: "r-url", expected: "e-url" },
+      data: { before: "b-url", reference: "r-url", expected: "e-url", final: null },
     });
     expect(
       buildWidget("photo_preview", {}, { before: "b-url", expected: "e-url" }, NO_DB)?.data,
-    ).toEqual({ before: "b-url", reference: null, expected: "e-url" });
+    ).toEqual({ before: "b-url", reference: null, expected: "e-url", final: null });
     expect(buildWidget("photo_preview", {}, { before: "", expected: "e-url" }, NO_DB)).toBeNull();
   });
 

@@ -254,12 +254,13 @@ export function TapToTalk({
 
   /** Real slot data for the photos sheet; missing files stay null. */
   const loadPhotosData = async (sessionId: number): Promise<PhotosData> => {
-    const [before, reference, expected] = await Promise.all([
+    const [before, reference, expected, final] = await Promise.all([
       probePhoto(`pre_${sessionId}.jpg`),
       probePhoto(APPOINTMENT_REFERENCE_FILE),
       probePhoto(`preview_${sessionId}.png`),
+      probePhoto(`post_${sessionId}.jpg`),
     ]);
-    return { before, reference, expected };
+    return { before, reference, expected, final };
   };
 
   /** Photos sheet with the stored slots, real where present. */

@@ -115,6 +115,7 @@ export interface PhotosData {
   before: string | null;
   reference: string | null;
   expected: string | null;
+  final: string | null;
 }
 
 /** Health note: one line plus client, lock on, never spoken. */
@@ -484,7 +485,7 @@ export function buildWidget(
         kind: "photos",
         title: widgetTitle("photos"),
         size: "full",
-        data: { before, reference: reference === "" ? null : reference, expected },
+        data: { before, reference: reference === "" ? null : reference, expected, final: null },
       };
     }
     case "create_appointment":
