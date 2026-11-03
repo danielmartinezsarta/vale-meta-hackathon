@@ -53,6 +53,10 @@ let receivedBinaryBytes = 0;
 let receivedEndStream = 0;
 /** First upstream text frame per connection: the auth handshake. */
 let receivedAuth: string[] = [];
+/** Next connections get no handshake ack: Meta stays down, audio buffers. */
+let holdHandshake = false;
+/** Queued finals, one per endStream; falls back to finalTranscript. */
+let finalQueue: string[] = [];
 
 function fakeAgent(text = "All set, see you soon."): (
   args: unknown,
@@ -106,6 +110,10 @@ beforeAll(async () => {
       }
       if (message.type === "endStream") {
         receivedEndStream += 1;
+        const text =
+          finalQueue.length > 0
+            ? (finalQueue.shift() as string)
+            : finalTranscript;
         if (holdFinal) return;
         if (asrErrorOnce) {
           asrErrorOnce = false;
@@ -117,7 +125,7 @@ beforeAll(async () => {
         socket.send(
           JSON.stringify({
             type: "transcript",
-            transcript: finalTranscript,
+            transcript: text,
             final: true,
             audioProcessedMs: 800,
           }),
@@ -125,6 +133,7 @@ beforeAll(async () => {
         socket.close(1000, "turn complete");
         return;
       }
+      if (holdHandshake) return;
       socket.send(JSON.stringify({ sessionId: "bridge-test" }));
     });
   });
@@ -176,6 +185,11 @@ function attachForTest(
   agent: AgentFn = fakeAgent(),
   key = "test-key",
   clientId = "test-client",
+  overrides: {
+    turnTimeoutMs?: number;
+    now?: () => number;
+    conversation?: boolean;
+  } = {},
 ) {
   attachVoiceBridge({
     browser: browser as unknown as WebSocket,
@@ -183,6 +197,7 @@ function attachForTest(
     clientId,
     metaUrl: url,
     runAgent: agent,
+    ...overrides,
   });
 }
 
@@ -1808,9 +1823,11 @@ describe("bare name calls (trial 9.1)", () => {
         ).toBe(true);
       });
       expect(agent).toHaveBeenCalledTimes(1);
+      // Step 3: the held name prepends instead of blanking, so the model
+      // hears one sentence with the name.
       expect(
         (agent.mock.calls[0][0] as { transcript: string }).transcript,
-      ).toBe("5 PM for a gel removal");
+      ).toBe("valley 5 PM for a gel removal");
       await vi.waitFor(() => {
         expect(
           browser.frames().some((frame) => frame.type === "done"),
@@ -1894,4 +1911,259 @@ describe("quote reject on the touch card (decision 1)", () => {
       runValeTool(db, "session_close", { products_used: [] }, "en");
     }
   });
+});
+
+describe("step 3: bridge (tag echo, watchdog, failover split, bare hold)", () => {
+  const pcmFrame = () => Buffer.from(new Int16Array(960).fill(4000).buffer);
+  const endStream = (turn: string, extra: Record<string, unknown> = {}) =>
+    Buffer.from(JSON.stringify({ type: "endStream", turn, ...extra }));
+
+  async function waitForBridge(browser: FakeBrowser): Promise<void> {
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+  }
+
+  it("echoes the client turn tag on final, reply and done; interims stay plain", async () => {
+    receivedBinaryBytes = 0;
+    receivedEndStream = 0;
+    finalTranscript = "vale, live from the bridge";
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser);
+      await waitForBridge(browser);
+      browser.peerMessage(pcmFrame());
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "transcript" && frame.final === false,
+          ),
+        ).toBe(true);
+      });
+      browser.peerMessage(endStream("t007"));
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+          true,
+        );
+      });
+      const frames = browser.frames();
+      const interim = frames.find(
+        (frame) => frame.type === "transcript" && frame.final === false,
+      );
+      const final = frames.find(
+        (frame) => frame.type === "transcript" && frame.final === true,
+      );
+      const reply = frames.find((frame) => frame.type === "reply");
+      const done = frames.find((frame) => frame.type === "done");
+      expect(interim).toBeDefined();
+      expect(interim).not.toHaveProperty("turn");
+      expect(final).toMatchObject({ turn: "t007", final: true });
+      expect(reply).toMatchObject({ turn: "t007" });
+      expect(done).toMatchObject({ turn: "t007" });
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
+
+  it("watchdog ends Meta ingress after 1.5 s of silence so the turn completes", async () => {
+    receivedBinaryBytes = 0;
+    receivedEndStream = 0;
+    finalTranscript = "vale, live from the bridge";
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser);
+      await waitForBridge(browser);
+      browser.peerMessage(pcmFrame());
+      // Meta is open (the interim below proves it) but the client never
+      // ends the stream: the watchdog must end it from the bridge side.
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "transcript" && frame.final === false,
+          ),
+        ).toBe(true);
+      });
+      await vi.waitFor(
+        () => {
+          expect(receivedEndStream).toBe(1);
+        },
+        { timeout: 5000 },
+      );
+      await vi.waitFor(
+        () => {
+          expect(
+            browser.frames().some((frame) => frame.type === "reply"),
+          ).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+    }
+  }, 15000);
+
+  it("failover keeps the next segment: only bytes past the last endStream survive", async () => {
+    holdHandshake = true;
+    receivedBinaryBytes = 0;
+    receivedEndStream = 0;
+    finalTranscript = "vale, live from the bridge";
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser, fakeAgent(), "test-key", "conv-split", {
+        turnTimeoutMs: 600,
+        conversation: true,
+      });
+      await waitForBridge(browser);
+      // Meta stays down: A ends (t1), then B+C buffer behind it.
+      browser.peerMessage(pcmFrame()); // A
+      browser.peerMessage(endStream("t1"));
+      browser.peerMessage(pcmFrame()); // B
+      browser.peerMessage(endStream("t2"));
+      browser.peerMessage(pcmFrame()); // C
+      // The turn times out with Meta still down: A+B (at or before the
+      // t2 mark) are dropped, C (past it) is kept for the redial.
+      await vi.waitFor(
+        () => {
+          expect(
+            browser.frames().some((frame) => frame.type === "ignored"),
+          ).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+      holdHandshake = false;
+      browser.peerMessage(pcmFrame()); // D
+      browser.peerMessage(endStream("t3"));
+      await vi.waitFor(
+        () => {
+          expect(
+            browser.frames().some((frame) => frame.type === "reply"),
+          ).toBe(true);
+        },
+        { timeout: 8000 },
+      );
+      // C + D reached Meta; A + B never did.
+      expect(receivedBinaryBytes).toBe(2 * 960 * 2);
+      browser.close(1000, "test done");
+    } finally {
+      holdHandshake = false;
+      finalTranscript = "vale, live from the bridge";
+    }
+  }, 20000);
+
+  it("holds a bare name and prepends it to the next segment", async () => {
+    finalQueue = ["Vale.", "open the card"];
+    let modelHeard = "";
+    const agent = async (args: { transcript: string }) => {
+      modelHeard = args.transcript;
+      return {
+        text: "Card opened.",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolUsed: null,
+        firstTokenMs: 50,
+      };
+    };
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(
+        browser,
+        agent as (args: unknown) => Promise<BridgeAgentResult>,
+      );
+      await waitForBridge(browser);
+      browser.peerMessage(pcmFrame());
+      browser.peerMessage(endStream("t1"));
+      // The bare name shows as an interim and runs no model call.
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "transcript" &&
+              frame.final === false &&
+              String(frame.transcript ?? "").startsWith("Vale"),
+          ),
+        ).toBe(true);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(
+        browser.frames().some((frame) => frame.type === "reply"),
+      ).toBe(false);
+      // The rest of the sentence arrives next and joins the held name.
+      browser.peerMessage(pcmFrame());
+      browser.peerMessage(endStream("t2"));
+      await vi.waitFor(
+        () => {
+          expect(
+            browser.frames().some((frame) => frame.type === "reply"),
+          ).toBe(true);
+        },
+        { timeout: 8000 },
+      );
+      expect(modelHeard.toLowerCase().startsWith("vale")).toBe(true);
+      expect(modelHeard.toLowerCase()).toContain("open the card");
+      browser.close(1000, "test done");
+    } finally {
+      finalQueue = [];
+      finalTranscript = "vale, live from the bridge";
+    }
+  }, 20000);
+
+  it("drops a bare name held past 8 s instead of joining it", async () => {
+    finalQueue = ["Vale.", "open the card"];
+    let modelHeard = "";
+    const agent = async (args: { transcript: string }) => {
+      modelHeard = args.transcript;
+      return {
+        text: "Card opened.",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolUsed: null,
+        firstTokenMs: 50,
+      };
+    };
+    try {
+      let fakeNow = Date.now();
+      const browser = new FakeBrowser();
+      attachForTest(
+        browser,
+        agent as (args: unknown) => Promise<BridgeAgentResult>,
+        "test-key",
+        "test-client",
+        { now: () => fakeNow, conversation: true },
+      );
+      await waitForBridge(browser);
+      browser.peerMessage(pcmFrame());
+      browser.peerMessage(endStream("t1"));
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "transcript" && frame.final === false,
+          ),
+        ).toBe(true);
+      });
+      // Past the 8 s hold: the rest arrives on its own. Her open sheet
+      // holds the window so the unnamed rest still executes.
+      fakeNow += 9000;
+      browser.peerMessage(pcmFrame());
+      browser.peerMessage(endStream("t2", { sheetOpen: true }));
+      await vi.waitFor(
+        () => {
+          expect(
+            browser.frames().some((frame) => frame.type === "reply"),
+          ).toBe(true);
+        },
+        { timeout: 8000 },
+      );
+      expect(modelHeard.toLowerCase().startsWith("vale")).toBe(false);
+      expect(modelHeard.toLowerCase()).toContain("open the card");
+      browser.close(1000, "test done");
+    } finally {
+      finalQueue = [];
+      finalTranscript = "vale, live from the bridge";
+    }
+  }, 20000);
 });

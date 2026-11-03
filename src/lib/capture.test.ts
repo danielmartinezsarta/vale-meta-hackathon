@@ -103,7 +103,8 @@ describe("bug 2 VAD calibration (iPhone clipped phrase onsets)", () => {
     }
     expect(detector.isSpeaking).toBe(true);
     const tail: string[] = [];
-    for (let i = 0; i < 8; i++) tail.push(detector.feed(silence));
+    // 1000 ms of silence ends the turn once, not before.
+    for (let i = 0; i < 13; i++) tail.push(detector.feed(silence));
     expect(tail.filter((event) => event === "speech-end")).toHaveLength(1);
     expect(detector.isSpeaking).toBe(false);
   });
@@ -148,9 +149,11 @@ describe("end-of-turn pause (NEXT_PUBLIC_VAD_END_SILENCE_MS)", () => {
     return frames;
   };
 
-  it("defaults to 800 ms: slow phrases split, normal ones stay whole", () => {
-    // 1000 ms mid-pause: a slow phrase becomes two turns at the default.
-    expect(splits(new SpeechDetector(), phrase(8, 25))).toBe(1);
+  it("defaults to 1000 ms: slow phrases split, normal ones stay whole", () => {
+    // 1200 ms mid-pause: a slow phrase becomes two turns at the default.
+    expect(splits(new SpeechDetector(), phrase(8, 30))).toBe(1);
+    // 960 ms mid-pause: unhurried rhythm stays one turn.
+    expect(splits(new SpeechDetector(), phrase(8, 24))).toBe(0);
     // 200 ms mid-pause: normal rhythm stays one turn.
     expect(splits(new SpeechDetector(), phrase(8, 5))).toBe(0);
   });
@@ -393,26 +396,50 @@ describe("strict-turn pause (mute while Vale speaks)", () => {
     handle.stop();
   });
 
-  it("resuming clears stale pre-roll so her voice never prefixes the turn", () => {
+  it("opens the turn before replaying its pre-roll", () => {
     stubAudio();
-    // Control: silence fills pre-roll, then speech flushes it (25 + 4 frames).
-    const control = counters();
-    startCapture({} as MediaStream, control.callbacks);
-    let process = liveProcessor();
+    const order: string[] = [];
+    startCapture({} as MediaStream, {
+      ...quietCallbacks(),
+      onFrame: () => void order.push("frame"),
+      onSpeechStart: () => void order.push("start"),
+    });
+    const process = liveProcessor();
     for (let i = 0; i < 30; i++) process(block(0));
     process(block(0.5));
-    expect(control.seen.frames).toBe(25 + 4);
-    // Paused path: the same silence is discarded on resume.
-    stubAudio();
-    const muted = counters();
-    const handle = startCapture({} as MediaStream, muted.callbacks);
-    process = liveProcessor();
-    for (let i = 0; i < 30; i++) process(block(0));
-    handle.setPaused?.(true);
-    handle.setPaused?.(false);
-    process(block(0.5));
-    expect(muted.seen.frames).toBe(4);
-    handle.stop();
+    // A speech-opened turn wipes pending frames: the turn must exist first.
+    expect(order[0]).toBe("start");
+    expect(order.filter((kind) => kind === "frame").length).toBeGreaterThan(0);
+  });
+
+  it("resuming parks frames in the ring while the VAD stays deaf", () => {
+    const nowSpy = vi.spyOn(Date, "now");
+    let now = 1_000_000;
+    nowSpy.mockImplementation(() => now);
+    try {
+      stubAudio();
+      const muted = counters();
+      const handle = startCapture({} as MediaStream, muted.callbacks);
+      const process = liveProcessor();
+      for (let i = 0; i < 30; i++) process(block(0));
+      handle.setPaused?.(true);
+      handle.setPaused?.(false);
+      // Inside the 300 ms window even sustained speech never trips.
+      process(block(0.5));
+      expect(muted.seen.frames).toBe(0);
+      expect(muted.seen.starts).toBe(0);
+      for (let i = 0; i < 8; i++) process(block(0.5));
+      expect(muted.seen.starts).toBe(0);
+      expect(muted.seen.frames).toBe(0);
+      // Past the window the parked ring replays first, then live flows.
+      now += 300;
+      for (let i = 0; i < 8; i++) process(block(0.5));
+      expect(muted.seen.starts).toBe(1);
+      expect(muted.seen.frames).toBeGreaterThan(8);
+      handle.stop();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });
 
@@ -809,6 +836,23 @@ describe("clock watchdog (drift below 0.95 rebuilds the context)", () => {
     await flushRebuild();
     expect(rebuilds).toEqual([]);
     expect(FakeAudioContext.instances).toHaveLength(1);
+    handle.stop();
+  });
+
+  it("warns the client before the detector resets", async () => {
+    const interrupts: number[] = [];
+    const rebuilds: number[] = [];
+    const handle = startWorklet48k({
+      ...quietCallbacks(),
+      onInterrupt: () => void interrupts.push(1),
+      onClockRebuild: (total) => rebuilds.push(total),
+    });
+    beat(0);
+    vi.setSystemTime(1_006_000);
+    beat(938);
+    await flushRebuild();
+    expect(rebuilds).toEqual([1]);
+    expect(interrupts).toEqual([1]);
     handle.stop();
   });
 });

@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
-import { stubVoiceSocket } from "./test-voice-socket";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -103,6 +103,28 @@ describe("capture stall watchdog (lead round p1)", () => {
     await vi.advanceTimersByTimeAsync(6500);
     expect(mockStartCapture).toHaveBeenCalledTimes(2);
     sessionAlive();
+  });
+
+  it("a stall closes the released segment with endStream before restarting", async () => {
+    vi.useFakeTimers();
+    try {
+      await tapToTalk();
+      expect(mockStartCapture).toHaveBeenCalledTimes(1);
+      // A released segment is in flight when the processor dies: the
+      // restart must not strand it without its endStream.
+      const voiced = new Int16Array(960).fill(4000);
+      driver?.onSpeechStart();
+      for (let i = 0; i < 8; i += 1) driver?.onFrame(voiced);
+      await vi.advanceTimersByTimeAsync(6500);
+      const ends = FakeVoiceSocket.instances[0]
+        .sent.filter((item): item is string => typeof item === "string")
+        .filter((raw) => raw.includes("endStream")).length;
+      expect(ends).toBe(1);
+      expect(mockStartCapture).toHaveBeenCalledTimes(2);
+      sessionAlive();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a hidden tab logs capture state and the session survives", async () => {

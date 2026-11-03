@@ -38,6 +38,10 @@ import {
 export const BRIDGE_TURN_TIMEOUT_MS = 120000;
 /** Cap for audio buffered before the Meta handshake ack (~40 s). */
 const MAX_BUFFERED_BYTES = 2_000_000;
+/** A bare "Vale." waits this long for the rest of the sentence. */
+const BARE_HOLD_MS = 8000;
+/** Meta open and no frame for this long: end its ingress ourselves. */
+const INGRESS_WATCHDOG_MS = 1500;
 
 export interface BridgeAgentUsage {
   inputTokens: number;
@@ -316,6 +320,20 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   let finalText = "";
   /** Shared turn id from the latest endStream/dismiss/vote frame. */
   let turnTag: string | null = null;
+  /**
+   * A bare "Vale." waits up to 8 s for the rest of the sentence, then
+   * joins it. Nothing about the held name reaches the model alone.
+   */
+  let bareHold: { text: string; at: number } | null = null;
+  /** Watchdog timer: Meta open and quiet ends its ingress. */
+  let ingressTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Cumulative bytes at the latest client endStream: the failover line. */
+  const chunkEnds: number[] = [];
+  const wavEnds: number[] = [];
+  let endStreamByteMark = 0;
+  /** Every turn-scoped frame echoes its tag so the client routes by it. */
+  const ui = (message: Record<string, unknown>): void =>
+    sendJson(browser, { turn: turnTag ?? undefined, ...message });
   let audioProcessedMs: number | null = null;
   let bufferedBytes = 0;
   const pendingAudio: Buffer[] = [];
@@ -365,6 +383,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const finish = (code: number, reason: string) => {
     if (settled) return;
     clearTimeout(timer);
+    disarmIngressWatchdog();
     metaGen += 1;
     try {
       meta.close();
@@ -394,17 +413,46 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
 
   // Next turn on the same socket: fresh flags, same window. No dial here:
   // the next audio frames open it, so silence never holds a Meta socket.
+  const disarmIngressWatchdog = () => {
+    clearTimeout(ingressTimer);
+    ingressTimer = undefined;
+  };
   const beginNextTurn = () => {
     metaOpen = false;
     metaDialPending = false;
+    disarmIngressWatchdog();
     endStreamAt = null;
     gotFinal = false;
     finalText = "";
     turnTag = null;
     audioProcessedMs = null;
-    bufferedBytes = 0;
+    // Failover keeps the next segment: drop only the failed turn's audio
+    // (bytes up to its endStream mark), never what arrived after it.
+    const keptAudio: Buffer[] = [];
+    const keptEnds: number[] = [];
+    for (let i = 0; i < pendingAudio.length; i += 1) {
+      if ((chunkEnds[i] ?? 0) > endStreamByteMark) {
+        keptAudio.push(pendingAudio[i]);
+        keptEnds.push(chunkEnds[i]);
+      }
+    }
     pendingAudio.length = 0;
+    pendingAudio.push(...keptAudio);
+    chunkEnds.length = 0;
+    chunkEnds.push(...keptEnds);
+    const keptWav: Buffer[] = [];
+    const keptWavEnds: number[] = [];
+    for (let i = 0; i < wavChunks.length; i += 1) {
+      if ((wavEnds[i] ?? 0) > endStreamByteMark) {
+        keptWav.push(wavChunks[i]);
+        keptWavEnds.push(wavEnds[i]);
+      }
+    }
     wavChunks.length = 0;
+    wavChunks.push(...keptWav);
+    wavEnds.length = 0;
+    wavEnds.push(...keptWavEnds);
+    bufferedBytes = keptEnds.length === 0 ? 0 : keptEnds[keptEnds.length - 1];
     turnWav = null;
     wavSaved = false;
     turnSeq += 1;
@@ -434,9 +482,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   // closes with a clear reason. One browser socket = visible alert only then.
   const failTurn = (message: string, code: string) => {
     if (settled) return;
+    disarmIngressWatchdog();
     if (!conversation) {
       sendJson(browser, { type: "error", message, code });
-      sendJson(browser, { type: "done" });
+      ui({ type: "done" });
       finish(1011, "turn-failed");
       return;
     }
@@ -456,7 +505,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     if (failedTurns >= maxConsecutiveFailures) {
       // No silent redial loop: the browser sees the error below, then this.
       sendJson(browser, { type: "error", message, code });
-      sendJson(browser, { type: "done" });
+      ui({ type: "done" });
       settled = true;
       try {
         browser.close(1011, "meta-unavailable");
@@ -487,7 +536,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       totalMs: null,
     });
     sendJson(browser, { type: "ignored" });
-    sendJson(browser, { type: "done" });
+    ui({ type: "done" });
     beginNextTurn();
   };
 
@@ -637,8 +686,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
 
   // Heard nothing: same gentle notice with or without a Meta round trip.
   const finishEmptyTurn = (audioSeconds: number, asrMs: number | null = null) => {
+    disarmIngressWatchdog();
     const at = now();
-    sendJson(browser, {
+    ui({
       type: "transcript",
       transcript: "",
       final: true,
@@ -664,7 +714,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       sinceReplyS: null,
       totalMs: 0,
     });
-    sendJson(browser, { type: "done" });
+    ui({ type: "done" });
     finish(1000, "turn-complete");
   };
 
@@ -673,6 +723,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   // A reply that already ran wins: its done already moved the turn on.
   const dismissTurn = (transcript: string): void => {
     if (settled || agentRan) return;
+    disarmIngressWatchdog();
     metaGen += 1;
     try {
       meta.close();
@@ -702,7 +753,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       totalMs: null,
     });
     sendJson(browser, { type: "ignored" });
-    sendJson(browser, { type: "done" });
+    ui({ type: "done" });
     if (conversation) {
       beginNextTurn();
       return;
@@ -726,7 +777,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     const rejected = rejectQuote(getDb(), sessionId, turnLanguage);
     recordTurn(getDb(), clientId, "user", heard);
     recordTurn(getDb(), clientId, "vale", rejected.message, "session_quote");
-    sendJson(browser, { type: "reply", text: rejected.message });
+    ui({ type: "reply", text: rejected.message });
     noteAttention(clientId);
     sendBoard();
     sendWidget(
@@ -756,7 +807,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       sinceReplyS,
       totalMs: Date.now() - at,
     });
-    sendJson(browser, { type: "done" });
+    ui({ type: "done" });
     finish(1000, "turn-complete");
   };
 
@@ -769,7 +820,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     const answerCanned = (transcript: string, said: string) => {
       recordTurn(getDb(), clientId, "user", transcript);
       recordTurn(getDb(), clientId, "vale", said, null);
-      sendJson(browser, { type: "reply", text: said });
+      ui({ type: "reply", text: said });
       noteAttention(clientId);
       sendBoard();
       sendWidget(null);
@@ -793,7 +844,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         sinceReplyS: null,
         totalMs: Date.now() - at,
       });
-      sendJson(browser, { type: "done" });
+      ui({ type: "done" });
       finish(1000, "turn-complete");
     };
     if (vote === "yes") {
@@ -805,7 +856,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       const executed = runPendingActions(getDb(), clientId, actions, turnLanguage);
       recordTurn(getDb(), clientId, "user", "yes");
       recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
-      sendJson(browser, { type: "reply", text: executed.text });
+      ui({ type: "reply", text: executed.text });
       noteAttention(clientId);
       sendBoard();
       // The proposal is decided: the card goes away.
@@ -830,7 +881,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         sinceReplyS: null,
         totalMs: Date.now() - at,
       });
-      sendJson(browser, { type: "done" });
+      ui({ type: "done" });
       finish(1000, "turn-complete");
       return;
     }
@@ -863,7 +914,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         if (actions) {
           const executed = runPendingActions(getDb(), clientId, actions, turnLanguage);
           recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
-          sendJson(browser, { type: "reply", text: executed.text });
+          ui({ type: "reply", text: executed.text });
           // Her reply restarts the window: the next turn counts from here.
           noteAttention(clientId);
           sendBoard();
@@ -890,7 +941,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             sinceReplyS: verdict.sinceReplyS,
             totalMs: Date.now() - speechEndAt,
           });
-          sendJson(browser, { type: "done" });
+          ui({ type: "done" });
           finish(1000, "turn-complete");
           return;
         }
@@ -916,7 +967,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         }
         const declined = declineText(turnLanguage);
         recordTurn(getDb(), clientId, "vale", declined, null);
-        sendJson(browser, { type: "reply", text: declined });
+        ui({ type: "reply", text: declined });
         noteAttention(clientId);
         sendBoard();
         sendWidget(null);
@@ -943,7 +994,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           sinceReplyS: verdict.sinceReplyS,
           totalMs: Date.now() - speechEndAt,
         });
-        sendJson(browser, { type: "done" });
+        ui({ type: "done" });
         finish(1000, "turn-complete");
         return;
       }
@@ -953,7 +1004,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           transcript,
           history,
           startedAt: speechEndAt,
-          onDelta: (text) => sendJson(browser, { type: "reply-delta", text }),
+          onDelta: (text) => ui({ type: "reply-delta", text }),
           language: turnLanguage,
           slotKey: clientId,
           turn: turnTag ?? undefined,
@@ -969,7 +1020,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         detail: { tool: result.toolUsed },
         content: result.text,
       });
-      sendJson(browser, { type: "reply", text: result.text });
+      ui({ type: "reply", text: result.text });
       // Her reply restarts the window: the next turn counts from here.
       noteAttention(clientId);
       sendBoard();
@@ -1031,7 +1082,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         code: "E-MODEL",
       });
     }
-    sendJson(browser, { type: "done" });
+    ui({ type: "done" });
     finish(1000, "turn-complete");
   };
 
@@ -1062,13 +1113,26 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         failedTurns = 0;
         lastCountedGen = metaGen;
         clearRetry();
+        // A held "Vale." joins the rest of the sentence; a name already
+        // opening the new final makes the hold redundant.
+        if (bareHold !== null) {
+          const held = bareHold;
+          bareHold = null;
+          const fresh = now() - held.at <= BARE_HOLD_MS;
+          if (
+            fresh &&
+            !/^vale\b/i.test(canonicalizeWakeWord(message.transcript))
+          ) {
+            message.transcript = `${held.text} ${message.transcript}`;
+          }
+        }
         finalText = message.transcript;
         audioProcessedMs =
           typeof message.audioProcessedMs === "number"
             ? message.audioProcessedMs
             : null;
         const speechEndAt = now();
-        sendJson(browser, {
+        ui({
           type: "transcript",
           transcript: finalText,
           final: true,
@@ -1087,12 +1151,13 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         // never rides past here into tool args. The ASR row above keeps
         // the raw spelling for the record.
         finalText = canonicalizeWakeWord(finalText);
-        // A bare name call stays silent and keeps listening in the same
-        // turn: answering here drops the words that follow (trial 9.1).
+        // A bare name call stays silent and holds the name: the rest of
+        // the sentence arrives next, and answering now would drop those
+        // words (trial 9.1). Retire this Meta turn first: its close is
+        // gen-stale, so it cannot fail the turn we keep listening in.
         if (isBareNameCall(finalText)) {
           noteAttention(clientId);
-          // Retire this Meta turn first: its close lands after the final
-          // and must not fail the turn we are still listening in.
+          bareHold = { text: message.transcript, at: now() };
           metaGen += 1;
           try {
             meta.close();
@@ -1103,17 +1168,15 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           finalText = "";
           audioProcessedMs = null;
           endStreamAt = null;
-          bufferedBytes = 0;
-          pendingAudio.length = 0;
           pendingEnd = false;
           metaOpen = false;
           metaDialPending = false;
           sendJson(browser, {
-            type: "transcript",
-            transcript: message.transcript,
-            final: false,
-          });
-          return;
+          type: "transcript",
+          transcript: message.transcript,
+          final: false,
+        });
+        return;
         }
         if (finalText.trim() === "") {
           finishEmptyTurn(
@@ -1170,7 +1233,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
               junk: true,
             });
             sendJson(browser, { type: "ignored" });
-            sendJson(browser, { type: "done" });
+            ui({ type: "done" });
             finish(1000, "turn-complete");
             return;
           }
@@ -1209,7 +1272,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
               totalMs: Date.now() - speechEndAt,
             });
             sendJson(browser, { type: "ignored" });
-            sendJson(browser, { type: "done" });
+            ui({ type: "done" });
             finish(1000, "turn-complete");
           } else {
             void answerTranscript(finalText, speechEndAt, verdict, asrMs);
@@ -1377,6 +1440,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         turnStats = control.stats;
         if (control.language !== null) turnLanguage = control.language;
         turnTag = control.turn;
+        // Failover line: audio past this mark belongs to the next segment.
+        endStreamByteMark = bufferedBytes;
+        disarmIngressWatchdog();
       }
       // Nothing ever voiced: answer locally instead of dialing Meta for it.
       if (!metaOpen && bufferedBytes === 0 && pendingAudio.length === 0) {
@@ -1384,15 +1450,18 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         return;
       }
       // Voice ended here: the final arriving later sets the real ASR time.
-      endStreamAt = now();
-      if (metaOpen) {
-        try {
-          meta.send(JSON.stringify({ type: "endStream" }));
-        } catch {
-          failTurn(err("lost"), "E-NET");
+      // The watchdog may have closed Meta ingress already: never end twice.
+      if (endStreamAt === null) {
+        endStreamAt = now();
+        if (metaOpen) {
+          try {
+            meta.send(JSON.stringify({ type: "endStream" }));
+          } catch {
+            failTurn(err("lost"), "E-NET");
+          }
+        } else {
+          pendingEnd = true;
         }
-      } else {
-        pendingEnd = true;
       }
       ensureMetaOpen();
       return;
@@ -1401,6 +1470,20 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       const chunk = data as Buffer;
       bufferedBytes += chunk.length;
       wavChunks.push(chunk);
+      wavEnds.push(bufferedBytes);
+      // Ingress watchdog: Meta open and no frame for 1.5 s means the
+      // client paused mid-segment; close Meta ingress ourselves so the
+      // turn finalizes instead of hanging open without audio.
+      clearTimeout(ingressTimer);
+      ingressTimer = setTimeout(() => {
+        if (settled || browserGone || !metaOpen || endStreamAt !== null) return;
+        endStreamAt = now();
+        try {
+          meta.send(JSON.stringify({ type: "endStream" }));
+        } catch {
+          failTurn(err("lost"), "E-NET");
+        }
+      }, INGRESS_WATCHDOG_MS);
       if (conversation && !timerArmed) {
         timerArmed = true;
         clearTimeout(timer);
@@ -1419,6 +1502,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         }
       } else {
         pendingAudio.push(chunk);
+        chunkEnds.push(bufferedBytes);
       }
     }
     // Only Buffer audio and JSON control frames are part of the protocol.
@@ -1429,6 +1513,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     settled = true;
     browserGone = true;
     clearTimeout(timer);
+    disarmIngressWatchdog();
     clearRetry();
     try {
       meta.close();
