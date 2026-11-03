@@ -288,7 +288,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
     type: "function",
     name: "session_quote",
     description:
-      "Quote the open session: base cost, extras total and suggested total on a sheet with Accept and Reject. A yes or accept registers the payment for the suggested total; a no or reject leaves the sheet waiting for the spoken amount, and a later call with amount registers that amount instead. Neither closes the session. Never say any amount aloud: the totals live on the screen only.",
+      "Quote the open session: base cost, extras total and suggested total on a sheet. A yes or accept registers the payment for the suggested total; a no or reject leaves the sheet waiting for the spoken amount, and a later call with amount registers that amount instead. Neither closes the session. Never say any amount aloud and never name the on-screen buttons: the totals live on the screen only.",
     parameters: {
       type: "object",
       properties: {
@@ -1298,8 +1298,8 @@ export function quoteSession(
     // Amounts live on the sheet: the voice only points at it.
     message:
       language === "en"
-        ? `The quote for ${data.service} is on screen, with Accept and Reject.`
-        : `La cotización de ${data.service} está en pantalla, con Aceptar y Rechazar.`,
+        ? "The quote is on screen."
+        : "La cotización está en pantalla.",
     data,
     pendingAccept: open ? { amount: computed.breakdown.finalPrice, session_id: open.id } : undefined,
   };
