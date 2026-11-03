@@ -895,8 +895,9 @@ export function TapToTalk({
           }
         };
         socket.onmessage = (event: MessageEvent) => {
+          // Session-scoped frames (board, widgets) land before the first
+          // turn opens; handleBridgeMessage routes what needs no turn.
           const id = pendingConvTurn ?? currentId;
-          if (!transports.has(id)) return;
           handleBridgeMessage(id, event.data);
           try {
             const raw =
@@ -1080,15 +1081,7 @@ export function TapToTalk({
       };
 
       const handleBridgeMessage = (id: number, raw: unknown) => {
-        const transport = transports.get(id);
-        // Late socket frames after the POST retry are stale; ignore them.
-        if (
-          !transport ||
-          transport.settled ||
-          transport.failed ||
-          !sessionRef.current
-        )
-          return;
+        if (!sessionRef.current) return;
         let message: {
           type?: string;
           transcript?: unknown;
@@ -1105,6 +1098,32 @@ export function TapToTalk({
         } catch {
           return;
         }
+        // Session-scoped frames need no turn: the connect-time board and
+        // widgets must land even before the first turn opens.
+        if (message.type === "board") {
+          const board = (message as { board?: unknown }).board;
+          if (board && typeof board === "object") {
+            setBoard(board as Board);
+          }
+          return;
+        }
+        if (message.type === "widget") {
+          handleWidget((message as { widget?: unknown }).widget);
+          return;
+        }
+        if (message.type === "notice") {
+          if (typeof message.message !== "string") return;
+          if (typeof message.code === "string" && message.code === "E-VAD") return;
+          showNotice(
+            message.message,
+            typeof message.code === "string" ? message.code : null,
+          );
+          return;
+        }
+        const transport = transports.get(id);
+        // Settled turns ignore late frames; a done for a settled turn is
+        // the only frame that may still touch it (it already did).
+        if (!transport || transport.settled || transport.failed) return;
         switch (message.type) {
           case "transcript":
             if (typeof message.transcript !== "string") return;
@@ -1148,26 +1167,6 @@ export function TapToTalk({
             }
             repliesRef.current.set(id, message.text);
             patchTurn(id, { reply: message.text });
-            break;
-          case "board": {
-            const board = (message as { board?: unknown }).board;
-            if (board && typeof board === "object") {
-              setBoard(board as Board);
-            }
-            break;
-          }
-          case "widget": {
-            const incoming = (message as { widget?: unknown }).widget;
-            handleWidget(incoming);
-            break;
-          }
-          case "notice":
-            if (typeof message.message !== "string") return;
-            if (typeof message.code === "string" && message.code === "E-VAD") break;
-            showNotice(
-              message.message,
-              typeof message.code === "string" ? message.code : null,
-            );
             break;
           case "error": {
             if (typeof message.message !== "string") return;
@@ -1221,7 +1220,9 @@ export function TapToTalk({
         }
       };
 
-      // One bridge socket per turn; replays buffered frames on (re)open.
+      // Dead after the one-transport cut: no caller dials per-turn sockets.
+      // Kept only until the demo deletes it; the reconnect replay above
+      // owns every resend.
       const openTurnSocket = (id: number) => {
         const transport = transports.get(id);
         if (!transport || transport.socket || typeof WebSocket === "undefined") {

@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -46,7 +47,7 @@ function stubMic(track: { enabled: boolean }) {
     getAudioTracks: () => [track],
   }));
   vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
-  vi.stubGlobal("WebSocket", undefined);
+  stubVoiceSocket();
   return getUserMedia;
 }
 
@@ -77,12 +78,38 @@ function stubVoice(sender: (body: string) => string): VoiceCall[] {
   return calls;
 }
 
-function boardSse(transcript: string): string {
-  return (
-    `event: final\ndata: {"transcript":${JSON.stringify(transcript)}}\n\n` +
-    `event: board\ndata: {"board":{"session":{"id":7,"clientName":"David","serviceName":"Gel manicure","startedAt":${JSON.stringify(STARTED_AT)}},"card":null,"list":[]}}\n\n` +
-    "event: done\ndata: {}\n\n"
-  );
+function noAudioPost() {
+  const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function answerBoardTurn(transcript: string) {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({ type: "transcript", transcript, final: true });
+  ws.serverMessage({
+    type: "board",
+    board: {
+      session: {
+        id: 7,
+        clientName: "David",
+        serviceName: "Gel manicure",
+        startedAt: STARTED_AT,
+      },
+      card: null,
+      list: [],
+    },
+  });
+  ws.serverMessage({ type: "done" });
+}
+
+async function waitForEndStream(count: number) {
+  await waitFor(() => {
+    const ends = FakeVoiceSocket.instances[0]
+      .sentStrings()
+      .filter((raw) => raw.includes("endStream")).length;
+    expect(ends).toBeGreaterThanOrEqual(count);
+  });
 }
 
 function typedSse(): string {
@@ -119,6 +146,8 @@ async function goLive(): Promise<void> {
 async function goLiveWithSession(): Promise<void> {
   await goLive();
   fireLoudTurn();
+  await waitForEndStream(1);
+  answerBoardTurn("vale open a session");
   await waitFor(() => {
     expect(screen.getByRole("timer", { name: "Session time" })).toBeTruthy();
   });
@@ -135,7 +164,7 @@ describe("mic mute (track toggle, session stays live)", () => {
     const track = makeTrack();
     stubMic(track);
     stubSpeech();
-    stubVoice((body) => boardSse("vale open a session"));
+    const fetchMock = noAudioPost();
     mockStartCapture.mockImplementation(() => ({
       stop: () => {},
       state: () => "running",
@@ -149,6 +178,7 @@ describe("mic mute (track toggle, session stays live)", () => {
     expect(screen.getByPlaceholderText("Type to Vale…")).toBeTruthy();
     // Session untouched: timer still live, no stop happened.
     expect(screen.getByRole("timer", { name: "Session time" })).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("starts deaf when muted before the session exists", async () => {
@@ -177,29 +207,31 @@ describe("mic mute (track toggle, session stays live)", () => {
     const track = makeTrack();
     stubMic(track);
     stubSpeech();
-    const calls = stubVoice((body) => boardSse("vale open a session"));
+    noAudioPost();
     mockStartCapture.mockImplementation(() => ({
       stop: () => {},
       state: () => "running",
       engine: () => "script" as const,
     }));
     await goLiveWithSession();
-    // Pipeline alive: the loud turn posted audio before the mute.
+    const ws = FakeVoiceSocket.instances[0];
+    // Pipeline alive: the loud turn rode the socket before the mute.
     expect(
-      calls.filter((call) => call.contentType.includes("audio/")),
-    ).not.toHaveLength(0);
+      ws.sent.filter((item) => item instanceof ArrayBuffer).length,
+    ).toBeGreaterThan(0);
+    const framesBefore = ws.sent.length;
     fireEvent.click(screen.getByRole("button", { name: "Mute microphone" }));
-    calls.length = 0;
     fireSilentFrames(20);
     await new Promise((resolve) => setTimeout(resolve, 600));
-    expect(calls.filter((call) => call.contentType.includes("audio/"))).toHaveLength(0);
+    // Silent frames never leave the device, muted or not.
+    expect(ws.sent.length).toBe(framesBefore);
   });
 
   it("unmutes instantly, hides the field, and keeps listening", async () => {
     const track = makeTrack();
     stubMic(track);
     stubSpeech();
-    stubVoice((body) => boardSse("vale open a session"));
+    noAudioPost();
     mockStartCapture.mockImplementation(() => ({
       stop: () => {},
       state: () => "running",

@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 import type { CaptureCallbacks } from "@/lib/capture";
 import { stopSpeaking } from "@/lib/speak";
@@ -33,50 +34,14 @@ function burst(callbacks: CaptureCallbacks) {
   callbacks.onSpeechEnd();
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((response) => {
-    resolve = response;
-  });
-  return { promise, resolve };
+function noAudioPost() {
+  const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
-function gatedTurn() {
-  const replyGate = deferred<void>();
-  const doneGate = deferred<void>();
-  const encoder = new TextEncoder();
-  const state = { step: 0 };
-  const body = {
-    getReader: () => ({
-      read: async (): Promise<{ done: boolean; value?: Uint8Array }> => {
-        state.step += 1;
-        if (state.step === 1) {
-          return {
-            done: false,
-            value: encoder.encode(
-              'event: final\ndata: {"transcript":"book a refill","audioProcessedMs":800}\n\n',
-            ),
-          };
-        }
-        if (state.step === 2) {
-          await replyGate.promise;
-          return {
-            done: false,
-            value: encoder.encode(
-              'event: reply\ndata: {"text":"You are booked in."}\n\n',
-            ),
-          };
-        }
-        if (state.step === 3) {
-          await doneGate.promise;
-          return { done: true, value: undefined };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
-  return { body, replyGate, doneGate };
+function liveSocket() {
+  return FakeVoiceSocket.instances[0];
 }
 
 afterEach(() => {
@@ -95,20 +60,13 @@ describe("interruption (fake-device fallback)", () => {
     });
     // No real sockets in tests: Node's WebSocket would dial localhost:3000,
     // so hide it and force the buffered-POST fallback path under test.
-    vi.stubGlobal("WebSocket", undefined);
+    stubVoiceSocket();
     const seen: CaptureCallbacks[] = [];
     mockStartCapture.mockImplementation((_stream, callbacks) => {
       seen.push(callbacks);
       return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
-    const turn = gatedTurn();
-    const fetchMock = vi.fn(() => {
-      if (fetchMock.mock.calls.length > 1) {
-        return new Promise(() => {}); // later turns hang: session waits
-      }
-      return Promise.resolve({ ok: true, body: turn.body });
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = noAudioPost();
 
     render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
@@ -117,13 +75,18 @@ describe("interruption (fake-device fallback)", () => {
       expect(seen.length).toBeGreaterThan(0);
     });
     burst(seen[0]);
+    liveSocket().serverMessage({
+      type: "transcript",
+      transcript: "book a refill",
+      final: true,
+    });
 
     await waitFor(() => {
       expect(screen.getByText("book a refill")).toBeTruthy();
     });
     expect(screen.queryByText("You are booked in.")).toBeNull();
 
-    turn.replyGate.resolve();
+    liveSocket().serverMessage({ type: "reply", text: "You are booked in." });
     await screen.findByText("You are booked in.");
 
     // Strict turns: speech while she speaks changes nothing on screen.
@@ -137,7 +100,8 @@ describe("interruption (fake-device fallback)", () => {
     expect(screen.getByText("book a refill")).toBeTruthy();
 
     speakAudibleRef.current = false;
-    turn.doneGate.resolve();
+    liveSocket().serverMessage({ type: "done" });
+    expect(fetchMock).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
   });
 
@@ -150,7 +114,7 @@ describe("interruption (fake-device fallback)", () => {
             ({ getTracks: () => [] }) as unknown as MediaStream,
         },
       });
-      vi.stubGlobal("WebSocket", undefined);
+      stubVoiceSocket();
       const seen: CaptureCallbacks[] = [];
       mockStartCapture.mockImplementation((_stream, callbacks) => {
         seen.push(callbacks);
@@ -162,7 +126,8 @@ describe("interruption (fake-device fallback)", () => {
       );
       render(<TapToTalk debug />);
       fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
-      await vi.advanceTimersByTimeAsync(0);
+      // The /voice gate polls every 50 ms: advance past one poll.
+      await vi.advanceTimersByTimeAsync(100);
       expect(seen.length).toBeGreaterThan(0);
       // Her voice: the watch mutes within one tick and stays muted.
       speakAudibleRef.current = true;

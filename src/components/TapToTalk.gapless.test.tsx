@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 import type { CaptureCallbacks } from "@/lib/capture";
 
@@ -10,28 +11,11 @@ vi.mock("@/lib/capture", () => ({
 
 const mockStartCapture = vi.mocked(startCapture);
 
-function sseTurn(final: string, reply: string): { getReader: () => {
-  read: () => Promise<{ done: boolean; value?: Uint8Array }>;
-  releaseLock: () => void;
-} } {
-  const raw =
-    `event: final\ndata: {"transcript":${JSON.stringify(final)},"audioProcessedMs":800}\n\n` +
-    `event: reply\ndata: {"text":${JSON.stringify(reply)}}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
+function answerTurn(final: string, reply: string) {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({ type: "transcript", transcript: final, final: true });
+  ws.serverMessage({ type: "reply", text: reply });
+  ws.serverMessage({ type: "done" });
 }
 
 function burst(callbacks: CaptureCallbacks) {
@@ -56,9 +40,7 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
           ({ getTracks: () => [] }) as unknown as MediaStream,
       },
     });
-    // No real sockets in tests: Node's WebSocket would dial localhost:3000,
-    // so hide it and force the buffered-POST fallback path under test.
-    vi.stubGlobal("WebSocket", undefined);
+    stubVoiceSocket();
     const seen: CaptureCallbacks[] = [];
     const stopMock = vi.fn();
     mockStartCapture.mockImplementation((_stream, callbacks) => {
@@ -70,20 +52,7 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
       };
     });
 
-    const fetchMock = vi.fn((..._args: unknown[]) => {
-      const call = fetchMock.mock.calls.length;
-      if (call === 1)
-        return Promise.resolve({
-          ok: true,
-          body: sseTurn("first phrase here", "First reply."),
-        });
-      if (call === 2)
-        return Promise.resolve({
-          ok: true,
-          body: sseTurn("second phrase here", "Second reply."),
-        });
-      return new Promise(() => {}); // session waits for a third turn
-    });
+    const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<TapToTalk debug />);
@@ -94,6 +63,7 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
     });
 
     burst(seen[0]);
+    answerTurn("first phrase here", "First reply.");
     await waitFor(() => {
       expect(screen.getByText("first phrase here")).toBeTruthy();
     });
@@ -102,6 +72,7 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
     });
 
     burst(seen[0]);
+    answerTurn("second phrase here", "Second reply.");
     await waitFor(() => {
       expect(screen.getByText("second phrase here")).toBeTruthy();
     });
@@ -111,7 +82,7 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
 
     expect(mockStartCapture).toHaveBeenCalledTimes(1);
     expect(stopMock).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getAllByText("You:")).toHaveLength(2);
     expect(screen.getAllByText("Vale:")).toHaveLength(2);
 

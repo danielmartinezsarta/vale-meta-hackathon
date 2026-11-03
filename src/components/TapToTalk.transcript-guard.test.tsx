@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -30,44 +31,21 @@ function stubSession() {
   vi.stubGlobal("navigator", {
     mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
   });
-  // No real sockets in tests: hide WebSocket to force the POST path.
-  vi.stubGlobal("WebSocket", undefined);
+  stubVoiceSocket();
 }
 
-function sseReader(raw: string): { getReader: () => {
-  read: () => Promise<{ done: boolean; value?: Uint8Array }>;
-  releaseLock: () => void;
-} } {
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
+function answerTurn(final: string, reply: string) {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({ type: "transcript", transcript: final.slice(0, 5), final: false });
+  ws.serverMessage({ type: "transcript", transcript: final, final: true });
+  ws.serverMessage({ type: "reply", text: reply });
+  ws.serverMessage({ type: "done" });
 }
 
-function sseTurn(final: string, reply: string): unknown {
-  const raw =
-    `event: interim\ndata: {"transcript":"${final.slice(0, 5)}"}\n\n` +
-    `event: final\ndata: {"transcript":${JSON.stringify(final)},"audioProcessedMs":800}\n\n` +
-    `event: reply\ndata: {"text":${JSON.stringify(reply)}}\n\n` +
-    "event: done\ndata: {}\n\n";
-  return sseReader(raw);
-}
-
-function sseEmptyTurn(): unknown {
-  const raw =
-    `event: final\ndata: {"transcript":"","audioProcessedMs":800}\n\n` +
-    "event: done\ndata: {}\n\n";
-  return sseReader(raw);
+function answerEmptyTurn() {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({ type: "transcript", transcript: "", final: true });
+  ws.serverMessage({ type: "done" });
 }
 
 function burst() {
@@ -101,14 +79,12 @@ describe("transcript guard: an empty turn never deletes a bubble", () => {
   it("a completed turn survives the quiet timeout", async () => {
     vi.useFakeTimers();
     stubSession();
-    const fetchMock = vi.fn(() => {
-      if (fetchMock.mock.calls.length > 1) return new Promise(() => {});
-      return Promise.resolve({ ok: true, body: sseTurn("Vale, agenda lista", "Listo, Daniel.") });
-    });
+    const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await tap();
     burst();
+    answerTurn("Vale, agenda lista", "Listo, Daniel.");
     await flush();
     expect(screen.getByText("Vale, agenda lista")).toBeTruthy();
     expect(screen.getByText("Listo, Daniel.")).toBeTruthy();
@@ -120,23 +96,18 @@ describe("transcript guard: an empty turn never deletes a bubble", () => {
     expect(
       screen.getByLabelText("Conversation turns").querySelectorAll("li"),
     ).toHaveLength(1);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("N empty turns after text leave the list intact", async () => {
     vi.useFakeTimers();
     stubSession();
-    const fetchMock = vi.fn(() => {
-      const call = fetchMock.mock.calls.length;
-      if (call === 1) {
-        return Promise.resolve({ ok: true, body: sseTurn("Vale, agenda lista", "Listo, Daniel.") });
-      }
-      if (call <= 4) return Promise.resolve({ ok: true, body: sseEmptyTurn() });
-      return new Promise(() => {});
-    });
+    const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await tap();
     burst();
+    answerTurn("Vale, agenda lista", "Listo, Daniel.");
     await flush();
     expect(screen.getByText("Vale, agenda lista")).toBeTruthy();
 
@@ -144,13 +115,16 @@ describe("transcript guard: an empty turn never deletes a bubble", () => {
     // shape): none of them may touch the existing bubble, and none draws.
     await vi.advanceTimersByTimeAsync(8500);
     burst();
+    answerEmptyTurn();
     await flush();
     burst();
+    answerEmptyTurn();
     await flush();
     burst();
+    answerEmptyTurn();
     await flush();
 
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getByText("Vale, agenda lista")).toBeTruthy();
     expect(screen.getByText("Listo, Daniel.")).toBeTruthy();
     expect(

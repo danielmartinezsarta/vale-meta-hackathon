@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -13,29 +14,13 @@ function stubMic() {
   vi.stubGlobal("navigator", {
     mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
   });
-  // No real sockets in tests: Node's WebSocket would dial localhost:3000,
-  // so hide it and force the buffered-POST fallback path under test.
-  vi.stubGlobal("WebSocket", undefined);
+  stubVoiceSocket();
 }
 
-function sseEmptyTurn() {
-  const raw =
-    `event: final\ndata: {"transcript":"","audioProcessedMs":800}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
+function answerEmptyTurn() {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({ type: "transcript", transcript: "", final: true });
+  ws.serverMessage({ type: "done" });
 }
 
 afterEach(() => {
@@ -94,18 +79,20 @@ describe("empty turns stay hidden (fix 1)", () => {
       return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
-    const fetchMock = vi.fn((..._args: unknown[]) => {
-      if (fetchMock.mock.calls.length > 1) return new Promise(() => {});
-      return Promise.resolve({ ok: true, body: sseEmptyTurn() });
-    });
+    const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(
+        FakeVoiceSocket.instances[0]
+          .sentStrings()
+          .some((raw) => raw.includes("endStream")),
+      ).toBe(true);
     });
+    answerEmptyTurn();
     await waitFor(() => {
       expect(
         screen.getByText("Your microphone is on. Go ahead, I'm listening."),
@@ -114,6 +101,7 @@ describe("empty turns stay hidden (fix 1)", () => {
     expect(
       screen.getByLabelText("Conversation turns").querySelectorAll("li"),
     ).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => {

@@ -1,8 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { SessionScreen } from "./SessionScreen";
 import { startCapture } from "@/lib/capture";
+import type { CaptureCallbacks } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
   startCapture: vi.fn(),
@@ -15,39 +17,28 @@ function stubGetUserMedia() {
   vi.stubGlobal("navigator", {
     mediaDevices: { getUserMedia: async () => stream },
   });
-  vi.stubGlobal("WebSocket", undefined);
+  stubVoiceSocket();
 }
 
 const STARTED_AT = new Date(Date.now() - 3723 * 1000).toISOString();
 
-function sseBody(transcript: string, reply: string): {
-  getReader: () => {
-    read: () => Promise<{ done: boolean; value?: Uint8Array }>;
-    releaseLock: () => void;
-  };
-} {
-  const encoder = new TextEncoder();
-  const raw =
-    `event: interim\ndata: {"transcript":"${transcript.slice(0, 5)}"}\n\n` +
-    `event: final\ndata: {"transcript":"${transcript}","audioProcessedMs":800}\n\n` +
-    `event: reply\ndata: {"text":${JSON.stringify(reply)}}\n\n` +
-    `event: board\ndata: {"board":{"session":{"clientName":"David","serviceName":"Gel manicure","startedAt":${JSON.stringify(STARTED_AT)}},"card":null,"list":[]}}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = encoder.encode(raw);
-  const first = bytes.slice(0, 13);
-  const rest = bytes.slice(13);
-  let step = 0;
-  return {
-    getReader: () => ({
-      read: async () => {
-        step += 1;
-        if (step === 1) return { done: false, value: first };
-        if (step === 2) return { done: false, value: rest };
-        return { done: true, value: undefined };
+function answerSessionTurn(transcript: string, reply: string) {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({ type: "transcript", transcript, final: true });
+  ws.serverMessage({ type: "reply", text: reply });
+  ws.serverMessage({
+    type: "board",
+    board: {
+      session: {
+        clientName: "David",
+        serviceName: "Gel manicure",
+        startedAt: STARTED_AT,
       },
-      releaseLock: () => {},
-    }),
-  };
+      card: null,
+      list: [],
+    },
+  });
+  ws.serverMessage({ type: "done" });
 }
 
 afterEach(() => {
@@ -57,30 +48,43 @@ afterEach(() => {
 });
 
 describe("in-session screen (names, stopwatch, sheets)", () => {
+  const seen: CaptureCallbacks[] = [];
   function driveSession() {
+    seen.length = 0;
     stubGetUserMedia();
     mockStartCapture.mockImplementation((_stream, callbacks) => {
-      const frame = new Int16Array(960).fill(4000);
-      window.setTimeout(() => {
-        callbacks.onFrame(frame);
-        callbacks.onSpeechStart();
-        for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
-        callbacks.onSpeechEnd();
-      }, 0);
+      seen.push(callbacks);
       return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        body: sseBody("vale open a session", "Done, session open."),
-      })),
+      vi.fn(async () => new Response("no post", { status: 500 })),
     );
+  }
+
+  function burstOnce() {
+    const frame = new Int16Array(960).fill(4000);
+    seen[0].onFrame(frame);
+    seen[0].onSpeechStart();
+    for (let i = 0; i < 8; i += 1) seen[0].onFrame(frame);
+    seen[0].onSpeechEnd();
   }
 
   it("shows the client, service and running stopwatch once the table opens", async () => {
     driveSession();
     render(<TapToTalk autoStart />);
+    await waitFor(() => {
+      expect(seen.length).toBe(1);
+    });
+    burstOnce();
+    await waitFor(() => {
+      expect(
+        FakeVoiceSocket.instances[0]
+          .sentStrings()
+          .some((raw) => raw.includes("endStream")),
+      ).toBe(true);
+    });
+    answerSessionTurn("vale open a session", "Done, session open.");
     await waitFor(() => {
       expect(screen.getByText("David")).toBeTruthy();
     });

@@ -89,14 +89,14 @@ describe("reply streaming (transient output fix)", () => {
     render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
-      expect(driver).not.toBeNull();
-    });
-    await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     // The conversation socket is up before speech: no per-turn socket.
     FakeWs.instances[0].open();
     const ws = FakeWs.instances[0];
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
     driver!.onFrame(speechFrame());
     driver!.onSpeechStart();
     for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());

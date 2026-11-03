@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -41,44 +42,36 @@ function silentFrame(): Int16Array {
 
 // The server no longer sends E-VAD notices; feeding one proves the client
 // ignores it instead of showing a banner.
-function sseIgnoredNotice() {
-  const raw =
-    `event: notice\ndata: {"message":"I didn't hear you. Speak, I'm listening.","code":"E-VAD"}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
+function answerIgnoredNotice() {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({
+    type: "notice",
+    message: "I didn't hear you. Speak, I'm listening.",
+    code: "E-VAD",
+  });
+  ws.serverMessage({ type: "done" });
 }
 
-function sseReply(text: string) {
-  const raw =
-    `event: reply\ndata: {"text":${JSON.stringify(text)}}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
+function answerReply(text: string) {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({ type: "reply", text });
+  ws.serverMessage({ type: "done" });
+}
+
+function answerIgnoredTurn(transcript: string) {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({ type: "transcript", transcript, final: true });
+  ws.serverMessage({ type: "ignored" });
+  ws.serverMessage({ type: "done" });
+}
+
+async function waitForEndStream(count: number) {
+  await waitFor(() => {
+    const ends = FakeVoiceSocket.instances[0]
+      .sentStrings()
+      .filter((raw) => raw.includes("endStream")).length;
+    expect(ends).toBeGreaterThanOrEqual(count);
+  });
 }
 
 const LISTENING_HINT = "Your microphone is on. Go ahead, I'm listening.";
@@ -105,31 +98,8 @@ describe("silence never banners (vad-continue removed)", () => {
       vi.stubGlobal("navigator", {
         mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
       });
-      vi.stubGlobal("WebSocket", undefined);
-      const ignoredBody = () => {
-        const bytes = new TextEncoder().encode(
-          `event: interim\ndata: {"transcript":"background"}\n\n` +
-            `event: final\ndata: {"transcript":"background chat here","audioProcessedMs":800}\n\n` +
-            `event: ignored\ndata: {}\n\n` +
-            `event: done\ndata: {}\n\n`,
-        );
-        let served = false;
-        return {
-          getReader: () => ({
-            read: async () => {
-              if (!served) {
-                served = true;
-                return { done: false, value: bytes };
-              }
-              return { done: true, value: undefined };
-            },
-            releaseLock: () => {},
-          }),
-        };
-      };
-      const fetchMock = vi.fn(() =>
-        Promise.resolve({ ok: true, body: ignoredBody() })
-      );
+      stubVoiceSocket();
+      const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
       vi.stubGlobal("fetch", fetchMock);
       stubSessionOnce();
 
@@ -146,9 +116,8 @@ describe("silence never banners (vad-continue removed)", () => {
       driver!.onSpeechStart();
       for (let i = 0; i < 8; i += 1) driver!.onFrame(voiceFrame());
       driver!.onSpeechEnd();
-      await waitFor(() => {
-        expect(fetchMock).toHaveBeenCalledTimes(1);
-      });
+      await waitForEndStream(1);
+      answerIgnoredTurn("background chat here");
       // Let the done event re-arm the window before measuring it.
       await new Promise((resolve) => setTimeout(resolve, 40));
       // One more silent window: the discard reset the streak, so no banner.
@@ -163,17 +132,8 @@ describe("silence never banners (vad-continue removed)", () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
-    // No real sockets in tests: Node's WebSocket would dial localhost:3000,
-    // so hide it and force the buffered-POST fallback path under test.
-    vi.stubGlobal("WebSocket", undefined);
-    // First posted turn gets a reply, later ones the E-VAD notice.
-    const bodies = [sseReply("Done."), sseIgnoredNotice(), sseIgnoredNotice()];
-    const fetchMock = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        body: bodies[Math.min(fetchMock.mock.calls.length, 2)],
-      }),
-    );
+    stubVoiceSocket();
+    const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
     stubSessionOnce();
 
@@ -196,34 +156,34 @@ describe("silence never banners (vad-continue removed)", () => {
       driver!.onSpeechEnd();
     };
 
-    // A voiced turn posts and answers as usual.
+    // A voiced turn rides the socket and answers as usual.
     speak(voiceFrame());
+    await waitForEndStream(1);
+    answerReply("Done.");
+    // Settled back to listening with the reply bubble standing.
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-    await waitFor(() => {
-      expect(screen.getByText(LISTENING_HINT)).toBeTruthy();
+      expect(screen.getByRole("status").textContent).toBe("Listening");
     });
     expect(vadBanner()).toBeNull();
 
-    // Silent blips never leave the device: no post, no banner, no alert.
+    // Silent blips never leave the device: no socket traffic, no banner.
     blip();
     blip();
     await waitFor(() => {
-      expect(screen.getByText(LISTENING_HINT)).toBeTruthy();
+      expect(screen.getByRole("status").textContent).toBe("Listening");
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(vadBanner()).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
 
-    // The next voiced turn still posts on a fresh turn.
+    // The next voiced turn still rides on a fresh turn.
     speak(voiceFrame());
+    await waitForEndStream(2);
+    answerIgnoredNotice();
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("status").textContent).toBe("Listening");
     });
-    await waitFor(() => {
-      expect(screen.getByText(LISTENING_HINT)).toBeTruthy();
-    });
+    expect(fetchMock).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => {
