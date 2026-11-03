@@ -70,6 +70,18 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
     ).toBeNull();
   });
 
+  it("contains stored photos to their slot width", () => {
+    renderSheet({
+      kind: "photos",
+      title: "Photos",
+      size: "full",
+      data: { before: "/api/photos?file=pre_7.jpg", reference: null, expected: null },
+    });
+    const img = document.querySelector(".aw-pics img") as HTMLImageElement | null;
+    expect(img?.getAttribute("src")).toBe("/api/photos?file=pre_7.jpg");
+    expect(img?.style.width).toBe("100%");
+  });
+
   it("hides the card health block when there are no health notes", () => {
     renderSheet({
       kind: "client_card",

@@ -378,7 +378,12 @@ export function PlaceholderHand({
 function SlotPhoto({ src, seed }: { src: string | null; seed: React.ReactNode }) {
   return src ? (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt="" aria-hidden="true" />
+    <img
+      src={src}
+      alt=""
+      aria-hidden="true"
+      style={{ display: "block", width: "100%", height: "auto" }}
+    />
   ) : (
     seed
   );
