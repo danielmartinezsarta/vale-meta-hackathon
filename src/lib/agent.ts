@@ -711,6 +711,13 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       text = toolResult.message;
       break;
     }
+    if (toolResult.ok && call.name === "agenda_show" && parsed.range === "today") {
+      // Today answers itself with no second round: the tool line already
+      // names appointments and reminders, and a second round may drop
+      // the reminders. Other ranges still go through the model.
+      text = toolResult.message;
+      break;
+    }
     // Chainless second round: resend the full prefix so the API can
     // resolve the call_id (a lone function_call_output is a 400).
     input = [
