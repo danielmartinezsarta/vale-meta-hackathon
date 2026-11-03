@@ -20,6 +20,7 @@ import {
   onSpeechSettled,
   setVoiceEngine,
   speak,
+  primeSpokenAudio,
   speechSettled,
   stopSpeaking,
   voiceEngine,
@@ -1958,8 +1959,11 @@ export function TapToTalk({
     if (status === "requesting") return;
     // In-gesture audio unlock: resume() after the getUserMedia await below
     // no longer counts as a gesture on iOS and the mic delivers zeros.
+    // The same gesture primes both speech paths, or iOS Safari stays
+    // muted for the later out-of-gesture speak()/play() calls.
     try {
       unlockAudioContext();
+      primeSpokenAudio();
     } catch {
       /* startCapture throws the clear error when unsupported */
     }
