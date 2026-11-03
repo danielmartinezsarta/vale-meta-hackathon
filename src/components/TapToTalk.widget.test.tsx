@@ -330,7 +330,7 @@ describe("Ali sheet flows", () => {
     expect(ws.sentStrings()).toContain(JSON.stringify({ type: "sheet-closed" }));
   });
 
-  it("runs Final photo upload then Accept into the mosaic result sheet", async () => {
+  it("runs Final photo upload then Accept into the final photo result sheet", async () => {
     const ws = await openConversation();
     vi.stubGlobal(
       "fetch",
@@ -387,6 +387,10 @@ describe("Ali sheet flows", () => {
         expect(screen.getByRole("dialog", { name: "Final result" })).toBeTruthy();
       });
       expect(screen.getByText("Matte nude with black lace and copper foil.")).toBeTruthy();
+      expect(document.querySelector(".aw-result-photo img")?.getAttribute("src")).toBe(
+        "/api/photos?file=post_7.jpg",
+      );
+      expect(document.body.innerHTML).not.toContain("mosaic");
       fireEvent.click(screen.getByRole("button", { name: "Close final result" }));
       await waitFor(() => {
         expect(screen.queryByRole("dialog", { name: "Final result" })).toBeNull();
