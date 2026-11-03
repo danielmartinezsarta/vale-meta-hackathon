@@ -577,37 +577,18 @@ async function playSentence(
     };
     // Mid-play freeze (element stops advancing with no event): a few
     // seconds of still audio ends the sentence instead of holding it.
-    // A pause iOS never resumes gets one re-play, then the same end.
+    // A pause never counts as stillness; the end watchdog caps the total.
     let playStarted = false;
     let lastTime = 0;
     let stillCount = 0;
-    let pausedCount = 0;
     progressTimer = setInterval(() => {
       if (audioDone || !playStarted) return;
       try {
-        if (audio.ended || audio.seeking) {
+        if (audio.ended || audio.seeking || audio.paused) {
           stillCount = 0;
-          pausedCount = 0;
           lastTime = audio.currentTime;
           return;
         }
-        if (audio.paused) {
-          stillCount = 0;
-          lastTime = audio.currentTime;
-          pausedCount += 1;
-          if (pausedCount === 3) {
-            try {
-              void audio.play();
-            } catch {
-              /* the end below still frees the chain */
-            }
-          } else if (pausedCount >= 6) {
-            emitSpeechEvent("sentence-paused", `t=${lastTime.toFixed(1)}`);
-            endSentence();
-          }
-          return;
-        }
-        pausedCount = 0;
         if (audio.readyState < 2) return;
         if (audio.currentTime === lastTime) stillCount += 1;
         else {

@@ -417,7 +417,7 @@ describe("seamless voice engine", () => {
     }
   });
 
-  it("re-plays once then ends a sentence iOS left paused", async () => {
+  it("ignores a paused sentence until the end watchdog caps it", async () => {
     stubSpeechSynthesis();
     const { played, instances } = stubAudio();
     vi.stubGlobal("fetch", vi.fn(async (_url: unknown) => new Response(WAV)));
@@ -429,15 +429,17 @@ describe("seamless voice engine", () => {
       expect(played).toHaveLength(1);
       const audio = instances[0] as unknown as { paused: boolean };
       audio.paused = true;
-      // One re-play at three still seconds, then the end at six.
-      await vi.advanceTimersByTimeAsync(3500);
-      expect(played).toHaveLength(2);
+      // A pause never counts as stillness: no re-play, no early end.
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(played).toHaveLength(1);
       expect(isSpeaking()).toBe(true);
+      // The end watchdog caps the total instead.
       await vi.advanceTimersByTimeAsync(3000);
       expect(isSpeaking()).toBe(false);
-      expect(drainSpeechEvents().map((event) => event.kind)).toContain(
-        "sentence-paused",
-      );
+      const kinds = drainSpeechEvents().map((event) => event.kind);
+      expect(kinds).toContain("sentence-timeout");
+      expect(kinds).not.toContain("sentence-paused");
+      expect(kinds).not.toContain("sentence-still");
     } finally {
       setVoiceEngine("browser");
       vi.useRealTimers();
