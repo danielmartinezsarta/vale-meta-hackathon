@@ -169,6 +169,32 @@ export function sessionContext(db: ValeDb, now = new Date()): string {
   );
 }
 
+/**
+ * Card contract shared by the card and the summary: the full contact and
+ * notes ride data to the screen only. The summary adds its private brief
+ * on top; a null brief opens the plain card.
+ */
+function cardContract(
+  info: Record<string, unknown>,
+  brief: { label: string; lines: string[] } | null,
+): { tool: string; args: Record<string, unknown>; data: unknown } | null {
+  const card = (info.card ?? {}) as { id?: unknown; name?: unknown; notes?: unknown };
+  const notes = Array.isArray(card.notes) ? card.notes : [];
+  return {
+    tool: "find_client",
+    args: { client_name: typeof card.name === "string" ? card.name : "" },
+    data: {
+      id: card.id,
+      name: card.name,
+      notes: notes.map((note) => {
+        const entry = (note ?? {}) as { kind?: unknown; text?: unknown };
+        return { kind: entry.kind === "health_note" ? "health" : "general", text: entry.text };
+      }),
+      ...(brief === null ? {} : { brief }),
+    },
+  };
+}
+
 /** One history turn as a Responses input message. */
 /**
  * Tool call to UI contract keys. The contract owns widget.ts: this maps
@@ -184,21 +210,19 @@ export function contractWidgetFor(
   switch (tool) {
     case "goal_show":
       return { tool: "goal_progress", args: {}, data };
-    case "client_card_show": {
-      const card = (info.card ?? {}) as { id?: unknown; name?: unknown; notes?: unknown };
-      const notes = Array.isArray(card.notes) ? card.notes : [];
-      return {
-        tool: "find_client",
-        args: { client_name: typeof card.name === "string" ? card.name : "" },
-        data: {
-          id: card.id,
-          name: card.name,
-          notes: notes.map((note) => {
-            const entry = (note ?? {}) as { kind?: unknown; text?: unknown };
-            return { kind: entry.kind === "health_note" ? "health" : "general", text: entry.text };
-          }),
-        },
+    case "client_card_show":
+      return cardContract(info, null);
+    case "client_summary": {
+      if ((info as { brief?: unknown }).brief == null) return cardContract(info, null);
+      const brief = ((info as { brief?: unknown }).brief ?? {}) as {
+        label?: unknown;
+        summary?: unknown;
       };
+      const lines = Array.isArray(brief.summary) ? brief.summary : [];
+      return cardContract(info, {
+        label: typeof brief.label === "string" ? brief.label : "",
+        lines: lines.filter((line): line is string => typeof line === "string"),
+      });
     }
     case "client_note_add":
       return {
@@ -278,6 +302,10 @@ const TOOL_WAIT_PHRASE: Record<string, { en: string; es: string }> = {
   photo_preview_design: {
     en: "Give me a moment, creating your preview…",
     es: "Dame un momento, estoy creando tu vista previa…",
+  },
+  client_summary: {
+    en: "Give me a few seconds, I'm reading the client's record privately.",
+    es: "Dame unos segundos, estoy leyendo la ficha en privado.",
   },
 };
 
@@ -714,6 +742,12 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     if (toolResult.ok && call.name === "client_card_show") {
       // The card answers itself with no second round: its contact and
       // notes ride data to the screen only, never back to the model.
+      text = toolResult.message;
+      break;
+    }
+    if (toolResult.ok && call.name === "client_summary") {
+      // The brief answers itself with no second round: the spoken brief
+      // never re-enters the model, and history keeps only its label.
       text = toolResult.message;
       break;
     }

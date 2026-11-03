@@ -68,6 +68,41 @@ describe("buildWidget (typed payloads per kind)", () => {
     });
   });
 
+  it("carries the private brief on top of the card when present", () => {
+    expect(
+      buildWidget(
+        "find_client",
+        {},
+        {
+          id: 1,
+          name: "David",
+          notes: [],
+          brief: { label: "Prepared privately by Muse Glimmer (open weights)", lines: ["Prefers dark matte"] },
+        },
+        NO_DB,
+      ),
+    ).toEqual({
+      kind: "client_card",
+      title: "Client card",
+      size: "full",
+      data: {
+        name: "David",
+        birthday: null,
+        sex: null,
+        phone: null,
+        email: null,
+        visits: [],
+        visitsMore: 0,
+        healthNotes: [],
+        noteTags: [],
+        brief: {
+          label: "Prepared privately by Muse Glimmer (open weights)",
+          lines: ["Prefers dark matte"],
+        },
+      },
+    });
+  });
+
   it("fills visit photos from the session photo path, null when absent", () => {
     const store: CardStore = {
       prepare: (sql: string) => ({

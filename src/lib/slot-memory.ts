@@ -68,7 +68,8 @@ export function updateSlotsFromTool(
       if (client !== undefined) merge(key, { client });
       return;
     }
-    case "client_card_show": {
+    case "client_card_show":
+    case "client_summary": {
       const named =
         clean((data as { card?: { name?: unknown } } | undefined)?.card?.name) ??
         clean(args.name);

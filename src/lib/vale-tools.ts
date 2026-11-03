@@ -4,7 +4,13 @@
 // leaves this module toward the cloud.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
-import { refreshClientBriefInBackground } from "./client-briefs";
+import {
+  BRIEF_LABEL,
+  briefSourceHash,
+  getStoredBrief,
+  refreshClientBrief,
+  refreshClientBriefInBackground,
+} from "./client-briefs";
 import { PRICING, getPublicNotes, type PublicNote, type ValeDb } from "./db";
 import { segmentNails } from "./nails";
 import { bogotaDay, bogotaTime, formatNaturalDateTime, hour12, parseNaturalDate } from "./natural-date";
@@ -224,7 +230,19 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "client_card_show",
-    description: "Show the full client card: contact, visits and notes. Call it for 'X is here, what do I have on him' and 'what do you have on X': asking about a client shows the card, it never opens a session. A health alert shows on screen only, never spoken.",
+    description:
+      "Show the full client card: contact, visits and notes. Call it for 'show me David's card' and 'open David's card': showing the card never opens a session. A health alert shows on screen only, never spoken.",
+    parameters: {
+      type: "object",
+      properties: { name: { type: "string", description: "Client name, approximate is fine." } },
+      required: ["name"],
+    },
+  },
+  {
+    type: "function",
+    name: "client_summary",
+    description:
+      "Read the private pre-appointment brief: visit pattern, tastes and what to mention. Call it for 'David is here, what do I have on him', 'tell me about David' and 'anything I should know before David'. Vale says the brief aloud and the card opens with the private summary on top. Never for showing the card itself: 'show me the card' uses client_card_show.",
     parameters: {
       type: "object",
       properties: { name: { type: "string", description: "Client name, approximate is fine." } },
@@ -581,6 +599,99 @@ export function showClientCard(db: ValeDb, args: { name?: unknown }, language: V
         ? `${found.row.name}'s card is on screen.`
         : `La ficha de ${found.row.name} está en pantalla.`,
     data: { card },
+  };
+}
+
+export interface ClientSummaryBrief {
+  label: string;
+  summary: string[];
+}
+
+export interface ClientSummaryData {
+  card: FullClientCard;
+  client_id: number;
+  /** Null until a fresh private brief exists; the card still opens. */
+  brief: ClientSummaryBrief | null;
+  /** True when Glimmer could fill the gap on demand. */
+  needsBrief: boolean;
+}
+
+function noPrivateModelMessage(language: ValeLanguage, name: string): string {
+  return language === "en"
+    ? `I don't have a private model set up to read client records, so here's ${name}'s card.`
+    : `No tengo un modelo privado para leer los registros de clientas, así que aquí está la ficha de ${name}.`;
+}
+
+/**
+ * client_summary: the private pre-appointment brief. Reads only the
+ * precalculated row: the record itself never reaches this call, and the
+ * reply never carries contact, notes or summary text back to the model —
+ * the agent answers with it in one round and the screen shows the card
+ * with the summary on top.
+ */
+export function showClientSummary(
+  db: ValeDb,
+  args: { name?: unknown },
+  language: ValeLanguage = "es",
+): ToolResult {
+  const name = typeof args.name === "string" ? args.name : "";
+  const found = matchOne(allClients(db), name);
+  if (found.kind === "none") return { ok: false, message: `No encuentro a "${name}".` };
+  if (found.kind === "ambiguous") return { ok: false, message: ambiguousMessage(found.options) };
+  const cardResult = showClientCard(db, { name: found.row.name }, language);
+  if (!cardResult.ok) return cardResult;
+  const card = (cardResult.data as { card: FullClientCard }).card;
+  const stored = getStoredBrief(db, found.row.id);
+  const hash = briefSourceHash(db, found.row.id);
+  if (stored && hash !== null && stored.source_hash === hash) {
+    return {
+      ok: true,
+      message: stored.brief.spoken,
+      data: {
+        card,
+        client_id: found.row.id,
+        brief: { label: BRIEF_LABEL, summary: stored.brief.summary },
+        needsBrief: false,
+      } satisfies ClientSummaryData,
+    };
+  }
+  return {
+    ok: true,
+    message: noPrivateModelMessage(language, found.row.name),
+    data: {
+      card,
+      client_id: found.row.id,
+      brief: null,
+      needsBrief: hash !== null,
+    } satisfies ClientSummaryData,
+  };
+}
+
+/**
+ * On-demand generation when the brief is missing or stale and the
+ * private model answers. Blocks this tool call only; every other path
+ * stays instant. Never throws: failures keep the card fallback.
+ */
+export async function clientSummaryAsync(
+  db: ValeDb,
+  args: { name?: unknown },
+  language: ValeLanguage = "es",
+  fetchImpl: typeof fetch = fetch,
+): Promise<ToolResult> {
+  const result = showClientSummary(db, args, language);
+  const data = result.data as ClientSummaryData | undefined;
+  if (!result.ok || !data?.needsBrief) return result;
+  const stored = await refreshClientBrief(db, data.client_id, fetchImpl);
+  if (!stored) return result;
+  return {
+    ok: true,
+    message: stored.brief.spoken,
+    data: {
+      card: data.card,
+      client_id: data.client_id,
+      brief: { label: BRIEF_LABEL, summary: stored.brief.summary },
+      needsBrief: false,
+    } satisfies ClientSummaryData,
   };
 }
 
@@ -2051,6 +2162,8 @@ export function runValeTool(db: ValeDb, name: string, args: Record<string, unkno
       return createClient(db, args, language);
     case "client_card_show":
       return showClientCard(db, args, language);
+    case "client_summary":
+      return showClientSummary(db, args, language);
     case "client_note_add":
       return addNote(db, args, language);
     case "shopping_add":
@@ -2112,6 +2225,9 @@ export async function runValeToolAsync(
 ): Promise<ToolResult> {
   if (name === "photo_preview_design") {
     return previewDesign(db, args, language, fetchImpl);
+  }
+  if (name === "client_summary") {
+    return clientSummaryAsync(db, args, language, fetchImpl);
   }
   return runValeTool(db, name, args, language);
 }

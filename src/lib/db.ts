@@ -536,10 +536,15 @@ export function recordTurn(
     });
     return;
   }
+  // HACK-005: the spoken brief never reaches the history fed back to the
+  // cloud model. Only its label is stored; the brief itself stays in the
+  // private store and on the screen that showed it.
+  const storedText =
+    role === "vale" && tool === "client_summary" ? "(client summary shown)" : text;
   db.prepare("INSERT INTO turns (client_key, role, text, tool) VALUES (?, ?, ?, ?)").run(
     clientKey,
     role,
-    text,
+    storedText,
     tool,
   );
   db.prepare(
