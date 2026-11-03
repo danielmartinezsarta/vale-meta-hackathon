@@ -39,6 +39,7 @@ import {
 import { useValeLanguage } from "@/components/useValeLanguage";
 import { uiStrings } from "@/lib/vale-ui";
 import type { PhotosData, Widget } from "@/lib/widget";
+import { loadPhotosData as loadPhotosDataFromDb } from "@/components/photos-data";
 import {
   AUTO_HIDE_MS,
   GOODBYE_MS,
@@ -239,30 +240,9 @@ export function TapToTalk({
     setWidget(widget);
   }, []);
 
-  /** Demo appointment reference, served like any stored photo. */
-  const APPOINTMENT_REFERENCE_FILE = "seed-assets/david-appointment-reference.jpg";
-
-  /** Served URL when the file exists, null on 404 or network failure. */
-  const probePhoto = async (file: string): Promise<string | null> => {
-    const url = `/api/photos?file=${encodeURIComponent(file)}`;
-    try {
-      const res = await fetch(url);
-      return res.ok ? url : null;
-    } catch {
-      return null;
-    }
-  };
-
   /** Real slot data for the photos sheet; missing files stay null. */
-  const loadPhotosData = async (sessionId: number): Promise<PhotosData> => {
-    const [before, reference, expected, final] = await Promise.all([
-      probePhoto(`pre_${sessionId}.jpg`),
-      probePhoto(APPOINTMENT_REFERENCE_FILE),
-      probePhoto(`preview_${sessionId}.png`),
-      probePhoto(`post_${sessionId}.jpg`),
-    ]);
-    return { before, reference, expected, final };
-  };
+  const loadPhotosData = (sessionId: number): Promise<PhotosData> =>
+    loadPhotosDataFromDb(sessionId);
 
   /** Photos sheet with the stored slots, real where present. */
   const openPhotosSheet = (sessionId: number): void => {
