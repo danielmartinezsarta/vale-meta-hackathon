@@ -146,7 +146,7 @@ describe("mic mute (track toggle, session stays live)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mute microphone" }));
     expect(track.enabled).toBe(false);
     expect(screen.getByRole("button", { name: "Unmute microphone" })).toBeTruthy();
-    expect(screen.getByPlaceholderText("Type to Vale")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Type to Vale…")).toBeTruthy();
     // Session untouched: timer still live, no stop happened.
     expect(screen.getByRole("timer", { name: "Session time" })).toBeTruthy();
   });
@@ -170,7 +170,7 @@ describe("mic mute (track toggle, session stays live)", () => {
       expect(mockStartCapture).toHaveBeenCalled();
     });
     expect(track.enabled).toBe(false);
-    expect(screen.getByPlaceholderText("Type to Vale")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Type to Vale…")).toBeTruthy();
   });
 
   it("sends zero voice turns while muted", async () => {
@@ -210,7 +210,7 @@ describe("mic mute (track toggle, session stays live)", () => {
     expect(track.enabled).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Unmute microphone" }));
     expect(track.enabled).toBe(true);
-    expect(screen.queryByPlaceholderText("Type to Vale")).toBeNull();
+    expect(screen.queryByPlaceholderText("Type to Vale…")).toBeNull();
     expect(screen.getByRole("timer", { name: "Session time" })).toBeTruthy();
   });
 
@@ -234,7 +234,7 @@ describe("mic mute (track toggle, session stays live)", () => {
     }));
     await goLive();
     fireEvent.click(screen.getByRole("button", { name: "Mute microphone" }));
-    const input = screen.getByPlaceholderText("Type to Vale");
+    const input = screen.getByPlaceholderText("Type to Vale…");
     fireEvent.change(input, { target: { value: "show my photos" } });
     const form = input.closest("form");
     expect(form).not.toBeNull();
@@ -252,5 +252,40 @@ describe("mic mute (track toggle, session stays live)", () => {
       expect(screen.getByRole("dialog", { name: "Photos" })).toBeTruthy();
     });
     expect(screen.getByText("Here are your photos.")).toBeTruthy();
+  });
+
+  it("dims the send button while empty and sends on click", async () => {
+    const track = makeTrack();
+    stubMic(track);
+    stubSpeech();
+    const calls = stubVoice(() => "event: done\ndata: {}\n\n");
+    mockStartCapture.mockImplementation(() => ({
+      stop: () => {},
+      state: () => "running",
+      engine: () => "script" as const,
+    }));
+    await goLive();
+    fireEvent.click(screen.getByRole("button", { name: "Mute microphone" }));
+    const send = screen.getByRole("button", { name: "Send message" });
+    expect((send as HTMLButtonElement).disabled).toBe(true);
+    const input = screen.getByPlaceholderText("Type to Vale…");
+    fireEvent.change(input, { target: { value: "  hello  " } });
+    expect((send as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(send);
+    await waitFor(() => {
+      expect(
+        calls.some((call) => {
+          try {
+            const body = JSON.parse(call.body) as { typed?: boolean; transcript?: unknown };
+            return body.typed === true && body.transcript === "hello";
+          } catch {
+            return false;
+          }
+        }),
+      ).toBe(true);
+    });
+    // Cleared and still open: the chip stays while the mic is muted.
+    expect((input as HTMLInputElement).value).toBe("");
+    expect(screen.getByPlaceholderText("Type to Vale…")).toBeTruthy();
   });
 });

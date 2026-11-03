@@ -61,6 +61,72 @@
   height: 22px;
 }
 
+/* Typed-turn chip: card surface with the subtle border, 46px tall like the
+round buttons. The input carries no chrome; focus shows only as the chip
+border in the accent color, never the native outline. */
+.typed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 46px;
+  padding: 4px 4px 4px 16px;
+  border-radius: 999px;
+  background: var(--aw-card);
+  border: 1px solid var(--aw-line);
+  color: var(--aw-fg);
+  box-shadow: 0 3px 10px rgba(20, 34, 79, 0.14);
+}
+
+.typed:focus-within {
+  border-color: var(--aw-ok);
+  outline: none;
+}
+
+.typedin {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+
+.typedin::placeholder {
+  color: var(--aw-muted);
+}
+
+.typedgo {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  background: var(--aw-ok);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.typedgo:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.typedgo svg {
+  width: 22px;
+  height: 22px;
+}
+
+.typedgo:focus-visible {
+  outline: 2px solid var(--aw-ok);
+  outline-offset: 2px;
+}
+
 .aside {
   position: absolute;
   top: 14px;
