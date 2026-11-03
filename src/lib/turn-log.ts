@@ -170,10 +170,14 @@ function scrubValue(value: unknown): unknown {
   return value;
 }
 
-/** Longest known model id; longer ids overflow the column, never wrap it. */
-const VLOG_MODEL_WIDTH = 24;
+/**
+ * Fits the short model id exactly; longer ids overflow the column rather
+ * than wrap the row, and are never clipped (the recording keeps them whole).
+ * A full-width column here costs 10+ spaces on every non-ASR row.
+ */
+const VLOG_MODEL_WIDTH = 14;
 /** Console content budget; the JSONL recording keeps the full text. */
-const VLOG_CONTENT_WIDTH = 100;
+const VLOG_CONTENT_WIDTH = 64;
 
 function vlogDetail(detail: VLogEvent["detail"]): string {
   if (!detail) return "-";
