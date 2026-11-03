@@ -203,6 +203,11 @@ describe("seamless voice engine", () => {
       class {
         src: string;
         onended: (() => void) | null = null;
+        paused = false;
+        ended = false;
+        seeking = false;
+        readyState = 4;
+        currentTime = 0;
         constructor(src: string) {
           this.src = src;
           instances.push(this);
@@ -342,17 +347,33 @@ describe("seamless voice engine", () => {
       expect(played).toHaveLength(1);
       expect(isSpeaking()).toBe(true);
       // No onended ever fires (the iOS field case): past estimate +
-      // grace the watchdog ends the sentence and cues the next fetch.
+      // grace the watchdog ends the first sentence and cues the next
+      // fetch, and still time ends the second one too: the chain settles.
       await vi.advanceTimersByTimeAsync(9000);
       expect(fetchStub).toHaveBeenCalledTimes(2);
       expect(played).toHaveLength(2);
+      expect(isSpeaking()).toBe(false);
+    } finally {
+      setVoiceEngine("browser");
+      vi.useRealTimers();
+    }
+  });
+
+  it("ends a sentence whose playback freezes with no event", async () => {
+    stubSpeechSynthesis();
+    const { played, paused } = stubAudio();
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown) => new Response(WAV)));
+    vi.useFakeTimers();
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(played).toHaveLength(1);
       expect(isSpeaking()).toBe(true);
-      // Ending the last audio settles the chain: the mic reopens.
-      const audios = instances as unknown as {
-        onended: (() => void) | null;
-      }[];
-      audios[1]?.onended?.();
-      await vi.advanceTimersByTimeAsync(0);
+      // currentTime never advances and no event fires (the field cut):
+      // three still seconds end the sentence and settle the mic.
+      await vi.advanceTimersByTimeAsync(3500);
+      expect(paused).toHaveLength(1);
       expect(isSpeaking()).toBe(false);
     } finally {
       setVoiceEngine("browser");
