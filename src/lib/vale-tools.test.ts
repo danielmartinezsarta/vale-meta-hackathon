@@ -21,7 +21,6 @@ import {
   createAppointment,
   createClient,
   createReminder,
-  findClient,
   getToolDetails,
   goalProgress,
   isQuoteAwaiting,
@@ -190,13 +189,12 @@ describe("session_open with only a client (9.5)", () => {
   });
 });
 
-describe("find_client", () => {
-  it("finds by approximate name and asks when ambiguous", () => {
+describe("client lookup", () => {
+  it("finds by approximate name and says when nobody matches", () => {
     const db = freshTestDb();
-    const found = findClient(db, { name: "ana" });
+    const found = showClientCard(db, { name: "ana" });
     expect(found.ok).toBe(true);
-    expect(found.card?.name).toBe("Ana");
-    expect(findClient(db, { name: "nadie" }).ok).toBe(false);
+    expect(showClientCard(db, { name: "nadie" }).ok).toBe(false);
     db.close();
   });
 });
@@ -301,7 +299,7 @@ describe("add_note", () => {
     const result = runValeTool(db, "client_note_add", { client_name: "Ana", text: secret, kind: "health_note" });
     expect(result.ok).toBe(true);
     // Everything this tool hands back toward the model: result + public card.
-    const card = findClient(db, { name: "Ana" });
+    const card = showClientCard(db, { name: "Ana" });
     const modelSees = JSON.stringify({ result, card: card.data });
     expect(modelSees).not.toContain(secret);
     expect(modelSees).not.toContain("onicocriptosis");
@@ -406,7 +404,7 @@ describe("undo_last_write", () => {
     const seededSessions = (db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }).n;
     createClient(db, { name: "Elena Vidal" });
     undoLastWrite(db);
-    expect(findClient(db, { name: "Elena" }).ok).toBe(false);
+    expect(showClientCard(db, { name: "Elena" }).ok).toBe(false);
     openAna(db);
     logSupplyUse(db, { name: "Esmalte verde", confirm_create: true });
     undoLastWrite(db);
@@ -1056,7 +1054,7 @@ describe("error style", () => {
     const errors = [
       openSession(db, { client_name: "Nadie", service_name: "Retiro" }),
       closeSession(db, {}),
-      findClient(db, { name: "Nadie" }),
+      showClientCard(db, { name: "Nadie" }),
       addNote(db, { client_name: "Ana", text: "   " }),
       addToShoppingList(db, { item_name: "cohetes" }),
       createClient(db, { name: "" }),

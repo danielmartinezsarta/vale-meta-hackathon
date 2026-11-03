@@ -711,6 +711,12 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       text = toolResult.message;
       break;
     }
+    if (toolResult.ok && call.name === "client_card_show") {
+      // The card answers itself with no second round: its contact and
+      // notes ride data to the screen only, never back to the model.
+      text = toolResult.message;
+      break;
+    }
     if (toolResult.ok && call.name === "agenda_show" && parsed.range === "today") {
       // Today answers itself with no second round: the tool line already
       // names appointments and reminders, and a second round may drop
