@@ -1,4 +1,4 @@
-// HACK-005: warm the private brief cache after db:reset. Chained in the
+// Warm the private brief cache after db:reset. Chained in the
 // db:reset npm script for the clients with appointments today. Exits 0 at
 // once without GLIMMER_URL/GLIMMER_TOKEN; a failed model call keeps the
 // reset green and the voice falls back to the card.

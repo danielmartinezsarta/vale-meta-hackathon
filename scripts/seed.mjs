@@ -88,7 +88,7 @@ const upsertClient = db.prepare(
    ON CONFLICT(name) DO UPDATE SET sex = excluded.sex, phone = excluded.phone, email = excluded.email, birthday = excluded.birthday`,
 );
 for (const client of seed.clients) {
-  // HACK-005 relative birthday marker (mirror of src/lib/db.ts).
+  // Relative birthday marker (mirror of src/lib/db.ts).
   const birthday =
     typeof client.birthday_in_days === "number"
       ? seedBirthday(client.birthday_in_days, client.birthday_year ?? 1990)
@@ -145,7 +145,7 @@ for (const note of seed.demo_notes ?? []) {
   const clientId = clientIds.get(note.client);
   if (clientId === undefined) continue;
   const kind = note.kind === "health_note" || note.kind === "health" ? "health_note" : "note";
-  // HACK-005: dedup on the full row so one client can seed several notes.
+  // Dedup on the full row so one client can seed several notes.
   const existing = db.prepare("SELECT id FROM notes WHERE client_id = ? AND kind = ? AND text = ?").get(clientId, kind, note.text);
   if (!existing) {
     db.prepare("INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES (?, ?, ?, ?)").run(

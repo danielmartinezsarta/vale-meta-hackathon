@@ -41,7 +41,7 @@ function davidId(db: ReturnType<typeof freshTestDb>): number {
   return (db.prepare("SELECT id FROM clients WHERE name = ?").get("David") as { id: number }).id;
 }
 
-describe("client briefs store (HACK-005)", () => {
+describe("client briefs store", () => {
   it("creates the table without touching the shared schema", () => {
     const db = freshTestDb();
     ensureClientBriefsTable(db);
@@ -159,6 +159,40 @@ describe("client briefs store (HACK-005)", () => {
       await refreshClientBrief(db, id, always as unknown as typeof fetch, { retryDelayMs: 1 }),
     ).toBeNull();
     expect(always).toHaveBeenCalledTimes(6);
+    db.close();
+  });
+
+  it("drops a brief that repeats a health-note word and generates once more", async () => {
+    vi.stubEnv("GLIMMER_URL", "https://glimmer.test");
+    vi.stubEnv("GLIMMER_TOKEN", "secret");
+    const clean = {
+      spoken: "David comes every 3 weeks.",
+      summary: ["Prefers dark matte designs"],
+      has_health_note: true,
+    };
+    const leaking = {
+      spoken: "Avoid latex gloves today.",
+      summary: ["Prefers dark matte designs"],
+      has_health_note: true,
+    };
+    const db = freshTestDb();
+    const id = davidId(db);
+    const contents = [leaking, clean].map((brief) => JSON.stringify(brief));
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: contents.shift() ?? "" } }] }),
+    }));
+    const stored = await refreshClientBrief(db, id, fetchImpl as unknown as typeof fetch);
+    expect(stored?.brief).toEqual(clean);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    db.prepare("DELETE FROM client_briefs").run();
+    const always = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify(leaking) } }] }),
+    }));
+    expect(await refreshClientBrief(db, id, always as unknown as typeof fetch)).toBeNull();
+    expect(getStoredBrief(db, id)).toBeNull();
+    expect(always).toHaveBeenCalledTimes(2);
     db.close();
   });
 

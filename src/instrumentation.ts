@@ -1,4 +1,4 @@
-// HACK-005: warm the private brief cache when the server boots.
+// Warm the private brief cache when the server boots.
 // Fire-and-forget: without a configured private model this is an instant
 // no-op, replay runs skip it, and a failure never surfaces or blocks boot.
 // The brief store needs node:sqlite, so this hook pins the Node runtime:

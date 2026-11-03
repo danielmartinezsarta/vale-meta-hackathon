@@ -1,5 +1,5 @@
 // @vitest-environment node
-// HACK-005 precompute wiring: server-start hook and db:reset chain.
+// Precompute wiring: server-start hook and db:reset chain.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
@@ -17,7 +17,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("precompute wiring (HACK-005)", () => {
+describe("precompute wiring", () => {
   it("register() is an instant no-op without a private model", async () => {
     const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ choices: [] }) }));
     vi.stubGlobal("fetch", fetchImpl);

@@ -504,7 +504,7 @@ export function closeSession(db: ValeDb, args: { products_used?: unknown }, lang
   ).marginEarned;
   db.prepare("UPDATE sessions SET ended_at = ?, duration_s = ?, margin_earned = ? WHERE id = ?").run(endedAt, durationS, earned, open.id);
   logWrite(db, "session_close", "sessions", open.id, { supplies: recordedIds });
-  // HACK-005: the private brief follows the record in the background;
+  // The private brief follows the record in the background;
   // the voice never waits for it.
   refreshClientBriefInBackground(db, open.client_id);
   // The full summary sheet reads the payment off this session, if any.
@@ -709,7 +709,7 @@ export function addNote(db: ValeDb, args: { client_name?: unknown; text?: unknow
     .prepare("INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES (?, ?, ?, ?)")
     .run(found.row.id, text, kind, kind === "health_note" ? 1 : 0);
   logWrite(db, "client_note_add", "notes", Number(result.lastInsertRowid));
-  // HACK-005: the private brief follows the record in the background;
+  // The private brief follows the record in the background;
   // the voice never waits for it.
   refreshClientBriefInBackground(db, found.row.id);
   // The result never carries the note text back: health text must not re-enter the model context.

@@ -157,7 +157,7 @@ describe("demo seed (HACK-018)", () => {
         `SELECT c.name AS client, v.photo FROM visits v JOIN clients c ON c.id = v.client_id ORDER BY v.id`,
       )
       .all() as { client: string; photo: string }[];
-    // HACK-005 seeds David's 3-week visit pattern: three rows for David.
+    // David's 3-week visit pattern seeds three rows for David.
     expect(rows.map((row) => row.client).sort()).toEqual([
       "Ana",
       "David",
@@ -257,7 +257,7 @@ describe("conversation turns", () => {
     db.close();
   });
 
-  it("stores only the label for a spoken client summary (HACK-005)", () => {
+  it("stores only the label for a spoken client summary", () => {
     const db = freshTestDb();
     recordTurn(db, "c1", "vale", "David comes every 3 weeks.", "client_summary");
     recordTurn(db, "c1", "vale", "David's card is on screen.", "client_card_show");
