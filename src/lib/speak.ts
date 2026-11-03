@@ -320,6 +320,60 @@ function synth(): SpeechSynthesis | null {
 }
 
 /**
+ * iOS unlock: speechSynthesis.speak() and HTMLAudioElement.play() stay
+ * muted unless first called inside a user gesture. The wake tap already
+ * resumes the capture context in-gesture; prime both speech paths there
+ * too, so the later out-of-gesture speak()/play() calls produce sound.
+ * The unlock is page-scoped, so priming any element unlocks the
+ * per-sentence elements playSentence() creates later.
+ */
+export function primeSpokenAudio(): void {
+  try {
+    const s = synth();
+    if (s) {
+      const warm = new SpeechSynthesisUtterance(" ");
+      warm.volume = 0;
+      s.speak(warm);
+    }
+  } catch {
+    /* voice output is best-effort */
+  }
+  try {
+    // 20 ms of 8 kHz 16-bit mono silence behind a minimal WAV header.
+    const samples = 160;
+    const buffer = new ArrayBuffer(44 + samples * 2);
+    const view = new DataView(buffer);
+    const ascii = (offset: number, text: string): void => {
+      for (let index = 0; index < text.length; index += 1) {
+        view.setUint8(offset + index, text.charCodeAt(index));
+      }
+    };
+    ascii(0, "RIFF");
+    view.setUint32(4, 36 + samples * 2, true);
+    ascii(8, "WAVE");
+    ascii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, 8000, true);
+    view.setUint32(28, 16000, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    ascii(36, "data");
+    view.setUint32(40, samples * 2, true);
+    const url = URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+    const silent = new Audio(url);
+    silent.volume = 0;
+    silent.onended = () => URL.revokeObjectURL(url);
+    void silent.play().catch(() => {
+      URL.revokeObjectURL(url);
+    });
+  } catch {
+    /* voice output is best-effort */
+  }
+}
+
+/**
  * Browser voices load asynchronously: the first getVoices() is often empty
  * or partial, which used to give the first phrase the wrong voice. Wait for
  * voiceschanged before choosing; after it fired once the list is trusted.

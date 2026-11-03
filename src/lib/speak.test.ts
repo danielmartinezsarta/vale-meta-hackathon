@@ -17,6 +17,7 @@ import {
   setVoiceEngine,
   setVoiceForLanguage,
   setVoicePrefs,
+  primeSpokenAudio,
   speak,
   speakStream,
   speechSettled,
@@ -688,5 +689,48 @@ describe("tuned prosody only for Ava and Paulina (HACK-024)", () => {
       expect(prosodyForVoice(voice, "es")).toEqual({ rate: 1, pitch: 1 });
     }
     expect(prosodyForVoice(null, "en")).toEqual({ rate: 1, pitch: 1 });
+  });
+});
+
+describe("primeSpokenAudio (iOS gesture unlock)", () => {
+  it("speaks a zero-volume utterance and plays silent audio", () => {
+    const { synth } = stubSpeechSynthesis();
+    const played: string[] = [];
+    const audioCtor = class {
+      url: string;
+      volume = 1;
+      onended: (() => void) | null = null;
+      constructor(url: string) {
+        this.url = url;
+      }
+      play(): Promise<void> {
+        played.push(this.url);
+        return Promise.resolve();
+      }
+    };
+    vi.stubGlobal("Audio", audioCtor);
+    const urlAny = URL as unknown as Record<string, unknown>;
+    const origCreateObjectURL = urlAny.createObjectURL;
+    const minted: string[] = [];
+    urlAny.createObjectURL = () => {
+      const url = `blob:prime-${minted.length}`;
+      minted.push(url);
+      return url;
+    };
+    try {
+      primeSpokenAudio();
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+      const said = synth.speak.mock.calls[0][0] as unknown as Record<
+        string,
+        unknown
+      >;
+      expect(said.text).toBe(" ");
+      expect(said.volume).toBe(0);
+      expect(minted).toHaveLength(1);
+      expect(played).toEqual(minted);
+    } finally {
+      urlAny.createObjectURL = origCreateObjectURL;
+      vi.unstubAllGlobals();
+    }
   });
 });
