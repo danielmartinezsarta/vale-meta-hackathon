@@ -16,7 +16,7 @@ import type {
 } from "@/lib/widget";
 import { formatDay, formatVisit, initials, usdWhole } from "@/lib/widget";
 
-/** Ali's lock tag: sensitive data stays on screen, never spoken. */
+/** The lock tag: sensitive data stays on screen, never spoken. */
 function LockTag() {
   return (
     <span className="aw-sheet__tag">
@@ -315,7 +315,7 @@ function AcceptReject({ onAccept, onReject }: { onAccept?: () => void; onReject?
   );
 }
 
-/** Ali's placeholder hand: real photos replace it slot by slot. */
+/** Design placeholder hand: real photos replace it slot by slot. */
 export function PlaceholderHand({
   bg,
   skin,
@@ -434,7 +434,7 @@ const CARE_ITEMS = [
   },
 ];
 
-/** Good-job overlay: the three care icons, Ali's markup. The caption zone shows the text. */
+/** Good-job overlay: the three care icons, the design markup. The caption zone shows the text. */
 export function CareOverlay() {
   return (
     <div className="aw--session is-closing">
@@ -811,7 +811,7 @@ function useSheetOpen(): boolean {
   return open;
 }
 
-/** Ali's sheet per widget kind; confirm keeps the legacy card elsewhere. */
+/** The sheet per widget kind; confirm keeps the legacy card elsewhere. */
 export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetCallbacks) {
   const { onClose, onAccept, onReject, onChoose, onVisit } = callbacks;
   const open = useSheetOpen();

@@ -1,5 +1,5 @@
 /**
- * Screen cards from Ali's demo design (snapshot 2026-11-02_1241). One
+ * Screen cards from the design. One
  * typed payload per kind; HACK-018's tools fill them. Sizes are fixed per
  * kind: "half" rises to mid-screen with Vale visible behind, "full"
  * covers the screen. Auto-hide and timed chains live in the UI layer.
@@ -86,7 +86,7 @@ export interface ClientVisit {
   photo: string | null;
 }
 
-/** Ali's client card: health first, then notes, then visits. */
+/** The client card: health first, then notes, then visits. */
 export interface ClientCardData {
   name: string;
   birthday: string | null;
@@ -110,7 +110,7 @@ export interface GoalData {
 /** Camera choice sheet; the choice itself is UI state, not payload. */
 export type CameraSaveAsData = Record<string, never>;
 
-/** Photo slots; null renders Ali's hand placeholder. */
+/** Photo slots; null renders the design placeholder. */
 export interface PhotosData {
   before: string | null;
   reference: string | null;
@@ -214,7 +214,7 @@ function dataOf(data: unknown): Record<string, unknown> {
   return {};
 }
 
-/** Whole dollars, Ali's style ($28, $2,000). */
+/** Whole dollars, design style ($28, $2,000). */
 export function usdWhole(value: number): string {
   return `$${Math.round(value).toLocaleString("en-US")}`;
 }
