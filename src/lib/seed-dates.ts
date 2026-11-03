@@ -24,3 +24,15 @@ export function resolveSeedDay(day: string, when = new Date()): string {
   if (day === "tomorrow") return seedDay(1, when);
   return day;
 }
+
+/**
+ * HACK-005 relative birthday: month and day from an offset off today, with
+ * a fixed birth year, so the birthday is always that many days out. The
+ * day clamps to the month length (Feb 29 never lands on a common year).
+ */
+export function seedBirthday(inDays: number, year: number, when = new Date()): string {
+  const [, month, day] = seedDay(inDays, when).split("-").map(Number);
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${year}-${pad(month)}-${pad(Math.min(day, last))}`;
+}

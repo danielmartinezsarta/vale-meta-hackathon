@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveSeedDay, seedDay } from "./seed-dates.mjs";
+import { resolveSeedDay, seedBirthday, seedDay } from "./seed-dates.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const seed = JSON.parse(readFileSync(join(root, "src", "lib", "seed-data.json"), "utf8"));
@@ -88,7 +88,12 @@ const upsertClient = db.prepare(
    ON CONFLICT(name) DO UPDATE SET sex = excluded.sex, phone = excluded.phone, email = excluded.email, birthday = excluded.birthday`,
 );
 for (const client of seed.clients) {
-  upsertClient.run(client.name, client.sex ?? "", client.phone ?? "", client.email ?? "", client.birthday ?? "");
+  // HACK-005 relative birthday marker (mirror of src/lib/db.ts).
+  const birthday =
+    typeof client.birthday_in_days === "number"
+      ? seedBirthday(client.birthday_in_days, client.birthday_year ?? 1990)
+      : (client.birthday ?? "");
+  upsertClient.run(client.name, client.sex ?? "", client.phone ?? "", client.email ?? "", birthday);
   clientIds.set(client.name, db.prepare("SELECT id FROM clients WHERE name = ?").get(client.name).id);
 }
 db.prepare("INSERT OR IGNORE INTO user_profile (id, name) VALUES (1, ?)").run("Demo");
@@ -140,7 +145,8 @@ for (const note of seed.demo_notes ?? []) {
   const clientId = clientIds.get(note.client);
   if (clientId === undefined) continue;
   const kind = note.kind === "health_note" || note.kind === "health" ? "health_note" : "note";
-  const existing = db.prepare("SELECT id FROM notes WHERE client_id = ? AND kind = ?").get(clientId, kind);
+  // HACK-005: dedup on the full row so one client can seed several notes.
+  const existing = db.prepare("SELECT id FROM notes WHERE client_id = ? AND kind = ? AND text = ?").get(clientId, kind, note.text);
   if (!existing) {
     db.prepare("INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES (?, ?, ?, ?)").run(
       clientId,

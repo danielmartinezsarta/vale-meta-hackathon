@@ -14,13 +14,15 @@
     ]
   },
   "clients": [
-    { "name": "David", "sex": "male", "phone": "+1-555-0101", "email": "david@example.com", "birthday": "1990-04-17" },
+    { "name": "David", "sex": "male", "phone": "+1-555-0101", "email": "david@example.com", "birthday_in_days": 5, "birthday_year": 1990 },
     { "name": "Sofia", "es": "Sofía", "sex": "female", "phone": "+1-555-0102", "email": "sofia@example.com", "birthday": "1993-08-24" },
     { "name": "Paola", "sex": "female", "phone": "+1-555-0103", "email": "paola@example.com", "birthday": "1988-12-02" },
     { "name": "Ana", "sex": "female", "phone": "+1-555-0104", "email": "ana@example.com", "birthday": "1996-05-30" }
   ],
   "demo_notes": [
-    { "client": "David", "kind": "health_note", "private": true, "text": "Test allergy (demo only): reacts to latex gloves." }
+    { "client": "David", "kind": "health_note", "private": true, "text": "Test allergy (demo only): reacts to latex gloves." },
+    { "client": "David", "kind": "note", "text": "Prefers dark matte designs" },
+    { "client": "David", "kind": "note", "text": "Hockey fan, ask about the Rangers" }
   ],
   "demo_appointments": [
     { "client": "David", "service": "Semi-permanent manicure", "day": "today", "time": "15:00", "reference_photo": "seed-assets/david-appointment-reference.jpg" },
@@ -33,17 +35,19 @@
     { "text": "Call the cleaning company to confirm the service", "kind": "call", "day": "today" }
   ],
   "demo_visits": [
+    { "client": "David", "service": "Semi-permanent manicure", "days_ago": 63, "photo": "demo-visit-david-63", "note": "Short square, deep burgundy." },
+    { "client": "David", "service": "Semi-permanent manicure", "days_ago": 42, "photo": "demo-visit-david-42", "note": "Oval shape, dark matte with tiny moon details." },
     { "client": "David", "service": "Semi-permanent manicure", "days_ago": 21, "photo": "seed-assets/david-last-service.jpg", "note": "Matte dark gray base with white HO HO HO lettering and small snowflake details, matte finish." },
     { "client": "Sofia", "service": "Spa pedicure", "days_ago": 14, "photo": "demo-visit-sofia-01", "note": "Spa pedicure (demo photo marker)." },
     { "client": "Paola", "service": "Gel refill", "days_ago": 9, "photo": "demo-visit-paola-01", "note": "Gel refill (demo photo marker)." },
     { "client": "Ana", "service": "Gel removal", "days_ago": 5, "photo": "demo-visit-ana-01", "note": "Gel removal (demo photo marker)." }
   ],
   "demo_past_sessions": [
-    { "client": "David", "service": "Gel refill", "days_ago": 1, "start": "10:00", "minutes": 75, "margin_earned": 22.4 },
+    { "client": "Ana", "service": "Gel refill", "days_ago": 1, "start": "10:00", "minutes": 75, "margin_earned": 22.4 },
     { "client": "Sofia", "service": "Spa pedicure", "days_ago": 2, "start": "16:00", "minutes": 60, "margin_earned": 18.1 },
     { "client": "Paola", "service": "Semi-permanent manicure", "days_ago": 3, "start": "11:00", "minutes": 60, "margin_earned": 19.6 },
     { "client": "Ana", "service": "Gel removal", "days_ago": 4, "start": "12:00", "minutes": 30, "margin_earned": 9.8 },
-    { "client": "David", "service": "Semi-permanent manicure", "days_ago": 6, "start": "15:00", "minutes": 60, "margin_earned": 19.2 },
+    { "client": "Ana", "service": "Semi-permanent manicure", "days_ago": 6, "start": "15:00", "minutes": 60, "margin_earned": 19.2 },
     { "client": "Sofia", "service": "Gel refill", "days_ago": 8, "start": "17:00", "minutes": 75, "margin_earned": 23.5 }
   ],
   "services": [
