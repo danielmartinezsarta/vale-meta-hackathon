@@ -168,6 +168,13 @@ interface ChatCompletion {
   choices?: { message?: { content?: string | null } }[];
 }
 
+/** The private model is still loading its weights: worth one more try. */
+export class GlimmerLoadingError extends Error {
+  constructor() {
+    super("private model loading");
+  }
+}
+
 /** One Glimmer call with the fixed schema; throws when unusable. */
 export async function fetchClientBrief(
   record: BriefRecord,
@@ -195,6 +202,7 @@ export async function fetchClientBrief(
     }),
     signal: AbortSignal.timeout(180_000),
   });
+  if (response.status === 503) throw new GlimmerLoadingError();
   if (!response.ok) throw new Error(`private model error: ${response.status}`);
   const data = (await response.json()) as ChatCompletion;
   const content = data.choices?.[0]?.message?.content ?? "";
@@ -216,15 +224,31 @@ export async function fetchClientBrief(
   return { brief, ms: Date.now() - started };
 }
 
+export interface RefreshOptions {
+  /** Ride out cold starts: retry a 503 with backoff. Voice turns opt out. */
+  retryLoading?: boolean;
+  /** Backoff base between 503 retries; tests shrink it. */
+  retryDelayMs?: number;
+}
+
+const REFRESH_ATTEMPTS = 4;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Fresh stored brief, regenerating when the record changed. Null when
  * there is no client, no private model, or Glimmer fails: the voice
- * falls back to the card, it never waits on an error.
+ * falls back to the card, it never waits on an error. Background callers
+ * ride out a cold model (503 with backoff); the voice path opts out so a
+ * loading model answers the fallback at once instead of blocking speech.
  */
 export async function refreshClientBrief(
   db: ValeDb,
   clientId: number,
   fetchImpl: typeof fetch = fetch,
+  options: RefreshOptions = {},
 ): Promise<StoredBrief | null> {
   ensureClientBriefsTable(db);
   const hash = briefSourceHash(db, clientId);
@@ -237,12 +261,18 @@ export async function refreshClientBrief(
   const client = db.prepare("SELECT sex FROM clients WHERE id = ?").get(clientId) as
     | { sex?: string }
     | undefined;
-  try {
-    const { brief, ms } = await fetchClientBrief(record, client?.sex ?? "", fetchImpl);
-    return storeBrief(db, clientId, brief, hash, ms);
-  } catch {
-    return null;
+  const tries = options.retryLoading === false ? 1 : REFRESH_ATTEMPTS;
+  const baseDelay = options.retryDelayMs ?? 15000;
+  for (let attempt = 0; attempt < tries; attempt += 1) {
+    try {
+      const { brief, ms } = await fetchClientBrief(record, client?.sex ?? "", fetchImpl);
+      return storeBrief(db, clientId, brief, hash, ms);
+    } catch (error) {
+      if (!(error instanceof GlimmerLoadingError) || attempt + 1 >= tries) return null;
+      await sleep(baseDelay * (attempt + 1));
+    }
   }
+  return null;
 }
 
 /**

@@ -116,12 +116,49 @@ describe("client briefs store (HACK-005)", () => {
     vi.stubEnv("GLIMMER_TOKEN", "secret");
     const db = freshTestDb();
     const id = davidId(db);
-    const failing = vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) }));
+    const failing = vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) }));
     expect(await refreshClientBrief(db, id, failing as unknown as typeof fetch)).toBeNull();
     expect(getStoredBrief(db, id)).toBeNull();
+    expect(failing).toHaveBeenCalledTimes(1);
     const garbage = glimmerFetch([], "not json at all");
     expect(await refreshClientBrief(db, id, garbage as unknown as typeof fetch)).toBeNull();
     expect(getStoredBrief(db, id)).toBeNull();
+    db.close();
+  });
+
+  it("rides out a loading model with backoff, unless voice opts out", async () => {
+    vi.stubEnv("GLIMMER_URL", "https://glimmer.test");
+    vi.stubEnv("GLIMMER_TOKEN", "secret");
+    const loading = { ok: false, status: 503, json: async () => ({}) };
+    const ready = {
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify(BRIEF) } }] }),
+    };
+    const db = freshTestDb();
+    const id = davidId(db);
+    // First two calls 503, third succeeds: default retries and stores.
+    const retrying = vi.fn(async (...args: unknown[]) => {
+      const calls = (retrying as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+      return calls < 3 ? loading : ready;
+    });
+    const stored = await refreshClientBrief(db, id, retrying as unknown as typeof fetch, {
+      retryDelayMs: 1,
+    });
+    expect(stored?.brief).toEqual(BRIEF);
+    expect(retrying).toHaveBeenCalledTimes(3);
+    // Voice opts out: one attempt, instant fallback.
+    db.prepare("DELETE FROM client_briefs").run();
+    const single = vi.fn(async () => loading);
+    expect(
+      await refreshClientBrief(db, id, single as unknown as typeof fetch, { retryLoading: false }),
+    ).toBeNull();
+    expect(single).toHaveBeenCalledTimes(1);
+    // Persistent 503 still resolves to null after the attempts.
+    const always = vi.fn(async () => loading);
+    expect(
+      await refreshClientBrief(db, id, always as unknown as typeof fetch, { retryDelayMs: 1 }),
+    ).toBeNull();
+    expect(always).toHaveBeenCalledTimes(4);
     db.close();
   });
 
