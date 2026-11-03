@@ -455,6 +455,7 @@ export interface SheetCallbacks {
   onReject?: () => void;
   onChoose?: (choice: "before" | "final") => void;
   onVisit?: (date: string) => void;
+  onPhotos?: () => void;
 }
 
 function SexSeg({ sex }: { sex: ClientCardData["sex"] }) {
@@ -548,6 +549,7 @@ function CardBody({ data, onVisit }: { data: ClientCardData; onVisit?: (date: st
                 >
                   <span>{formatVisit(visit.date)}</span>
                   <span>{visit.service}</span>
+                  {visit.photo !== null && CAM_ICON}
                 </button>
               ))}
               {data.visitsMore > 0 && <p className="aw-cc__more">+ {data.visitsMore} earlier visits</p>}

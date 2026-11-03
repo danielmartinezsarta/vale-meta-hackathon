@@ -38,7 +38,7 @@ import {
 } from "@/lib/vale-language";
 import { useValeLanguage } from "@/components/useValeLanguage";
 import { uiStrings } from "@/lib/vale-ui";
-import type { Widget } from "@/lib/widget";
+import type { PhotosData, Widget } from "@/lib/widget";
 import {
   AUTO_HIDE_MS,
   GOODBYE_MS,
@@ -177,6 +177,8 @@ export function TapToTalk({
   useEffect(() => {
     widgetRef.current = widget;
   }, [widget]);
+  // Final upload result waiting behind the confirm sheet for Accept.
+  const finalPendingRef = useRef<{ mosaicUrl: string | null; description: string | null } | null>(null);
   // Client-side mirror of the server attention window: the tap, her replies
   // and heard names restart it, exactly the events the server notes. It only
   // ever keeps a phrase on the wire; the server gate owns every discard.
@@ -227,6 +229,107 @@ export function TapToTalk({
   const openWidget = useCallback((widget: Widget) => {
     setWidget(widget);
   }, []);
+
+  /** Demo appointment reference, served like any stored photo. */
+  const APPOINTMENT_REFERENCE_FILE = "seed-assets/david-appointment-reference.jpg";
+
+  /** Served URL when the file exists, null on 404 or network failure. */
+  const probePhoto = async (file: string): Promise<string | null> => {
+    const url = `/api/photos?file=${encodeURIComponent(file)}`;
+    try {
+      const res = await fetch(url);
+      return res.ok ? url : null;
+    } catch {
+      return null;
+    }
+  };
+
+  /** Real slot data for the photos sheet; missing files stay null. */
+  const loadPhotosData = async (sessionId: number): Promise<PhotosData> => {
+    const [before, reference, expected] = await Promise.all([
+      probePhoto(`pre_${sessionId}.jpg`),
+      probePhoto(APPOINTMENT_REFERENCE_FILE),
+      probePhoto(`preview_${sessionId}.png`),
+    ]);
+    return { before, reference, expected };
+  };
+
+  /** Photos sheet with the stored slots, real where present. */
+  const openPhotosSheet = (sessionId: number): void => {
+    void loadPhotosData(sessionId).then((data) => {
+      openWidget({
+        kind: "photos",
+        title: widgetTitle("photos"),
+        size: "full",
+        data,
+      });
+    });
+  };
+
+  interface SessionPhotoUpload {
+    ok: boolean;
+    photoUrl: string;
+    mosaicUrl?: string;
+    description?: string | null;
+  }
+
+  /** Uploads the picked file, then shows the stored photo. */
+  const uploadSessionPhoto = async (file: File, kind: "before" | "final", sessionId: number): Promise<void> => {
+    const form = new FormData();
+    form.set("photo", file);
+    form.set("sessionId", String(sessionId));
+    form.set("slot", kind === "before" ? "before" : "after");
+    let body: SessionPhotoUpload | null = null;
+    try {
+      const res = await fetch("/api/session-photo", { method: "POST", body: form });
+      body = (await res.json()) as SessionPhotoUpload;
+      if (!res.ok || body === null || body.ok !== true) throw new Error("upload failed");
+    } catch {
+      setNotice("Photo upload failed.");
+      return;
+    }
+    if (kind === "before") {
+      const rest = await loadPhotosData(sessionId);
+      openWidget({
+        kind: "photos",
+        title: widgetTitle("photos"),
+        size: "full",
+        data: { ...rest, before: body.photoUrl },
+      });
+    } else {
+      finalPendingRef.current = {
+        mosaicUrl: typeof body.mosaicUrl === "string" ? body.mosaicUrl : null,
+        description: typeof body.description === "string" ? body.description : null,
+      };
+      openWidget({
+        kind: "final_photo_confirm",
+        title: widgetTitle("final_photo_confirm"),
+        size: "full",
+        data: { photo: body.photoUrl },
+      });
+    }
+  };
+
+  /** Camera on phones (coarse pointer), file picker on desktop. */
+  const openPhotoPicker = (kind: "before" | "final", sessionId: number): void => {
+    try {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      try {
+        if (window.matchMedia("(pointer: coarse)").matches) input.setAttribute("capture", "camera");
+      } catch {
+        /* file picker without a camera hint */
+      }
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (file) void uploadSessionPhoto(file, kind, sessionId);
+      };
+      input.click();
+    } catch {
+      /* no picker without a document */
+    }
+  };
 
   /** Timed hides report back so the server restarts the window. */
   const closeWidgetByHand = useCallback(() => {
@@ -381,16 +484,19 @@ export function TapToTalk({
     onSleep?.();
   }, [stopSession, onSleep]);
 
-  // Sheet buttons: price answers close; Final opens its confirm, whose
-  // Accept opens the result. Visits and the photo button open the photos.
+  // Sheet buttons: price answers close; Final uploads then confirms, whose
+  // Accept opens the result with the mosaic. Visits and the photo button
+  // load the real stored photos first.
   const sheetCallbacks = {
     onAccept: () => {
       if (widgetRef.current?.kind === "final_photo_confirm") {
+        const pending = finalPendingRef.current;
+        finalPendingRef.current = null;
         openWidget({
           kind: "final_result",
           title: widgetTitle("final_result"),
           size: "full",
-          data: { photo: null, description: null },
+          data: { photo: pending?.mosaicUrl ?? null, description: pending?.description ?? null },
         });
       } else {
         closeWidgetByHand();
@@ -400,25 +506,20 @@ export function TapToTalk({
       closeWidgetByHand();
     },
     onChoose: (choice: "before" | "final") => {
-      if (choice === "before") {
-        photoType("before");
-        closeWidgetByHand();
-      } else {
-        openWidget({
-          kind: "final_photo_confirm",
-          title: widgetTitle("final_photo_confirm"),
-          size: "full",
-          data: { photo: null },
-        });
-      }
+      const sessionId = board?.session?.id;
+      closeWidgetByHand();
+      if (sessionId === undefined) return;
+      openPhotoPicker(choice, sessionId);
     },
     onVisit: () => {
-      openWidget({
-        kind: "photos",
-        title: widgetTitle("photos"),
-        size: "full",
-        data: { before: null, reference: null, expected: null },
-      });
+      const sessionId = board?.session?.id;
+      if (sessionId === undefined) return;
+      openPhotosSheet(sessionId);
+    },
+    onPhotos: () => {
+      const sessionId = board?.session?.id;
+      if (sessionId === undefined) return;
+      openPhotosSheet(sessionId);
     },
   };
 
@@ -1832,14 +1933,6 @@ export function TapToTalk({
   }
 
   const session = board?.session ?? null;
-  const photoType = (type: "before" | "final") => {
-    try {
-      window.dispatchEvent(new CustomEvent("photo:type", { detail: { type } }));
-    } catch {
-      /* photo flows listen for this; no listener yet is fine */
-    }
-  };
-
   if (session) {
     return (
       <SessionScreen

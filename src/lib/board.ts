@@ -3,6 +3,7 @@ import { getPublicNotes, type PublicNote, type ValeDb } from "./db";
 import { getOpenSession } from "./vale-tools";
 
 export interface BoardSession {
+  id: number;
   clientName: string;
   serviceName: string;
   startedAt: string;
@@ -29,6 +30,7 @@ export function getBoard(db: ValeDb): Board {
   const open = getOpenSession(db);
   const session: BoardSession | null = open
     ? {
+        id: open.id,
         clientName: nameOf(db, "clients", open.client_id),
         serviceName: nameOf(db, "services", open.service_id),
         startedAt: open.started_at,

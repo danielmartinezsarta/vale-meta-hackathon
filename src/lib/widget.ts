@@ -82,6 +82,8 @@ export function widgetTitle(kind: WidgetKind): string {
 export interface ClientVisit {
   date: string;
   service: string;
+  /** Served photo for this visit; null renders no camera affordance. */
+  photo: string | null;
 }
 
 /** Ali's client card: health first, then notes, then visits. */
@@ -298,6 +300,14 @@ function healthNotesOf(db: CardStore | undefined, id: number): string[] {
   }
 }
 
+/** Photo path to its served URL; null when the visit stored no photo. */
+function visitPhotoUrl(photoPath: unknown): string | null {
+  if (typeof photoPath !== "string" || photoPath === "") return null;
+  const name = photoPath.split("/").pop() ?? "";
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.(jpg|jpeg|png)$/i.test(name)) return null;
+  return `/api/photos?file=${encodeURIComponent(name)}`;
+}
+
 /** Latest visits first; the card shows three and counts the rest. */
 function visitsOf(
   db: CardStore | undefined,
@@ -306,10 +316,14 @@ function visitsOf(
   if (!db) return { visits: [], visitsMore: 0 };
   try {
     const rows = db.prepare(
-      "SELECT s.started_at AS started, v.name AS service FROM sessions s JOIN services v ON v.id = s.service_id WHERE s.client_id = ? AND s.ended_at IS NOT NULL ORDER BY s.started_at DESC",
-    ).all(id) as { started?: unknown; service?: unknown }[];
+      "SELECT s.started_at AS started, v.name AS service, s.photo_path AS photo FROM sessions s JOIN services v ON v.id = s.service_id WHERE s.client_id = ? AND s.ended_at IS NOT NULL ORDER BY s.started_at DESC"
+    ).all(id) as { started?: unknown; service?: unknown; photo?: unknown }[];
     const visits = rows
-      .map((row) => ({ date: text(row.started).slice(0, 10), service: text(row.service) }))
+      .map((row) => ({
+        date: text(row.started).slice(0, 10),
+        service: text(row.service),
+        photo: visitPhotoUrl(row.photo),
+      }))
       .filter((visit) => visit.date !== "" && visit.service !== "");
     return { visits: visits.slice(0, 3), visitsMore: Math.max(0, visits.length - 3) };
   } catch {
