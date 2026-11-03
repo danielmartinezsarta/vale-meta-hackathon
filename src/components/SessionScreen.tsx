@@ -131,7 +131,7 @@ export function SessionScreen({
                   kind: "photos",
                   title: "Photos",
                   size: "full",
-                  data: { before: null, reference: null, expected: null },
+                  data: { before: null, reference: null, expected: null, final: null },
                 });
               }
             }}
