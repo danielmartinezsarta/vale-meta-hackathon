@@ -253,7 +253,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       const turns = loggedTurns();
       expect(turns).toHaveLength(1);
       const logged = turns[0];
-      expect(logged.transcript).toBe("vale, live from the bridge");
+      expect(logged.transcript).toBe("Vale, live from the bridge");
       expect(logged.inputTokens).toBe(100);
       expect(logged.outputTokens).toBe(20);
       expect(logged.error).toBeNull();
@@ -555,7 +555,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       // Tap 2 sees tap 1's user turn; tap 3 also sees tap 1's vale reply,
       // even though tap 2 failed after its own user turn was stored.
       expect(
-        seen[1].some((t) => t.role === "user" && t.text === "vale, si"),
+        seen[1].some((t) => t.role === "user" && t.text === "Vale, si"),
       ).toBe(true);
       expect(seen[2].some((t) => t.role === "vale")).toBe(true);
     } finally {
@@ -728,7 +728,9 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
   });
 
   it("answers the next turn in Spanish after a mid-listening switch", async () => {
-    finalTranscript = "hola vale";
+    // Sentence-start exact name: Spanish openers no longer hand the turn
+    // off (rule call) — the language switch is what this test proves.
+    finalTranscript = "vale, hola";
     const agent = vi.fn<AgentFn>(fakeAgent("Hola Daniel."));
     try {
       const browser = new FakeBrowser();
@@ -756,7 +758,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       });
       expect(agent).toHaveBeenCalledTimes(1);
       expect(agent.mock.calls[0][0].language).toBe("es");
-      expect(agent.mock.calls[0][0].transcript).toBe("hola vale");
+      expect(agent.mock.calls[0][0].transcript).toBe("Vale, hola");
       browser.close(1000, "test done");
     } finally {
       finalTranscript = "vale, live from the bridge";
@@ -1281,7 +1283,7 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
       expect(ventana.length).toBeGreaterThan(0);
       // The served turn carries a real measured ASR time.
       const first = loggedTurns().find(
-        (entry) => entry.transcript === "vale, book Emma for gel refill",
+        (entry) => entry.transcript === "Vale, book Emma for gel refill"
       );
       expect(first).toBeDefined();
       expect(typeof first?.asrMs).toBe("number");
@@ -1368,7 +1370,7 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
         ).toBe(true);
       });
       const entry = loggedTurns().find(
-        (e) => e.transcript === "vale, wav check",
+        (e) => e.transcript === "Vale, wav check"
       );
       expect(entry).toBeDefined();
       if (entry === undefined) throw new Error("wav turn was not logged");
@@ -1433,7 +1435,7 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
       });
       expect(agent).not.toHaveBeenCalled();
       const entry = loggedTurns().find(
-        (e) => e.transcript === "vale, junk check",
+        (e) => e.transcript === "Vale, junk check"
       );
       expect(entry).toMatchObject({ junk: true, ignored: true });
       expect(typeof entry?.wav).toBe("string");
@@ -1500,7 +1502,7 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
       });
       expect(agent).toHaveBeenCalledTimes(1);
       const entry = loggedTurns().find(
-        (e) => e.transcript === "vale, servicio semipermanente",
+        (e) => e.transcript === "Vale, servicio semipermanente"
       );
       expect(entry).toBeDefined();
       expect(entry?.ignored).toBe(false);

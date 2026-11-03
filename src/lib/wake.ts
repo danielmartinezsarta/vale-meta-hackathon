@@ -6,9 +6,16 @@
 
 import type { ValeLanguage } from "./vale-language";
 
-// Measured ASR spellings of "Vale", including Bale (Daniel's call, 30/10:
-// heard in negatives, position rule below carries the risk).
-const DEFAULT_WAKE_WORDS = ["vale", "balle", "bali", "bale", "veil", "vail"];
+// The one name list: exact "vale" plus its accepted ASR spellings. Only
+// these wake her; anything else that sounds close ("balle", "veil") stays
+// chatter until a run proves otherwise.
+const DEFAULT_WAKE_WORDS = ["vale", "bale", "bali", "ballet", "valley", "ballot"];
+
+/** Exact word: wakes at any sentence start, and everywhere a variant wakes. */
+const EXACT_WAKE_WORD = "vale";
+
+/** Openers that hand the turn to a following name ("hey Vale"). */
+const OPENER_WORDS = new Set(["hey", "ok", "okay", "thanks"]);
 
 const DEFAULT_WINDOW_S = 45;
 
@@ -43,18 +50,92 @@ export function windowMs(sessionOpen = false): number {
 }
 
 /**
- * The name activates in any of the first three words, in either language,
- * with no opener or greeting lists ("Hola Vale", "Oye Vale", "Buenas Vale"
- * all count). A bare first-word client mention ("Bale broke a nail")
- * still wakes: that is the accepted cost of a purely positional rule.
+ * Lowercase with accents folded 1:1, punctuation kept: offsets stay valid
+ * against the original transcript for the canonical splice below.
+ */
+function cleanWakeText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[áàäâ]/g, "a")
+    .replace(/[éèëê]/g, "e")
+    .replace(/[íìïî]/g, "i")
+    .replace(/[óòöô]/g, "o")
+    .replace(/[úùüû]/g, "u")
+    .replace(/ñ/g, "n");
+}
+
+interface WakeMatch {
+  /** Offset of the name word in the transcript. */
+  start: number;
+  end: number;
+}
+
+/**
+ * First positional name match, if any: exact "vale" at any sentence start,
+ * or the exact word or a variant right after hey/ok/okay/thanks, or followed
+ * by a comma or period. A bare sentence-start variant ("Bali nails are so
+ * trendy") never matches, and neither does a mid-sentence mention with no
+ * punctuation ("the Vale shop").
+ */
+function findWakeMatch(transcript: string, words: string[]): WakeMatch | null {
+  const exact = words.includes(EXACT_WAKE_WORD) ? EXACT_WAKE_WORD : null;
+  const known = new Set(words);
+  const text = cleanWakeText(transcript);
+  // Exact word at the start of any sentence.
+  if (exact !== null) {
+    for (const sentence of text.matchAll(/[^.!?…\n]+/g)) {
+      const word = /[a-z]+/.exec(sentence[0]);
+      if (word !== null && word[0] === exact) {
+        const start = (sentence.index ?? 0) + word.index;
+        return { start, end: start + word[0].length };
+      }
+    }
+  }
+  // Opener or trailing comma/period, anywhere in the turn.
+  const tokens: { word: string; start: number; after: string }[] = [];
+  for (const match of text.matchAll(/([a-z]+)([,.;:!?…]*)/g)) {
+    tokens.push({
+      word: match[1],
+      start: match.index ?? 0,
+      after: match[2].charAt(0) ?? "",
+    });
+  }
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.word !== exact && !known.has(token.word)) continue;
+    if (token.after === "," || token.after === ".")
+      return { start: token.start, end: token.start + token.word.length };
+    const prev = i > 0 ? tokens[i - 1].word : null;
+    if (prev !== null && OPENER_WORDS.has(prev))
+      return { start: token.start, end: token.start + token.word.length };
+  }
+  return null;
+}
+
+/**
+ * The name activates on position, not vocabulary: exact "vale" at the start
+ * of any sentence, or the exact word or a variant right after
+ * hey/ok/okay/thanks, or followed by a comma or period ("Ballet, remind
+ * me", "Thanks, Bali."). "Bali nails…" and "bale broke…" never activate,
+ * and neither does a bare mention ("the Vale shop").
  */
 export function namesVale(transcript: string, words: string[] = wakeWords()): boolean {
-  const tokens = normalizeWakeText(transcript)
-    .split(" ")
-    .filter((token) => token !== "");
-  return tokens
-    .slice(0, 3)
-    .some((token) => words.includes(normalizeWakeText(token)));
+  return findWakeMatch(transcript, words) !== null;
+}
+
+/**
+ * Canonical wake word for the model and the tools: the triggering name —
+ * exact or variant — becomes "Vale" so a substitution never rides into tool
+ * args as a service or client ("Ballet, open a session" once filed service
+ * "Ballet"). Turns with no positional match ride through unchanged.
+ */
+export function canonicalizeWakeWord(
+  transcript: string,
+  words: string[] = wakeWords(),
+): string {
+  const match = findWakeMatch(transcript, words);
+  if (match === null) return transcript;
+  return `${transcript.slice(0, match.start)}Vale${transcript.slice(match.end)}`;
 }
 
 /**
@@ -142,7 +223,7 @@ export function isBareNameCall(transcript: string): boolean {
     .split(" ")
     .filter((token) => token !== "");
   if (tokens.length === 0 || tokens.length > 2) return false;
-  const bare = [...wakeWords(), "valley"];
+  const bare = wakeWords();
   return tokens.every((token) => bare.includes(token));
 }
 

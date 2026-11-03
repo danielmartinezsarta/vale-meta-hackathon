@@ -349,7 +349,7 @@ describe("POST /api/voice", () => {
     const turns = loggedTurns();
     expect(turns).toHaveLength(2);
     const first = turns[0];
-    expect(first.transcript).toBe("vale, first turn");
+    expect(first.transcript).toBe("Vale, first turn");
     expect(typeof first.ttftMs).toBe("number");
     expect(first.inputTokens).toBe(100);
     expect(first.outputTokens).toBe(20);
@@ -357,7 +357,7 @@ describe("POST /api/voice", () => {
     expect(typeof first.ts).toBe("string");
     expect(first.tool).toBeNull();
     expect(first.error).toBeNull();
-    expect(turns[1].transcript).toBe("vale, second turn");
+    expect(turns[1].transcript).toBe("Vale, second turn");
     spy.mockRestore();
     vi.unstubAllGlobals();
   });
@@ -559,7 +559,7 @@ describe("POST /api/voice", () => {
     }
     expect(bodies[0].input).toHaveLength(1);
     expect(bodies[1].input).toHaveLength(3);
-    expect(JSON.stringify(bodies[1].input)).toContain("vale, open a session");
+    expect(JSON.stringify(bodies[1].input)).toContain("Vale, open a session");
     expect(JSON.stringify(bodies[1].input)).toContain("Which service?");
     vi.unstubAllGlobals();
   });
