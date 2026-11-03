@@ -38,7 +38,7 @@ import {
 } from "@/lib/vale-language";
 import { useValeLanguage } from "@/components/useValeLanguage";
 import { uiStrings } from "@/lib/vale-ui";
-import type { Widget } from "@/lib/widget";
+import type { PhotosData, Widget } from "@/lib/widget";
 import {
   AUTO_HIDE_MS,
   GOODBYE_MS,
@@ -49,6 +49,7 @@ import { AwakeScreen, type AwakeBubble } from "@/components/AwakeScreen";
 import { SessionScreen } from "@/components/SessionScreen";
 import { VoiceDebugView } from "@/components/VoiceDebugView";
 import { useScreenMode } from "@/components/useScreenMode";
+import styles from "./ValeScreens.module.css";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
@@ -177,6 +178,9 @@ export function TapToTalk({
   useEffect(() => {
     widgetRef.current = widget;
   }, [widget]);
+  // Final upload result waiting behind the confirm sheet for Accept. The
+  // result shows the final user photo; the mosaic URL stays server-side.
+  const finalPendingRef = useRef<{ photoUrl: string | null; description: string | null } | null>(null);
   // Client-side mirror of the server attention window: the tap, her replies
   // and heard names restart it, exactly the events the server notes. It only
   // ever keeps a phrase on the wire; the server gate owns every discard.
@@ -196,6 +200,12 @@ export function TapToTalk({
   // Mute Vale toggle: her voice never starts while muted; the reply text
   // still grows in its bubble.
   const [muted, setMuted] = useState(false);
+  // Mic mute: capture fully stopped, never ignored. The typed field shows
+  // only while muted; unmuting hides it and listening can resume.
+  const [micMuted, setMicMuted] = useState(false);
+  const micMutedRef = useRef(false);
+  const [typedText, setTypedText] = useState("");
+  const sendTypedRef = useRef<(text: string) => void>(() => {});
   const mutedOutRef = useRef(false);
   const doneTimerRef = useRef(0);
   const clearDoneTimer = useCallback(() => {
@@ -227,6 +237,108 @@ export function TapToTalk({
   const openWidget = useCallback((widget: Widget) => {
     setWidget(widget);
   }, []);
+
+  /** Demo appointment reference, served like any stored photo. */
+  const APPOINTMENT_REFERENCE_FILE = "seed-assets/david-appointment-reference.jpg";
+
+  /** Served URL when the file exists, null on 404 or network failure. */
+  const probePhoto = async (file: string): Promise<string | null> => {
+    const url = `/api/photos?file=${encodeURIComponent(file)}`;
+    try {
+      const res = await fetch(url);
+      return res.ok ? url : null;
+    } catch {
+      return null;
+    }
+  };
+
+  /** Real slot data for the photos sheet; missing files stay null. */
+  const loadPhotosData = async (sessionId: number): Promise<PhotosData> => {
+    const [before, reference, expected, final] = await Promise.all([
+      probePhoto(`pre_${sessionId}.jpg`),
+      probePhoto(APPOINTMENT_REFERENCE_FILE),
+      probePhoto(`preview_${sessionId}.png`),
+      probePhoto(`post_${sessionId}.jpg`),
+    ]);
+    return { before, reference, expected, final };
+  };
+
+  /** Photos sheet with the stored slots, real where present. */
+  const openPhotosSheet = (sessionId: number): void => {
+    void loadPhotosData(sessionId).then((data) => {
+      openWidget({
+        kind: "photos",
+        title: widgetTitle("photos"),
+        size: "full",
+        data,
+      });
+    });
+  };
+
+  interface SessionPhotoUpload {
+    ok: boolean;
+    photoUrl: string;
+    mosaicUrl?: string;
+    description?: string | null;
+  }
+
+  /** Uploads the picked file, then shows the stored photo. */
+  const uploadSessionPhoto = async (file: File, kind: "before" | "final", sessionId: number): Promise<void> => {
+    const form = new FormData();
+    form.set("photo", file);
+    form.set("sessionId", String(sessionId));
+    form.set("slot", kind === "before" ? "before" : "after");
+    let body: SessionPhotoUpload | null = null;
+    try {
+      const res = await fetch("/api/session-photo", { method: "POST", body: form });
+      body = (await res.json()) as SessionPhotoUpload;
+      if (!res.ok || body === null || body.ok !== true) throw new Error("upload failed");
+    } catch {
+      setNotice("Photo upload failed.");
+      return;
+    }
+    if (kind === "before") {
+      const rest = await loadPhotosData(sessionId);
+      openWidget({
+        kind: "photos",
+        title: widgetTitle("photos"),
+        size: "full",
+        data: { ...rest, before: body.photoUrl },
+      });
+    } else {
+      finalPendingRef.current = {
+        photoUrl: typeof body.photoUrl === "string" ? body.photoUrl : null,
+        description: typeof body.description === "string" ? body.description : null,
+      };
+      openWidget({
+        kind: "final_photo_confirm",
+        title: widgetTitle("final_photo_confirm"),
+        size: "full",
+        data: { photo: body.photoUrl },
+      });
+    }
+  };
+
+  /** Camera on phones (coarse pointer), file picker on desktop. */
+  const openPhotoPicker = (kind: "before" | "final", sessionId: number): void => {
+    try {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      try {
+        if (window.matchMedia("(pointer: coarse)").matches) input.setAttribute("capture", "camera");
+      } catch {
+        /* file picker without a camera hint */
+      }
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (file) void uploadSessionPhoto(file, kind, sessionId);
+      };
+      input.click();
+    } catch {
+      /* no picker without a document */
+    }
+  };
 
   /** Timed hides report back so the server restarts the window. */
   const closeWidgetByHand = useCallback(() => {
@@ -381,16 +493,100 @@ export function TapToTalk({
     onSleep?.();
   }, [stopSession, onSleep]);
 
-  // Sheet buttons: price answers close; Final opens its confirm, whose
-  // Accept opens the result. Visits and the photo button open the photos.
+  // Mic mute touches only the stream's tracks: disabled feeds pure
+  // silence, so no audio leaves the device, samples keep flowing, and the
+  // session (socket, turns, widgets) keeps running untouched.
+  const setMicTracksEnabled = useCallback((enabled: boolean) => {
+    try {
+      streamRef.current?.getAudioTracks().forEach((track) => {
+        track.enabled = enabled;
+      });
+    } catch {
+      /* stream already gone */
+    }
+  }, []);
+
+  // Muting never ends the session — not even while idle — so a typed turn
+  // always has a live sender; unmuting is instant.
+  const toggleMicMute = useCallback(() => {
+    const next = !micMuted;
+    micMutedRef.current = next;
+    setMicMuted(next);
+    setMicTracksEnabled(!next);
+  }, [micMuted, setMicTracksEnabled]);
+
+  // Typed turn: Enter or the send button sends, the field clears and keeps
+  // focus so the keyboard stays open, and the reply path is the same JSON
+  // turn a vote rides (typed:true skips ASR and wake).
+  const typedInputRef = useRef<HTMLInputElement>(null);
+  const submitTyped = useCallback(() => {
+    const text = typedText.trim();
+    if (text === "") return;
+    setTypedText("");
+    sendTypedRef.current(text);
+    try {
+      typedInputRef.current?.focus();
+    } catch {
+      /* keyboard continuity is best effort */
+    }
+  }, [typedText]);
+
+  // Input chip, only while the mic is muted: card surface with the subtle
+  // border, 46px tall like the round buttons, in the bottom flow below the
+  // timer so it can never cover it. The send button rides inside on the
+  // right, dimmed while the field is empty; Enter sends too.
+  const typedField = (
+    <form
+      className={styles.typed}
+      onSubmit={(event) => {
+        event.preventDefault();
+        submitTyped();
+      }}
+    >
+      <input
+        ref={typedInputRef}
+        className={styles.typedin}
+        type="text"
+        aria-label="Type to Vale"
+        placeholder="Type to Vale…"
+        value={typedText}
+        onChange={(event) => setTypedText(event.target.value)}
+      />
+      <button
+        className={styles.typedgo}
+        type="submit"
+        aria-label="Send message"
+        disabled={typedText.trim() === ""}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <g
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M22 2 11 13" />
+            <path d="M22 2 15 22 11 13 2 9 22 2" />
+          </g>
+        </svg>
+      </button>
+    </form>
+  );
+
+  // Sheet buttons: price answers close; Final uploads then confirms, whose
+  // Accept opens the result with the final user photo. Visits and the
+  // photo button load the real stored photos first.
   const sheetCallbacks = {
     onAccept: () => {
       if (widgetRef.current?.kind === "final_photo_confirm") {
+        const pending = finalPendingRef.current;
+        finalPendingRef.current = null;
         openWidget({
           kind: "final_result",
           title: widgetTitle("final_result"),
           size: "full",
-          data: { photo: null, description: null },
+          data: { photo: pending?.photoUrl ?? null, description: pending?.description ?? null },
         });
       } else {
         closeWidgetByHand();
@@ -400,25 +596,20 @@ export function TapToTalk({
       closeWidgetByHand();
     },
     onChoose: (choice: "before" | "final") => {
-      if (choice === "before") {
-        photoType("before");
-        closeWidgetByHand();
-      } else {
-        openWidget({
-          kind: "final_photo_confirm",
-          title: widgetTitle("final_photo_confirm"),
-          size: "full",
-          data: { photo: null },
-        });
-      }
+      const sessionId = board?.session?.id;
+      closeWidgetByHand();
+      if (sessionId === undefined) return;
+      openPhotoPicker(choice, sessionId);
     },
     onVisit: () => {
-      openWidget({
-        kind: "photos",
-        title: widgetTitle("photos"),
-        size: "full",
-        data: { before: null, reference: null, expected: null },
-      });
+      const sessionId = board?.session?.id;
+      if (sessionId === undefined) return;
+      openPhotosSheet(sessionId);
+    },
+    onPhotos: () => {
+      const sessionId = board?.session?.id;
+      if (sessionId === undefined) return;
+      openPhotosSheet(sessionId);
     },
   };
 
@@ -1366,6 +1557,30 @@ export function TapToTalk({
         );
       };
 
+      // Typed turn while the mic is muted: the same JSON turn shape as a
+      // vote, with typed:true so the server skips ASR and the wake gate.
+      // No session needed: typing is always addressed to Vale.
+      const sendTyped = (text: string) => {
+        openTurn();
+        const id = currentId;
+        const controller = new AbortController();
+        controllersRef.current.add(controller);
+        setNotice(null);
+        subscribePostTurn(
+          id,
+          fetch(
+            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ transcript: text, typed: true }),
+              signal: controller.signal,
+            },
+          ),
+          controller,
+        );
+      };
+
       // Touch on a confirm card: rides the open socket like any control, or
       // a JSON turn when no socket is open. Either way it equals a spoken vote.
       const castVote = (vote: "yes" | "no") => {
@@ -1649,6 +1864,7 @@ export function TapToTalk({
         // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
         };
         castVoteRef.current = castVote;
+        sendTypedRef.current = sendTyped;
       await beginCapture();
       // A stall resumes alone: no audio blocks for STALL_MS restarts
       // capture on the same stream instead of ending the session. The mic
@@ -1756,6 +1972,12 @@ export function TapToTalk({
         },
       });
       streamRef.current = stream;
+      // Muted before the session exists: start with the tracks already
+      // disabled so the session opens deaf. Read the ref: state may have
+      // changed while getUserMedia was in flight.
+      if (micMutedRef.current) {
+        setMicTracksEnabled(false);
+      }
       // Mic rate evidence: a rate surprise (headset, dock) reads here.
       try {
         const rate = stream.getAudioTracks()[0]?.getSettings?.()?.sampleRate;
@@ -1769,7 +1991,7 @@ export function TapToTalk({
     } catch (error) {
       setStatus(isPermissionDenied(error) ? "blocked" : "error");
     }
-  }, [status, stopSession, runSession]);
+  }, [status, stopSession, runSession, setMicTracksEnabled]);
 
   // "Wake Vale" is the browser's mic gesture: the home screen mounts this
   // already awake, so the tap that woke her starts the session at once.
@@ -1832,14 +2054,6 @@ export function TapToTalk({
   }
 
   const session = board?.session ?? null;
-  const photoType = (type: "before" | "final") => {
-    try {
-      window.dispatchEvent(new CustomEvent("photo:type", { detail: { type } }));
-    } catch {
-      /* photo flows listen for this; no listener yet is fine */
-    }
-  };
-
   if (session) {
     return (
       <SessionScreen
@@ -1851,9 +2065,12 @@ export function TapToTalk({
         language={language}
         session={session}
         muted={muted}
+        micMuted={micMuted}
+        typedField={typedField}
         notice={notice}
         alert={alert}
         onToggleMute={toggleMute}
+        onToggleMicMute={toggleMicMute}
         onSleep={sleep}
         onOpenWidget={openWidget}
         onCloseWidget={closeWidgetByHand}
@@ -1872,9 +2089,12 @@ export function TapToTalk({
       widget={widget}
       language={language}
       muted={muted}
+      micMuted={micMuted}
+      typedField={typedField}
       notice={notice}
       alert={alert}
       onToggleMute={toggleMute}
+      onToggleMicMute={toggleMicMute}
       onSleep={sleep}
       onCloseWidget={closeWidgetByHand}
       onVote={(vote) => castVoteRef.current(vote)}

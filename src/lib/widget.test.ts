@@ -8,6 +8,7 @@ import {
   usdWhole,
   widgetTitle,
   WIDGET_SIZE,
+  type CardStore,
 } from "./widget";
 
 const NO_DB = undefined;
@@ -67,6 +68,46 @@ describe("buildWidget (typed payloads per kind)", () => {
     });
   });
 
+  it("fills visit photos from the session photo path, null when absent", () => {
+    const store: CardStore = {
+      prepare: (sql: string) => ({
+        get: (..._params: unknown[]) => undefined,
+        all: (..._params: unknown[]) =>
+          sql.includes("photo_path")
+            ? [
+                {
+                  started: "2026-10-20T10:00:00.000Z",
+                  service: "Gel removal",
+                  photo: "/data/session-photos/post_3.jpg",
+                },
+                { started: "2026-10-01T10:00:00.000Z", service: "Manicure", photo: null },
+              ]
+            : [],
+      }),
+    };
+    expect(
+      buildWidget("find_client", {}, { id: 7, name: "David", notes: [] }, store),
+    ).toEqual({
+      kind: "client_card",
+      title: "Client card",
+      size: "full",
+      data: {
+        name: "David",
+        birthday: null,
+        sex: null,
+        phone: null,
+        email: null,
+        visits: [
+          { date: "2026-10-20", service: "Gel removal", photo: "/api/photos?file=post_3.jpg" },
+          { date: "2026-10-01", service: "Manicure", photo: null },
+        ],
+        visitsMore: 0,
+        healthNotes: [],
+        noteTags: [],
+      },
+    });
+  });
+
   it("builds health and regular notes from the call args", () => {
     expect(
       buildWidget("add_note", { client_name: "David", text: "Allergic to monomer", kind: "health" }, { ok: true }, NO_DB),
@@ -118,6 +159,34 @@ describe("buildWidget (typed payloads per kind)", () => {
         data: { client: "David", service: "Gel manicure", day: "2026-11-27", time: "15:00" },
       });
     }
+  });
+
+  it("builds the photos payload with full size for the preview", () => {
+    expect(
+      buildWidget(
+        "photo_preview",
+        {},
+        { before: "b-url", reference: "r-url", expected: "e-url" },
+        NO_DB,
+      ),
+    ).toEqual({
+      kind: "photos",
+      title: "Photos",
+      size: "full",
+      data: { before: "b-url", reference: "r-url", expected: "e-url", final: null },
+    });
+    expect(
+      buildWidget("photo_preview", {}, { before: "b-url", expected: "e-url" }, NO_DB)?.data,
+    ).toEqual({ before: "b-url", reference: null, expected: "e-url", final: null });
+    expect(buildWidget("photo_preview", {}, { before: "", expected: "e-url" }, NO_DB)).toBeNull();
+    expect(
+      buildWidget("photo_show", {}, { before: null, reference: "r-url", expected: null, final: null }, NO_DB),
+    ).toEqual({
+      kind: "photos",
+      title: "Photos",
+      size: "full",
+      data: { before: null, reference: "r-url", expected: null, final: null },
+    });
   });
 
   it("fills the card health block from the store past the masked feed", () => {

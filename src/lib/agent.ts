@@ -2,7 +2,7 @@ import {
   VALE_TOOLS,
   clientLabel,
   getOpenSession,
-  runValeTool,
+  runValeToolAsync,
 } from "./vale-tools";
 import { bogotaDay } from "./natural-date";
 import { DEFAULT_USER_NAME, getDb, userName, type HistoryTurn, type ValeDb } from "./db";
@@ -175,7 +175,7 @@ export function sessionContext(db: ValeDb, now = new Date()): string {
  * each 018 tool to the dispatch key, args and data it renders. Tools
  * without a sheet map to null; the agenda speaks and bubbles only.
  */
-function contractWidgetFor(
+export function contractWidgetFor(
   tool: string,
   args: Record<string, unknown>,
   data: unknown,
@@ -208,6 +208,10 @@ function contractWidgetFor(
       };
     case "session_quote":
       return { tool: "quote_price", args: {}, data };
+    case "photo_preview_design":
+      return { tool: "photo_preview", args: {}, data };
+    case "photo_show":
+      return { tool: "photo_show", args: {}, data };
     case "agenda_create_appointment":
       if (typeof info.appointment_id !== "number") return null;
       return {
@@ -252,6 +256,7 @@ const WRITE_TOOLS = new Set([
   "session_close",
   "session_log_supply",
   "session_quote_accept",
+  "photo_preview_design",
   "client_create",
   "client_note_add",
   "shopping_add",
@@ -264,6 +269,22 @@ const WRITE_TOOLS = new Set([
   "stock_add",
   "undo_last",
 ]);
+
+/**
+ * Immediate narration for slow tools, spoken and shown while the tool runs.
+ * Only image generation is slow enough to need one.
+ */
+const TOOL_WAIT_PHRASE: Record<string, { en: string; es: string }> = {
+  photo_preview_design: {
+    en: "Give me a moment, creating your preview…",
+    es: "Dame un momento, estoy creando tu vista previa…",
+  },
+};
+
+export function toolWaitPhrase(tool: string, language: ValeLanguage): string | null {
+  const entry = TOOL_WAIT_PHRASE[tool];
+  return entry ? (entry[language] ?? entry.en) : null;
+}
 
 /**
  * Provider error bodies stay in the server log: they tell a stale chain
@@ -511,6 +532,8 @@ export interface AgentTurnOptions {
   history?: HistoryTurn[];
   url?: string;
   onDelta?: (text: string) => void;
+  /** Fires before each tool runs so the route can narrate slow tools at once. */
+  onToolStart?: (toolName: string) => void;
   startedAt?: number;
   /** Defaults to the shared database; tests inject an in-memory one. */
   db?: ValeDb;
@@ -528,6 +551,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   const url = options.url ?? RESPONSES_URL;
   const startedAt = options.startedAt ?? Date.now();
   const onDelta = options.onDelta ?? (() => {});
+  const onToolStart = options.onToolStart ?? (() => {});
   const db = options.db ?? getDb();
   const language = options.language ?? DEFAULT_LANGUAGE;
   const slotKey = options.slotKey ?? "local";
@@ -617,7 +641,10 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       parsed = {};
     }
     const toolAt = Date.now();
-    const toolResult = runValeTool(db, call.name, parsed, language);
+    // Slow tools narrate at once: model deltas of a tool round stay
+    // buffered until the tool finishes, so the wait line cannot ride them.
+    onToolStart(call.name);
+    const toolResult = await runValeToolAsync(db, call.name, parsed, language);
     vlog({
       turn: options.turn ?? "-",
       process: "TOOL",
@@ -681,6 +708,13 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       const paid =
         ((toolResult as { data?: unknown }).data as { paid_amount_usd?: unknown } | undefined)?.paid_amount_usd !== undefined;
       if (paid) clearPendingAction(slotKey);
+      text = toolResult.message;
+      break;
+    }
+    if (toolResult.ok && call.name === "agenda_show" && parsed.range === "today") {
+      // Today answers itself with no second round: the tool line already
+      // names appointments and reminders, and a second round may drop
+      // the reminders. Other ranges still go through the model.
       text = toolResult.message;
       break;
     }

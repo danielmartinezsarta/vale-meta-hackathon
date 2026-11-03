@@ -98,7 +98,7 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
         bubbles={[]}
         widget={null}
         language="en"
-        session={{ clientName: "David", serviceName: "Gel manicure", startedAt: STARTED_AT }}
+        session={{ id: 7, clientName: "David", serviceName: "Gel manicure", startedAt: STARTED_AT }}
         muted={false}
         notice={null}
         alert={null}
@@ -118,7 +118,7 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
     });
   });
 
-  it("opens the full photos sheet with the Muse Spark tag", () => {
+  it("opens the full photos sheet with the Muse Image tag", () => {
     const onOpenPhotos = vi.fn();
     render(
       <SessionScreen
@@ -127,7 +127,7 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
         bubbles={[]}
         widget={null}
         language="en"
-        session={{ clientName: "David", serviceName: "Gel manicure", startedAt: STARTED_AT }}
+        session={{ id: 7, clientName: "David", serviceName: "Gel manicure", startedAt: STARTED_AT }}
         muted={false}
         notice={null}
         alert={null}
@@ -147,7 +147,7 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
       kind: "photos",
       title: "Photos",
       size: "full",
-      data: { before: null, reference: null, expected: null },
+      data: { before: null, reference: null, expected: null, final: null },
     });
   });
 });
