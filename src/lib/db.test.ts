@@ -276,9 +276,9 @@ describe("test-database guards", () => {
     db.close();
   });
 
-  it("seeds Daniel as the user", () => {
+  it("seeds Demo as the neutral user", () => {
     const db = freshTestDb();
-    expect(userName(db)).toBe("Daniel");
+    expect(userName(db)).toBe("Demo");
     db.close();
   });
 
