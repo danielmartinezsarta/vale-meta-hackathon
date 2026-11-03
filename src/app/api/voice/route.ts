@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { upgradeWebSocket } from "@vercel/functions";
-import { AGENT_MODEL, runAgentTurn } from "@/lib/agent";
+import { AGENT_MODEL, runAgentTurn, toolWaitPhrase } from "@/lib/agent";
 import { getDb, recentTurns, recordTurn } from "@/lib/db";
 import { getBoard } from "@/lib/board";
 import { getSlots } from "@/lib/slot-memory";
@@ -122,13 +122,15 @@ export async function POST(request: Request): Promise<Response> {
   const contentType = request.headers.get("content-type") ?? "";
   const jsonTurn = contentType.includes("application/json");
   let cannedTranscript: string | null = null;
+  let typedTurn = false;
   if (jsonTurn) {
     try {
-      const body = (await request.json()) as { transcript?: unknown };
+      const body = (await request.json()) as { transcript?: unknown; typed?: unknown };
       if (typeof body.transcript !== "string" || body.transcript.trim() === "") {
         return Response.json({ error: "Empty transcript." }, { status: 400 });
       }
       cannedTranscript = body.transcript;
+      typedTurn = body.typed === true;
     } catch {
       return Response.json({ error: "Bad request." }, { status: 400 });
     }
@@ -432,6 +434,10 @@ export async function POST(request: Request): Promise<Response> {
             url: process.env.META_RESPONSES_URL || undefined,
             startedAt: speechEndAt,
             onDelta: (text) => send("reply-delta", { text }),
+            onToolStart: (tool) => {
+              const wait = toolWaitPhrase(tool, language);
+              if (wait) send("reply-delta", { text: wait });
+            },
             language,
             slotKey: clientKey,
             turn: turnTag ?? undefined,
@@ -506,6 +512,22 @@ export async function POST(request: Request): Promise<Response> {
       try {
         if (cannedTranscript !== null) {
           send("final", { transcript: cannedTranscript });
+          if (typedTurn) {
+            // Typed turns are always addressed to Vale: no ASR ran and the
+            // wake gate is skipped, then the identical answer path runs.
+            // They log gate "typed" so logs and replay tell them apart.
+            const typedVerdict: WakeVerdict = {
+              execute: true,
+              namedVale: true,
+              gate: "typed",
+              sinceReplyS: null,
+            };
+            await answerTranscript(cannedTranscript, 0, Date.now(), typedVerdict);
+            send("done", {});
+            clearTimeout(timeout);
+            closeStream();
+            return;
+          }
           cannedTranscript = canonicalizeWakeWord(cannedTranscript);
           // Sliding gate first: background chatter never reaches the model,
           // the board or the memory.

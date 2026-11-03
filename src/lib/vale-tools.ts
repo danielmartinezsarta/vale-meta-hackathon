@@ -2,9 +2,19 @@
 // Server-side only: executors run here; only short speakable results and
 // masked public notes ever reach the model. Private health-note text never
 // leaves this module toward the cloud.
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, join } from "node:path";
 import { PRICING, getPublicNotes, type PublicNote, type ValeDb } from "./db";
+import { segmentNails } from "./nails";
 import { bogotaDay, bogotaTime, formatNaturalDateTime, hour12, parseNaturalDate } from "./natural-date";
+import { runPhotoPreview, samBoxesMatch, type DesignSpec } from "./photo-preview";
 import { money, quotePrice } from "./quote";
+import {
+  previewCostLogPath,
+  previewsDir,
+  sessionPhotoPath,
+  sessionPhotosDir,
+} from "./session-photo";
 import type { ValeLanguage } from "./vale-language";
 
 export interface ValeToolDefinition {
@@ -300,6 +310,20 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
     type: "function",
     name: "goal_show",
     description: "Show the month goal and the margin earned. The amounts stay on the screen: say one short line pointing at them, never read them aloud.",
+    parameters: noParams,
+  },
+  {
+    type: "function",
+    name: "photo_preview_design",
+    description:
+      "Generate a brand-new AI preview of the appointment reference design on the open session nails from the before photo, shown on screen. Only for generating: to show photos already stored (reference, before, preview, final), use photo_show.",
+    parameters: noParams,
+  },
+  {
+    type: "function",
+    name: "photo_show",
+    description:
+      "Show the stored session photos on the photos sheet: before, reference, preview and final, whichever exist. Call it when the user asks to see the reference, the before photo, the preview, the final photo, or the stored photos. Never for generating anything new.",
     parameters: noParams,
   },
   {
@@ -1282,6 +1306,211 @@ export function quoteSession(
 }
 
 /**
+ * photo_preview_design: AI preview of the appointment reference design on
+ * the open session nails. Mirrors the preview route flow: SAM pre-check on
+ * the before photo (needs all five nails, no Image call otherwise), one
+ * Muse Image call, SAM post-check with at most one same-prompt retry
+ * (hard cap: two Image calls per request), then the PNG is stored.
+ * Operates on the open session, like session_quote does: no arguments.
+ */
+const PREVIEW_DESIGN: DesignSpec = {
+  shape: "natural",
+  color: "reference",
+  finish: "reference",
+  detail: "reference",
+};
+
+/** Hard cap: at most two Image calls per request, no matter what. */
+const MAX_PREVIEW_IMAGE_CALLS = 2;
+
+function sniffPreviewMime(bytes: Buffer): "image/png" | "image/jpeg" {
+  return bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+    ? "image/png"
+    : "image/jpeg";
+}
+
+/**
+ * Reference photo bytes plus the servable URL, if any. Absolute disk
+ * paths and data URLs stay server-side: only seed-assets/ values map to
+ * /api/photos?file= URLs, which the photos route allowlists.
+ */
+function resolveReferencePhoto(refValue: string): { bytes: Buffer; url: string | null } | null {
+  const dataMatch = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(refValue);
+  if (dataMatch) {
+    try {
+      const bytes = Buffer.from(dataMatch[2], "base64");
+      return bytes.length > 0 ? { bytes, url: null } : null;
+    } catch {
+      return null;
+    }
+  }
+  if (refValue.startsWith("seed-assets/")) {
+    if (!/^seed-assets\/[A-Za-z0-9][A-Za-z0-9._-]*\.(jpg|jpeg|png)$/i.test(refValue) || refValue.includes("..")) {
+      return null;
+    }
+    try {
+      const bytes = readFileSync(join(process.cwd(), refValue));
+      if (bytes.length === 0) return null;
+      return { bytes, url: `/api/photos?file=${refValue}` };
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const bytes = readFileSync(isAbsolute(refValue) ? refValue : join(process.cwd(), refValue));
+    return bytes.length > 0 ? { bytes, url: null } : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function previewDesign(
+  db: ValeDb,
+  _args: Record<string, unknown>,
+  language: ValeLanguage = "es",
+  fetchImpl: typeof fetch = fetch,
+): Promise<ToolResult> {
+  const fail = (en: string, es: string): ToolResult => ({
+    ok: false,
+    message: language === "en" ? en : es,
+  });
+  const open = getOpenSession(db);
+  if (!open) return fail("No session is open.", "No hay sesión abierta.");
+  let before: Buffer;
+  try {
+    before = readFileSync(sessionPhotoPath(open.id, "pre", sessionPhotosDir()));
+    if (before.length === 0) throw new Error("empty before photo");
+  } catch {
+    return fail("Take a before photo first.", "Toma la foto del antes primero.");
+  }
+  const session = db
+    .prepare("SELECT client_id, service_id FROM sessions WHERE id = ?")
+    .get(open.id) as { client_id: number; service_id: number } | undefined;
+  const appointment = session
+    ? (db
+        .prepare(
+          "SELECT id, reference_photo FROM appointments WHERE client_id = ? AND service_id = ? ORDER BY id DESC LIMIT 1",
+        )
+        .get(session.client_id, session.service_id) as
+        | { id: number; reference_photo: string | null }
+        | undefined)
+    : undefined;
+  const refValue = appointment?.reference_photo?.trim() ?? "";
+  const reference = refValue === "" ? null : resolveReferencePhoto(refValue);
+  if (!reference) {
+    return fail(
+      "I don't have a reference photo for this appointment.",
+      "No tengo foto de referencia para esta cita.",
+    );
+  }
+  const key = process.env.META_API_KEY?.trim() ?? "";
+  if (!key) return fail("Preview is not available right now.", "La vista previa no está disponible ahora.");
+  const beforeMime = sniffPreviewMime(before);
+  let beforeBoxes: Awaited<ReturnType<typeof segmentNails>>;
+  try {
+    beforeBoxes = await segmentNails(
+      key,
+      `data:${beforeMime};base64,${before.toString("base64")}`,
+      fetchImpl,
+    );
+  } catch {
+    return fail("Photo preview failed.", "Falló la vista previa.");
+  }
+  if (beforeBoxes.length !== 5) {
+    return { ok: false, message: "I need a photo with all five nails visible." };
+  }
+  const referenceMime = sniffPreviewMime(reference.bytes);
+  const previewInput = {
+    beforePhoto: before,
+    mime: beforeMime,
+    referencePhoto: reference.bytes,
+    referenceMime,
+    design: PREVIEW_DESIGN,
+    appointmentRef: appointment ? `APT-${appointment.id}` : "APT-open",
+  };
+  const previewOpts = { apiKey: key, fetchImpl, costLogPath: previewCostLogPath() };
+  let imageCalls = 0;
+  let result: Awaited<ReturnType<typeof runPhotoPreview>>;
+  try {
+    result = await runPhotoPreview(previewInput, previewOpts);
+    imageCalls += 1;
+  } catch {
+    return fail("Photo preview failed.", "Falló la vista previa.");
+  }
+  const postCheck = async (): Promise<{ count: number; matched: boolean }> => {
+    const afterBoxes = await segmentNails(
+      key,
+      `data:image/png;base64,${result.image.toString("base64")}`,
+      fetchImpl,
+    );
+    return { count: afterBoxes.length, matched: samBoxesMatch(beforeBoxes, afterBoxes) };
+  };
+  try {
+    const first = await postCheck();
+    if (!first.matched && imageCalls < MAX_PREVIEW_IMAGE_CALLS) {
+      result = await runPhotoPreview(previewInput, previewOpts);
+      imageCalls += 1;
+      await postCheck();
+    }
+  } catch {
+    return fail("Photo preview failed.", "Falló la vista previa.");
+  }
+  const previewName = `preview_${open.id}.png`;
+  mkdirSync(previewsDir(), { recursive: true });
+  writeFileSync(join(previewsDir(), previewName), result.image);
+  return {
+    ok: true,
+    message: "Here is how it would look. The preview is on screen.",
+    data: {
+      before: `/api/photos?file=pre_${open.id}.jpg`,
+      reference: reference.url,
+      expected: `/api/photos?file=${previewName}`,
+      elapsedMs: result.elapsedMs,
+      estimatedCostUsd: result.estimatedCostUsd,
+      aiPreview: true,
+      disclaimer: result.disclaimer,
+    },
+  };
+}
+
+/**
+ * photo_show: the stored session photos, whichever exist. No SAM, no
+ * image generation, no description: only file presence probed, so showing
+ * the reference never demands a before photo or spends an Image call.
+ * Operates on the open session, like session_quote: no arguments.
+ */
+export function showPhotos(db: ValeDb, language: ValeLanguage = "es"): ToolResult {
+  const open = getOpenSession(db);
+  if (!open) return { ok: false, message: language === "en" ? "No session is open." : "No hay sesión abierta." };
+  const stored = (file: string): string | null =>
+    existsSync(join(sessionPhotosDir(), file)) ? `/api/photos?file=${file}` : null;
+  const storedPreview = (file: string): string | null =>
+    existsSync(join(previewsDir(), file)) ? `/api/photos?file=${file}` : null;
+  const session = db
+    .prepare("SELECT client_id, service_id FROM sessions WHERE id = ?")
+    .get(open.id) as { client_id: number; service_id: number } | undefined;
+  const appointment = session
+    ? (db
+        .prepare(
+          "SELECT reference_photo FROM appointments WHERE client_id = ? AND service_id = ? ORDER BY id DESC LIMIT 1",
+        )
+        .get(session.client_id, session.service_id) as { reference_photo: string | null } | undefined)
+    : undefined;
+  const refValue = appointment?.reference_photo?.trim() ?? "";
+  const reference = refValue === "" ? null : (resolveReferencePhoto(refValue)?.url ?? null);
+  return {
+    ok: true,
+    message: language === "en" ? "Here are the stored session photos." : "Aquí están las fotos guardadas de la sesión.",
+    data: {
+      before: stored(`pre_${open.id}.jpg`),
+      reference,
+      expected: storedPreview(`preview_${open.id}.png`),
+      final: stored(`post_${open.id}.jpg`),
+    },
+  };
+}
+
+/**
  * Today on the salon clock. America/Bogota always: the server-local date
  * is a different day for hours around midnight. Exported for tests.
  */
@@ -1842,6 +2071,8 @@ export function runValeTool(db: ValeDb, name: string, args: Record<string, unkno
       return showService(db, args, language);
     case "widget_show":
       return showWidget(db, args, language);
+    case "photo_show":
+      return showPhotos(db, language);
     case "tool_get_details":
       return getToolDetails(args, language);
     case "agenda_create_appointment":
@@ -1873,4 +2104,22 @@ export function runValeTool(db: ValeDb, name: string, args: Record<string, unkno
     default:
       return { ok: false, message: "Herramienta desconocida." };
   }
+}
+
+/**
+ * Async tool runner. Synchronous tools delegate to runValeTool; model
+ * tools that call out over the network live here so the sync runner and
+ * the yes-vote path stay synchronous.
+ */
+export async function runValeToolAsync(
+  db: ValeDb,
+  name: string,
+  args: Record<string, unknown>,
+  language: ValeLanguage = "es",
+  fetchImpl: typeof fetch = fetch,
+): Promise<ToolResult> {
+  if (name === "photo_preview_design") {
+    return previewDesign(db, args, language, fetchImpl);
+  }
+  return runValeTool(db, name, args, language);
 }

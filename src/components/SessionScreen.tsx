@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import type { ValeState } from "@/lib/vale-state";
 import type { Widget } from "@/lib/widget";
 import type { ValeLanguage } from "@/lib/vale-language";
@@ -12,6 +13,7 @@ import type { AwakeBubble } from "@/components/AwakeScreen";
 import styles from "./ValeScreens.module.css";
 
 export interface ValeSession {
+  id: number;
   clientName: string;
   serviceName: string;
   startedAt: string;
@@ -32,7 +34,10 @@ export function SessionScreen({
   muted,
   notice,
   alert,
+  micMuted,
+  typedField,
   onToggleMute,
+  onToggleMicMute,
   onSleep,
   onOpenWidget,
   onCloseWidget,
@@ -49,7 +54,10 @@ export function SessionScreen({
   muted: boolean;
   notice: string | null;
   alert: string | null;
+  micMuted?: boolean;
+  typedField?: ReactNode;
   onToggleMute: () => void;
+  onToggleMicMute?: () => void;
   onSleep: () => void;
   onOpenWidget: (widget: Widget) => void;
   onCloseWidget: () => void;
@@ -74,9 +82,11 @@ export function SessionScreen({
       widget={widget}
       language={language}
       muted={muted}
+      micMuted={micMuted}
       notice={notice}
       alert={alert}
       onToggleMute={onToggleMute}
+      onToggleMicMute={onToggleMicMute}
       onSleep={onSleep}
       onCloseWidget={onCloseWidget}
       sheetCallbacks={sheetCallbacks}
@@ -113,14 +123,18 @@ export function SessionScreen({
             className={styles.abtn}
             type="button"
             aria-label="Photos: before, reference and expected result"
-            onClick={() =>
-              onOpenWidget({
-                kind: "photos",
-                title: "Photos",
-                size: "full",
-                data: { before: null, reference: null, expected: null },
-              })
-            }
+            onClick={() => {
+              if (sheetCallbacks?.onPhotos) {
+                sheetCallbacks.onPhotos();
+              } else {
+                onOpenWidget({
+                  kind: "photos",
+                  title: "Photos",
+                  size: "full",
+                  data: { before: null, reference: null, expected: null, final: null },
+                });
+              }
+            }}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <g
@@ -139,13 +153,16 @@ export function SessionScreen({
         </>
       }
       below={
-        <div className={styles.timer} role="timer" aria-label="Session time">
-          <span className={styles.tlabel}>
-            <i className={styles.tdot} aria-hidden="true" />
-            Session
-          </span>
-          <span className={styles.ttime}>{sessionClock(session.startedAt, now)}</span>
-        </div>
+        <>
+          <div className={styles.timer} role="timer" aria-label="Session time">
+            <span className={styles.tlabel}>
+              <i className={styles.tdot} aria-hidden="true" />
+              Session
+            </span>
+            <span className={styles.ttime}>{sessionClock(session.startedAt, now)}</span>
+          </div>
+          {micMuted && typedField}
+        </>
       }
     />
   );

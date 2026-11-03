@@ -24,7 +24,9 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
         sex: "Male",
         phone: "+1 (555) 014-2200",
         email: "david@example.com",
-        visits: [{ date: "2026-10-12", service: "Gel manicure" }],
+        visits: [
+          { date: "2026-10-12", service: "Gel manicure", photo: "/api/photos?file=post_3.jpg" },
+        ],
         visitsMore: 2,
         healthNotes: ["Allergic to monomer"],
         noteTags: ["Always on time"],
@@ -35,13 +37,80 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
     expect(screen.getByText("Allergic to monomer")).toBeTruthy();
     expect(screen.getByText("Oct 12, 2026")).toBeTruthy();
     expect(screen.getByText("+ 2 earlier visits")).toBeTruthy();
-    // No camera affordance until a visit carries real photos.
+    // The camera affordance returns once a visit carries real photos.
+    expect(
+      screen
+        .getByRole("button", { name: /open the photos of this visit/ })
+        .querySelector("svg"),
+    ).not.toBeNull();
+    expect(screen.getByText("Always on time")).toBeTruthy();
+  });
+
+  it("shows no camera affordance when the visit carries no photo", () => {
+    renderSheet({
+      kind: "client_card",
+      title: "Client card",
+      size: "full",
+      data: {
+        name: "David",
+        birthday: null,
+        sex: null,
+        phone: null,
+        email: null,
+        visits: [{ date: "2026-10-12", service: "Gel manicure", photo: null }],
+        visitsMore: 0,
+        healthNotes: [],
+        noteTags: [],
+      },
+    });
     expect(
       screen
         .getByRole("button", { name: /open the photos of this visit/ })
         .querySelector("svg"),
     ).toBeNull();
-    expect(screen.getByText("Always on time")).toBeTruthy();
+  });
+
+  it("contains stored photos to their slot width", () => {
+    renderSheet({
+      kind: "photos",
+      title: "Photos",
+      size: "full",
+      data: { before: "/api/photos?file=pre_7.jpg", reference: null, expected: null, final: null },
+    });
+    const img = document.querySelector(".aw-pics img") as HTMLImageElement | null;
+    expect(img?.getAttribute("src")).toBe("/api/photos?file=pre_7.jpg");
+    expect(img?.style.width).toBe("100%");
+  });
+
+  it("renders only slots with real images, one image full width", () => {
+    renderSheet({
+      kind: "photos",
+      title: "Photos",
+      size: "full",
+      data: { before: null, reference: "r-url", expected: null, final: null },
+    });
+    const tiles = document.querySelectorAll(".aw-pics > .aw-pic");
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0].className).toContain("aw-pic--solo");
+    expect(tiles[0].getAttribute("data-slot")).toBe("reference");
+    expect(document.querySelector('[data-slot="before"]')).toBeNull();
+    expect(document.querySelector('[data-slot="expected"]')).toBeNull();
+    expect(document.querySelector(".aw-pics__note")).toBeNull();
+  });
+
+  it("lets the final photo replace the expected tile without the credit", () => {
+    renderSheet({
+      kind: "photos",
+      title: "Photos",
+      size: "full",
+      data: { before: "b-url", reference: "r-url", expected: "e-url", final: "f-url" },
+    });
+    expect(document.querySelectorAll(".aw-pics > .aw-pic")).toHaveLength(3);
+    expect(document.querySelector('[data-slot="expected"]')).toBeNull();
+    const final = document.querySelector('[data-slot="final"]');
+    expect(final?.className).toContain("aw-pic--wide");
+    expect(final?.textContent).toMatch(/Final/);
+    expect(document.querySelector(".aw-pics__note")).toBeNull();
   });
 
   it("hides the card health block when there are no health notes", () => {
@@ -182,7 +251,7 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
       { kind: "client_card", title: "Client card", size: "full", data: { name: "David", birthday: null, sex: null, phone: null, email: null, visits: [], visitsMore: 0, healthNotes: [], noteTags: [] } },
       { kind: "goal", title: "Monthly goal", size: "half", data: { name: null, goal: 600, earned: 120 } },
       { kind: "camera_save_as", title: "Save photo as", size: "half", data: {} },
-      { kind: "photos", title: "Photos", size: "full", data: { before: null, reference: null, expected: null } },
+      { kind: "photos", title: "Photos", size: "full", data: { before: null, reference: null, expected: null, final: null } },
       { kind: "health_note", title: "Health note", size: "half", data: { text: "Allergic to monomer", client: "David" } },
       { kind: "note", title: "Note saved", size: "half", data: { text: "Likes neon colors", client: "David" } },
       { kind: "price", title: "Price", size: "half", data: { service: "Manicure", extras: null, suggested: 35 } },
@@ -210,5 +279,21 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
       data: {},
     } as unknown as Widget);
     expect(container.firstChild).toBeNull();
+  });
+
+  it("attributes the photos preview to Muse Image with the expected slot wide", () => {
+    renderSheet({
+      kind: "photos",
+      title: "Photos",
+      size: "full",
+      data: { before: "b-url", reference: "r-url", expected: "e-url", final: null },
+    });
+    expect(screen.getByText("Preview generated by Muse Image")).toBeTruthy();
+    expect(screen.queryByText(/Muse Spark/)).toBeNull();
+    const expected = document.querySelector('[data-slot="expected"]');
+    expect(expected?.className).toContain("aw-pic--wide");
+    const note = document.querySelector(".aw-pics__note");
+    expect(note?.closest('[data-slot="expected"]')).not.toBeNull();
+    expect(document.querySelectorAll(".aw-pics > .aw-pic")).toHaveLength(3);
   });
 });

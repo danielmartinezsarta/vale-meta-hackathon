@@ -272,7 +272,7 @@ export function languageMismatch(
   return content.some((token) => markers.has(token));
 }
 
-export type WakeGate = "nombre" | "ventana" | "ignorado" | "idioma" | "cierre";
+export type WakeGate = "nombre" | "ventana" | "ignorado" | "idioma" | "cierre" | "typed";
 
 export interface WakeVerdict {
   execute: boolean;
