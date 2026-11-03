@@ -75,6 +75,26 @@ export function prosodyFor(language: ValeLanguage): { rate: number; pitch: numbe
     : { rate: prefs.rateEn, pitch: prefs.pitchEn };
 }
 
+/**
+ * Tuned prosody is only for Ava and Paulina: any other voice would sound
+ * off at their rate and pitch, so it gets the neutral 1.0/1.0 instead.
+ */
+const TUNED_VOICES = [/^ava\b/i, /^paulina\b/i];
+
+export function isTunedVoice(voice: { name?: string | null } | null): boolean {
+  const name = (voice?.name ?? "").trim();
+  return TUNED_VOICES.some((pattern) => pattern.test(name));
+}
+
+/** Speed and pitch for the picked voice: tuned for Ava/Paulina, neutral otherwise. */
+export function prosodyForVoice(
+  voice: SpeechSynthesisVoice | null,
+  language: ValeLanguage,
+): { rate: number; pitch: number } {
+  if (!isTunedVoice(voice)) return { rate: 1, pitch: 1 };
+  return prosodyFor(language);
+}
+
 export const RATE_MIN = 0.8;
 export const RATE_MAX = 1.3;
 export const RATE_DEFAULT = 0.9;
@@ -569,7 +589,7 @@ function queueBrowserSentences(
         /* logging must never break speech */
       }
     }
-    const prosody = prosodyFor(language);
+    const prosody = prosodyForVoice(voice, language);
     for (const sentence of sentences) {
       const clean = spokenText(sentence, language);
       if (clean === "") continue;
