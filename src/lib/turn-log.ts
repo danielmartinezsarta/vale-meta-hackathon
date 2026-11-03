@@ -51,9 +51,15 @@ export interface TurnLogFields {
   voicedMs?: number | null;
   mutedMs?: number | null;
   valeState?: string | null;
-  /** Blocks lost under load and source blocks spanned (client accounting). */
+  /**
+   * Client accounting in mixed units: lostBlocks counts 40 ms VAD frames
+   * against the wall clock, srcBlocks counts 5.33 ms worklet quanta.
+   * Never divide one by the other; read lostPct instead.
+   */
   lostBlocks?: number | null;
   srcBlocks?: number | null;
+  /** Real fraction of audio missing: lost over lost plus src/7.5. */
+  lostPct?: number | null;
   /** Audio thread feeding the VAD, and whether a sheet was open at end. */
   engine?: "worklet" | "script" | null;
   sheetOpen?: boolean | null;
@@ -79,7 +85,13 @@ export function estimateCost(
 
 /** One JSON log line per turn. */
 export function formatTurnLog(fields: TurnLogFields): string {
-  return `[voice-turn] ${JSON.stringify(fields)}`;
+  const { lostBlocks = null, srcBlocks = null } = fields;
+  const delivered = srcBlocks === null ? null : srcBlocks / 7.5;
+  const lostPct =
+    lostBlocks === null || delivered === null || lostBlocks + delivered <= 0
+      ? null
+      : Math.round((lostBlocks / (lostBlocks + delivered)) * 1000) / 1000;
+  return `[voice-turn] ${JSON.stringify({ ...fields, lostPct })}`;
 }
 
 /**

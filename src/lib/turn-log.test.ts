@@ -57,6 +57,31 @@ describe("turn log persistence", () => {
     });
   });
 
+  it("reports the real missing fraction, not blocks over blocks", () => {
+    const pctOf = (lostBlocks: number, srcBlocks: number): unknown => {
+      const line = formatTurnLog({
+        ts: "2026-10-31T00:00:00.000Z",
+        language: "en",
+        transcript: "Vale",
+        ttftMs: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        audioSeconds: 0,
+        tool: null,
+        modelSkipped: true,
+        error: null,
+        ignored: false,
+        lostBlocks,
+        srcBlocks,
+      });
+      return JSON.parse(line.slice("[voice-turn] ".length)).lostPct;
+    };
+    expect(pctOf(0, 451)).toBe(0);
+    expect(pctOf(87, 421)).toBeCloseTo(0.608, 3);
+    expect(pctOf(110, 736)).toBeCloseTo(0.529, 3);
+  });
+
   it("defaults to data/turns.jsonl and honors VALE_TURNS_PATH", () => {
     const saved = process.env.VALE_TURNS_PATH;
     try {
