@@ -577,23 +577,47 @@ async function playSentence(
     };
     // Mid-play freeze (element stops advancing with no event): a few
     // seconds of still audio ends the sentence instead of holding it.
+    // A pause iOS never resumes gets one re-play, then the same end.
     let playStarted = false;
     let lastTime = 0;
     let stillCount = 0;
+    let pausedCount = 0;
     progressTimer = setInterval(() => {
       if (audioDone || !playStarted) return;
       try {
-        if (audio.readyState < 2 || audio.paused || audio.ended || audio.seeking) {
+        if (audio.ended || audio.seeking) {
           stillCount = 0;
+          pausedCount = 0;
           lastTime = audio.currentTime;
           return;
         }
+        if (audio.paused) {
+          stillCount = 0;
+          lastTime = audio.currentTime;
+          pausedCount += 1;
+          if (pausedCount === 3) {
+            try {
+              void audio.play();
+            } catch {
+              /* the end below still frees the chain */
+            }
+          } else if (pausedCount >= 6) {
+            emitSpeechEvent("sentence-paused", `t=${lastTime.toFixed(1)}`);
+            endSentence();
+          }
+          return;
+        }
+        pausedCount = 0;
+        if (audio.readyState < 2) return;
         if (audio.currentTime === lastTime) stillCount += 1;
         else {
           stillCount = 0;
           lastTime = audio.currentTime;
         }
-        if (stillCount >= 3) endSentence();
+        if (stillCount >= 3) {
+          emitSpeechEvent("sentence-still", `t=${lastTime.toFixed(1)}`);
+          endSentence();
+        }
       } catch {
         /* read-only probe, never breaks playback */
       }
@@ -602,6 +626,7 @@ async function playSentence(
     // forever (mute clears it, which is why mute unblocked the field).
     // next() ignores a stale playId, so forcing the end is safe.
     const watchdog = setTimeout(() => {
+      emitSpeechEvent("sentence-timeout", `t=${audio.currentTime.toFixed(1)}`);
       clearSentenceAudio();
       onDone();
     }, estimateSpeechMs(sentence, 1) + SEAMLESS_SENTENCE_GRACE_MS);
@@ -609,11 +634,18 @@ async function playSentence(
       clearSentenceAudio();
       onDone();
     };
-    audio.onended = endSentence;
-    audio.onerror = endSentence;
+    audio.onended = () => {
+      emitSpeechEvent("sentence-event", `t=${audio.currentTime.toFixed(1)}`);
+      endSentence();
+    };
+    audio.onerror = () => {
+      emitSpeechEvent("sentence-error", `t=${audio.currentTime.toFixed(1)}`);
+      endSentence();
+    };
     await audio.play();
     playStarted = true;
   } catch {
+    emitSpeechEvent("sentence-fetch-fail");
     clearSentenceAudio();
     if (playId === seamlessPlayId) {
       seamlessClean = false;
@@ -740,6 +772,14 @@ function queueBrowserSentences(
       utterance.onerror = release;
       pendingUtterances += 1;
       s.speak(utterance);
+      // iOS can cut an utterance with no event: the queue stalls behind
+      // it and the mic stays shut. Past estimate + grace the accounting
+      // releases (never the audio itself), so the rest still speaks.
+      setTimeout(() => {
+        if (!owed || gen !== speechGen) return;
+        emitSpeechEvent("utterance-timeout");
+        release();
+      }, estimateSpeechMs(clean, prosody.rate) + SEAMLESS_SENTENCE_GRACE_MS);
     }
   } catch {
     /* voice output is best-effort; the text stays on screen */
@@ -836,6 +876,20 @@ export const SPEECH_MS_PER_CHAR = 150;
 export const SPEECH_END_MARGIN_MS = 2500;
 /** Per-sentence grace past the estimate before a missing onended is forced. */
 export const SEAMLESS_SENTENCE_GRACE_MS = 5000;
+
+/** Speech-path telemetry for the field: drained by the UI into client-state. */
+export interface SpeechEvent {
+  kind: string;
+  detail: string;
+}
+const speechEvents: SpeechEvent[] = [];
+function emitSpeechEvent(kind: string, detail = ""): void {
+  speechEvents.push({ kind, detail });
+  if (speechEvents.length > 20) speechEvents.shift();
+}
+export function drainSpeechEvents(): SpeechEvent[] {
+  return speechEvents.splice(0);
+}
 
 /** When the queued reply should be over, worst case. 0 means nothing queued. */
 let speechDueUntil = 0;

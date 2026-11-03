@@ -16,6 +16,7 @@ import { hasVisibleContent, type Turn } from "@/lib/turn-view";
 import { parseSseStream } from "@/lib/sse";
 import { isCloseSheetIntent } from "@/lib/wake";
 import {
+  drainSpeechEvents,
   isSpeaking,
   onSpeechSettled,
   setVoiceEngine,
@@ -712,6 +713,29 @@ export function TapToTalk({
       window.clearInterval(speechWatchRef.current);
       speechWatchRef.current = window.setInterval(() => {
         if (!sessionRef.current) return;
+        // Speech-path telemetry rides the open socket to the server log,
+        // one small row per sentence end: the field test reads it live.
+        for (const speechEvent of drainSpeechEvents()) {
+          try {
+            if (
+              convOpen &&
+              convSocket &&
+              typeof WebSocket !== "undefined" &&
+              convSocket.readyState === WebSocket.OPEN
+            ) {
+              convSocket.send(
+                JSON.stringify({
+                  type: "client-state",
+                  state: {
+                    speech: `${speechEvent.kind} ${speechEvent.detail}`.trim(),
+                  },
+                }),
+              );
+            }
+          } catch {
+            /* diagnostics never break the turn */
+          }
+        }
         if (!speechSettled()) {
           // She owns the air: the store says so even when the frame guard
           // muted first (set is idempotent, no extra render past the first).

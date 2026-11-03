@@ -17,6 +17,7 @@ import {
   setVoiceEngine,
   setVoiceForLanguage,
   setVoicePrefs,
+  drainSpeechEvents,
   primeSpokenAudio,
   speak,
   speakStream,
@@ -375,6 +376,53 @@ describe("seamless voice engine", () => {
       await vi.advanceTimersByTimeAsync(3500);
       expect(paused).toHaveLength(1);
       expect(isSpeaking()).toBe(false);
+    } finally {
+      setVoiceEngine("browser");
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases a browser utterance cut with no event", async () => {
+    const { synth } = stubSpeechSynthesis();
+    vi.useFakeTimers();
+    try {
+      speak("Hola");
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+      // No onend ever fires (the iOS cut): past estimate + grace the
+      // accounting releases without touching the audio itself.
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(drainSpeechEvents().map((event) => event.kind)).toContain(
+        "utterance-timeout",
+      );
+      // The fresh batch pre-clears once; the watchdog never cancels audio.
+      expect(synth.cancel).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-plays once then ends a sentence iOS left paused", async () => {
+    stubSpeechSynthesis();
+    const { played, instances } = stubAudio();
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown) => new Response(WAV)));
+    vi.useFakeTimers();
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(played).toHaveLength(1);
+      const audio = instances[0] as unknown as { paused: boolean };
+      audio.paused = true;
+      // One re-play at three still seconds, then the end at six.
+      await vi.advanceTimersByTimeAsync(3500);
+      expect(played).toHaveLength(2);
+      expect(isSpeaking()).toBe(true);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(isSpeaking()).toBe(false);
+      expect(drainSpeechEvents().map((event) => event.kind)).toContain(
+        "sentence-paused",
+      );
     } finally {
       setVoiceEngine("browser");
       vi.useRealTimers();
