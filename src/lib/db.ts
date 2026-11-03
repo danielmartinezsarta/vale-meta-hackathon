@@ -2,8 +2,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
-import { bogotaDay } from "./natural-date";
 import seedData from "./seed-data.json";
+import { resolveSeedDay, seedDay } from "./seed-dates";
 import { quotePrice, type PricingConfig } from "./quote";
 import { vlog } from "./turn-log";
 
@@ -176,25 +176,6 @@ function schemaSql(): string {
 }
 
 /**
- * Bogota YYYY-MM-DD shifted by a day offset. Same salon clock as the
- * tools, so a seeded "today" is the tools' today on every machine.
- */
-function seedDay(offsetDays = 0): string {
-  const [year, month, day] = bogotaDay(new Date()).split("-").map(Number);
-  const base = new Date(Date.UTC(year, month - 1, day, 12));
-  const next = new Date(base.getTime() + offsetDays * 86_400_000);
-  const pad = (value: number): string => String(value).padStart(2, "0");
-  return `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-${pad(next.getUTCDate())}`;
-}
-
-/** Resolve a demo day marker ("today", "tomorrow") to a local YYYY-MM-DD. */
-function resolveSeedDay(day: string): string {
-  if (day === "today") return seedDay(0);
-  if (day === "tomorrow") return seedDay(1);
-  return day;
-}
-
-/**
  * Local YYYY-MM-DDTHH:MM:SS for a past session. Stays inside the current
  * month so the month goal always shows the seeded progress.
  */
@@ -234,7 +215,7 @@ export function migrateDatabase(db: ValeDb): void {
 
 /** Create tables and insert the invented seed. Idempotent. */
 /** The user behind the voice: seeded, overridable with VALE_USER_NAME. */
-export const DEFAULT_USER_NAME = "Daniel";
+export const DEFAULT_USER_NAME = "Demo";
 
 /** The user's name for the prompt: env wins, then the seeded profile. */
 export function userName(db: ValeDb): string {

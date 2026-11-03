@@ -54,9 +54,20 @@ function driveSession() {
 function stubRoutes(opts: {
   photos: (file: string) => boolean;
   upload: (slot: string) => { status: number; body: unknown };
+  reference?: string | null;
 }) {
   return vi.fn(async (url: unknown, init?: RequestInit) => {
     const u = String(url);
+    if (u.startsWith("/api/photos/reference?")) {
+      const ref = opts.reference ?? null;
+      return ref === null
+        ? { ok: false, status: 404, json: async () => ({}) }
+        : {
+            ok: true,
+            status: 200,
+            json: async () => ({ photoUrl: `/api/photos?file=${encodeURIComponent(ref)}` }),
+          };
+    }
     if (u.startsWith("/api/session-photo")) {
       const slot = String((init?.body as FormData).get("slot") ?? "");
       const { status, body } = opts.upload(slot);
@@ -154,7 +165,10 @@ describe("session photo flows (mocked fetch, no network)", () => {
   });
 
   it("shows stored slots when present, final replacing the preview", async () => {
-    vi.stubGlobal("fetch", stubRoutes({ photos: () => true, upload: UPLOAD_OK }));
+    vi.stubGlobal(
+      "fetch",
+      stubRoutes({ photos: () => true, upload: UPLOAD_OK, reference: "seed-assets/ref_7.jpg" }),
+    );
     await openSessionScreen();
     fireEvent.click(
       screen.getByRole("button", { name: "Photos: before, reference and expected result" }),
@@ -167,7 +181,7 @@ describe("session photo flows (mocked fetch, no network)", () => {
     );
     expect(srcs).toHaveLength(3);
     expect(srcs).toContain("/api/photos?file=pre_7.jpg");
-    expect(srcs).toContain("/api/photos?file=seed-assets%2Fdavid-appointment-reference.jpg");
+    expect(srcs).toContain("/api/photos?file=seed-assets%2Fref_7.jpg");
     expect(srcs).toContain("/api/photos?file=post_7.jpg");
     expect(srcs).not.toContain("/api/photos?file=preview_7.png");
     expect(document.querySelector(".aw-pics__note")).toBeNull();
@@ -176,7 +190,11 @@ describe("session photo flows (mocked fetch, no network)", () => {
   it("shows the expected tile with its credit when no final exists", async () => {
     vi.stubGlobal(
       "fetch",
-      stubRoutes({ photos: (file) => file !== "post_7.jpg", upload: UPLOAD_OK }),
+      stubRoutes({
+        photos: (file) => file !== "post_7.jpg",
+        upload: UPLOAD_OK,
+        reference: "seed-assets/ref_7.jpg",
+      }),
     );
     await openSessionScreen();
     fireEvent.click(

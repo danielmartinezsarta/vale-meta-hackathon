@@ -11,6 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveSeedDay, seedDay } from "./seed-dates.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const seed = JSON.parse(readFileSync(join(root, "src", "lib", "seed-data.json"), "utf8"));
@@ -40,16 +41,6 @@ const db = new DatabaseSync(file);
 db.exec(schema);
 
 const pad = (value) => String(value).padStart(2, "0");
-function seedDay(offsetDays = 0) {
-  const when = new Date();
-  when.setDate(when.getDate() + offsetDays);
-  return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`;
-}
-function resolveSeedDay(day) {
-  if (day === "today") return seedDay(0);
-  if (day === "tomorrow") return seedDay(1);
-  return day;
-}
 function workDaysPerWeek(schedule) {
   const order = ["lun", "mar", "mie", "jue", "vie", "sab", "dom"];
   const plain = schedule
@@ -100,7 +91,7 @@ for (const client of seed.clients) {
   upsertClient.run(client.name, client.sex ?? "", client.phone ?? "", client.email ?? "", client.birthday ?? "");
   clientIds.set(client.name, db.prepare("SELECT id FROM clients WHERE name = ?").get(client.name).id);
 }
-db.prepare("INSERT OR IGNORE INTO user_profile (id, name) VALUES (1, ?)").run("Daniel");
+db.prepare("INSERT OR IGNORE INTO user_profile (id, name) VALUES (1, ?)").run("Demo");
 
 const supplyIds = new Map();
 const upsertSupply = db.prepare(
