@@ -3,6 +3,7 @@ import { AGENT_MODEL, runAgentTurn } from "./agent";
 import { getDb, recentTurns, recordTurn, type HistoryTurn } from "./db";
 import { getBoard } from "./board";
 import {
+  canonicalizeWakeWord,
   checkWake,
   isBareNameCall,
   noteAttention,
@@ -1082,6 +1083,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           status: "ok",
           content: finalText,
         });
+        // Canonical wake word for the gate and the model: a substitution
+        // never rides past here into tool args. The ASR row above keeps
+        // the raw spelling for the record.
+        finalText = canonicalizeWakeWord(finalText);
         // A bare name call stays silent and keeps listening in the same
         // turn: answering here drops the words that follow (trial 9.1).
         if (isBareNameCall(finalText)) {

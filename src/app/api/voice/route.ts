@@ -16,6 +16,7 @@ import {
 import { rejectQuote } from "@/lib/vale-tools";
 import { buildWidget, type Widget } from "@/lib/widget";
 import {
+  canonicalizeWakeWord,
   checkWake,
   noteAttention,
   requestClientId,
@@ -505,6 +506,7 @@ export async function POST(request: Request): Promise<Response> {
       try {
         if (cannedTranscript !== null) {
           send("final", { transcript: cannedTranscript });
+          cannedTranscript = canonicalizeWakeWord(cannedTranscript);
           // Sliding gate first: background chatter never reaches the model,
           // the board or the memory.
           const sessionOpen = getOpenSession(getDb()) !== null;
@@ -579,6 +581,8 @@ export async function POST(request: Request): Promise<Response> {
                         status: "ok",
                         content: finalText,
                       });
+                      // Canonical wake word past here; the ASR row keeps raw.
+                      finalText = canonicalizeWakeWord(finalText);
                       audioSeconds = (event.audioProcessedMs ?? 0) / 1000;
                       send("final", {
                         transcript: finalText,

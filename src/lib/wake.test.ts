@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import {
+  canonicalizeWakeWord,
   checkWake,
   isBareNameCall,
   isCloseSheetIntent,
@@ -18,21 +19,24 @@ describe("wake word gate", () => {
   it("names Vale with case, accents and punctuation around it", () => {
     expect(namesVale("vale, abre una sesión")).toBe(true);
     expect(namesVale("¿Vale?")).toBe(true);
-    expect(namesVale("Sì, vale")).toBe(true);
+    expect(namesVale("Sì, vale")).toBe(false);
     expect(namesVale("hola")).toBe(false);
     expect(namesVale("chavales")).toBe(false);
     expect(namesVale("")).toBe(false);
   });
 
-  it("hears Vale in any of the first three words, in either language", () => {
+  it("wakes on position: sentence-start Vale, opener handoff, or comma", () => {
     expect(namesVale("vale, sí agrégalo")).toBe(true);
     expect(namesVale("thanks, Vale")).toBe(true);
     expect(namesVale("okay, Vale")).toBe(true);
     expect(namesVale("hey Bale")).toBe(true);
+    // A vocative comma addresses her whatever the language: exact "vale"
+    // takes every trigger its variants take, plus the sentence start.
     expect(namesVale("sí, vale, agrégalo")).toBe(true);
-    expect(namesVale("Hola Vale")).toBe(true);
+    expect(namesVale("Yes, Vale, book it")).toBe(true);
+    expect(namesVale("Hola Vale")).toBe(false);
     expect(namesVale("Oye Vale, abre sesión")).toBe(true);
-    expect(namesVale("Buenas Vale")).toBe(true);
+    expect(namesVale("Buenas Vale")).toBe(false);
     expect(namesVale("oye por favor Vale abre")).toBe(false);
     expect(checkWake("thanks, Vale", "ip-confirm", 1000).execute).toBe(true);
     expect(
@@ -47,16 +51,45 @@ describe("wake word gate", () => {
     expect(verdict.gate).toBe("nombre");
   });
 
-  it("hears the measured ASR spellings of the wake word", () => {
-    expect(namesVale("Balle, repeat that please")).toBe(true);
+  it("hears the one list by position, never by vocabulary alone", () => {
+    expect(namesVale("Balle, repeat that please")).toBe(false);
     expect(namesVale("Thanks, Bali. That's all.")).toBe(true);
     expect(namesVale("Vale, open a session")).toBe(true);
-    // A positional rule wakes on mentions inside the first three words:
-    // the accepted cost of no opener or greeting lists (lead call).
-    expect(namesVale("Bale nails are so trendy")).toBe(true);
-    expect(namesVale("Nails by Bale are trendy")).toBe(true);
-    expect(namesVale("the Vale shop")).toBe(true);
+    // Ballet is on the list: with a comma it wakes, bare it never does.
+    expect(namesVale("Ballet, remind me of her last service.")).toBe(true);
+    expect(namesVale("Ballet classes session")).toBe(false);
+    expect(namesVale("Ballot, repeat that please")).toBe(true);
+    expect(namesVale("Hey Valley, what do I have today?")).toBe(true);
+    expect(namesVale("valley nails are trendy")).toBe(false);
+    // The never-wake list: variants without comma or opener stay chatter.
+    expect(namesVale("Bali nails are so trendy now")).toBe(false);
+    expect(namesVale("bale broke a nail again")).toBe(false);
+    expect(namesVale("Bale nails are so trendy")).toBe(false);
+    expect(namesVale("Nails by Bale are trendy")).toBe(false);
+    expect(namesVale("the Vale shop")).toBe(false);
     expect(namesVale("chavales")).toBe(false);
+  });
+
+  it("canonicalizes the triggering name to Vale for the model and tools", () => {
+    expect(canonicalizeWakeWord("Ballet, open a session with Emma.")).toBe(
+      "Vale, open a session with Emma.",
+    );
+    expect(canonicalizeWakeWord("Bale, what can you do?")).toBe(
+      "Vale, what can you do?",
+    );
+    expect(canonicalizeWakeWord("Thanks, Bali. That's all.")).toBe(
+      "Thanks, Vale. That's all.",
+    );
+    expect(canonicalizeWakeWord("Hey Valley, what do I have today?")).toBe(
+      "Hey Vale, what do I have today?",
+    );
+    expect(canonicalizeWakeWord("Vale, open a session with Emma.")).toBe(
+      "Vale, open a session with Emma.",
+    );
+    expect(canonicalizeWakeWord("Bali nails are so trendy now")).toBe(
+      "Bali nails are so trendy now",
+    );
+    expect(canonicalizeWakeWord("the Vale shop")).toBe("the Vale shop");
   });
 
   it("accepts any request inside the window, not just continuations", () => {
