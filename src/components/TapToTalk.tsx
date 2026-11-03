@@ -514,42 +514,62 @@ export function TapToTalk({
     setMicTracksEnabled(!next);
   }, [micMuted, setMicTracksEnabled]);
 
-  // Typed turn: Enter sends, the field clears, and the reply bubble path
-  // is the same JSON turn a vote rides (typed:true skips ASR and wake).
+  // Typed turn: Enter or the send button sends, the field clears and keeps
+  // focus so the keyboard stays open, and the reply path is the same JSON
+  // turn a vote rides (typed:true skips ASR and wake).
+  const typedInputRef = useRef<HTMLInputElement>(null);
   const submitTyped = useCallback(() => {
     const text = typedText.trim();
     if (text === "") return;
     setTypedText("");
     sendTypedRef.current(text);
+    try {
+      typedInputRef.current?.focus();
+    } catch {
+      /* keyboard continuity is best effort */
+    }
   }, [typedText]);
 
-  // Bottom-flow pill chip, only while the mic is muted. Reuses the user
-  // bubble look (msg/msguser radii and font); the input itself stays
-  // unstyled chrome: transparent fill, inherited font, native focus ring.
+  // Input chip, only while the mic is muted: card surface with the subtle
+  // border, 46px tall like the round buttons, in the bottom flow below the
+  // timer so it can never cover it. The send button rides inside on the
+  // right, dimmed while the field is empty; Enter sends too.
   const typedField = (
     <form
-      className={`${styles.msg} ${styles.msguser}`}
+      className={styles.typed}
       onSubmit={(event) => {
         event.preventDefault();
         submitTyped();
       }}
     >
       <input
+        ref={typedInputRef}
+        className={styles.typedin}
         type="text"
         aria-label="Type to Vale"
-        placeholder="Type to Vale"
+        placeholder="Type to Vale…"
         value={typedText}
         onChange={(event) => setTypedText(event.target.value)}
-        style={{
-          flex: "1 1 auto",
-          width: "100%",
-          background: "transparent",
-          border: "0",
-          padding: "0",
-          color: "inherit",
-          font: "inherit",
-        }}
       />
+      <button
+        className={styles.typedgo}
+        type="submit"
+        aria-label="Send message"
+        disabled={typedText.trim() === ""}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <g
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M22 2 11 13" />
+            <path d="M22 2 15 22 11 13 2 9 22 2" />
+          </g>
+        </svg>
+      </button>
     </form>
   );
 
