@@ -49,6 +49,7 @@ import { AwakeScreen, type AwakeBubble } from "@/components/AwakeScreen";
 import { SessionScreen } from "@/components/SessionScreen";
 import { VoiceDebugView } from "@/components/VoiceDebugView";
 import { useScreenMode } from "@/components/useScreenMode";
+import styles from "./ValeScreens.module.css";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
@@ -199,6 +200,12 @@ export function TapToTalk({
   // Mute Vale toggle: her voice never starts while muted; the reply text
   // still grows in its bubble.
   const [muted, setMuted] = useState(false);
+  // Mic mute: capture fully stopped, never ignored. The typed field shows
+  // only while muted; unmuting hides it and listening can resume.
+  const [micMuted, setMicMuted] = useState(false);
+  const micMutedRef = useRef(false);
+  const [typedText, setTypedText] = useState("");
+  const sendTypedRef = useRef<(text: string) => void>(() => {});
   const mutedOutRef = useRef(false);
   const doneTimerRef = useRef(0);
   const clearDoneTimer = useCallback(() => {
@@ -484,6 +491,67 @@ export function TapToTalk({
     stopSession();
     onSleep?.();
   }, [stopSession, onSleep]);
+
+  // Mic mute touches only the stream's tracks: disabled feeds pure
+  // silence, so no audio leaves the device, samples keep flowing, and the
+  // session (socket, turns, widgets) keeps running untouched.
+  const setMicTracksEnabled = useCallback((enabled: boolean) => {
+    try {
+      streamRef.current?.getAudioTracks().forEach((track) => {
+        track.enabled = enabled;
+      });
+    } catch {
+      /* stream already gone */
+    }
+  }, []);
+
+  // Muting never ends the session — not even while idle — so a typed turn
+  // always has a live sender; unmuting is instant.
+  const toggleMicMute = useCallback(() => {
+    const next = !micMuted;
+    micMutedRef.current = next;
+    setMicMuted(next);
+    setMicTracksEnabled(!next);
+  }, [micMuted, setMicTracksEnabled]);
+
+  // Typed turn: Enter sends, the field clears, and the reply bubble path
+  // is the same JSON turn a vote rides (typed:true skips ASR and wake).
+  const submitTyped = useCallback(() => {
+    const text = typedText.trim();
+    if (text === "") return;
+    setTypedText("");
+    sendTypedRef.current(text);
+  }, [typedText]);
+
+  // Bottom-flow pill chip, only while the mic is muted. Reuses the user
+  // bubble look (msg/msguser radii and font); the input itself stays
+  // unstyled chrome: transparent fill, inherited font, native focus ring.
+  const typedField = (
+    <form
+      className={`${styles.msg} ${styles.msguser}`}
+      onSubmit={(event) => {
+        event.preventDefault();
+        submitTyped();
+      }}
+    >
+      <input
+        type="text"
+        aria-label="Type to Vale"
+        placeholder="Type to Vale"
+        value={typedText}
+        onChange={(event) => setTypedText(event.target.value)}
+        style={{
+          flex: "1 1 auto",
+          width: "100%",
+          background: "transparent",
+          border: "0",
+          padding: "0",
+          color: "inherit",
+          font: "inherit",
+        }}
+      />
+    </form>
+  );
 
   // Sheet buttons: price answers close; Final uploads then confirms, whose
   // Accept opens the result with the final user photo. Visits and the
@@ -1468,6 +1536,31 @@ export function TapToTalk({
         );
       };
 
+      // Typed turn while the mic is muted: the same JSON turn shape as a
+      // vote, with typed:true so the server skips ASR and the wake gate.
+      // No session needed: typing is always addressed to Vale.
+      const sendTyped = (text: string) => {
+        lastExecuteAtRef.current = Date.now();
+        openTurn();
+        const id = currentId;
+        const controller = new AbortController();
+        controllersRef.current.add(controller);
+        setNotice(null);
+        subscribePostTurn(
+          id,
+          fetch(
+            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ transcript: text, typed: true }),
+              signal: controller.signal,
+            },
+          ),
+          controller,
+        );
+      };
+
       // Touch on a confirm card: rides the open socket like any control, or
       // a JSON turn when no socket is open. Either way it equals a spoken vote.
       const castVote = (vote: "yes" | "no") => {
@@ -1751,6 +1844,7 @@ export function TapToTalk({
         // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
         };
         castVoteRef.current = castVote;
+        sendTypedRef.current = sendTyped;
       await beginCapture();
       // A stall resumes alone: no audio blocks for STALL_MS restarts
       // capture on the same stream instead of ending the session. The mic
@@ -1858,6 +1952,12 @@ export function TapToTalk({
         },
       });
       streamRef.current = stream;
+      // Muted before the session exists: start with the tracks already
+      // disabled so the session opens deaf. Read the ref: state may have
+      // changed while getUserMedia was in flight.
+      if (micMutedRef.current) {
+        setMicTracksEnabled(false);
+      }
       // Mic rate evidence: a rate surprise (headset, dock) reads here.
       try {
         const rate = stream.getAudioTracks()[0]?.getSettings?.()?.sampleRate;
@@ -1871,7 +1971,7 @@ export function TapToTalk({
     } catch (error) {
       setStatus(isPermissionDenied(error) ? "blocked" : "error");
     }
-  }, [status, stopSession, runSession]);
+  }, [status, stopSession, runSession, setMicTracksEnabled]);
 
   // "Wake Vale" is the browser's mic gesture: the home screen mounts this
   // already awake, so the tap that woke her starts the session at once.
@@ -1945,9 +2045,12 @@ export function TapToTalk({
         language={language}
         session={session}
         muted={muted}
+        micMuted={micMuted}
+        typedField={typedField}
         notice={notice}
         alert={alert}
         onToggleMute={toggleMute}
+        onToggleMicMute={toggleMicMute}
         onSleep={sleep}
         onOpenWidget={openWidget}
         onCloseWidget={closeWidgetByHand}
@@ -1966,9 +2069,12 @@ export function TapToTalk({
       widget={widget}
       language={language}
       muted={muted}
+      micMuted={micMuted}
+      typedField={typedField}
       notice={notice}
       alert={alert}
       onToggleMute={toggleMute}
+      onToggleMicMute={toggleMicMute}
       onSleep={sleep}
       onCloseWidget={closeWidgetByHand}
       onVote={(vote) => castVoteRef.current(vote)}
