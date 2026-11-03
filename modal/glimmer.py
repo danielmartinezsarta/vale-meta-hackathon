@@ -1,11 +1,10 @@
 """Serve Muse Glimmer on Modal with llama-server (CUDA).
 
-Vendored from the HACK-005 spike (validated 2026-11-02: 10/10 briefs,
-warm brief ~19 s, $0.006 per brief). Production uses the drafter endpoint
-(serve_draft, 1.7x decode); the plain serve endpoint stays for baseline.
+The drafter endpoint (serve_draft, 1.7x decode) is the production one;
+the plain serve endpoint stays for baseline.
 
 
-App name: vale-glimmer-spike
+App name: vale-glimmer
 Weights: downloaded INSIDE Modal from meta-models/Muse-Glimmer-30B-GGUF
          into the Modal Volume "glimmer-weights". Nothing from the Mac.
 Binary: prebuilt llama.cpp b12061 CUDA 12.8 (>= b10353, has muse-glimmer arch).
@@ -17,7 +16,7 @@ Endpoint: OpenAI-compatible, protected by --api-key (Modal secret
 
 import modal
 
-APP_NAME = "vale-glimmer-spike"
+APP_NAME = "vale-glimmer"
 VOLUME_NAME = "glimmer-weights"
 WEIGHTS_DIR = "/weights"
 LLAMA_DIR = "/opt/llama"
