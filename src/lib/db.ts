@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { bogotaDay } from "./natural-date";
 import seedData from "./seed-data.json";
 import { quotePrice, type PricingConfig } from "./quote";
+import { vlog } from "./turn-log";
 
 export type ValeDb = DatabaseSync;
 
@@ -539,7 +540,13 @@ export function recordTurn(
   // Without a key nothing is saved: "unknown" (or blank) keys used to mix
   // test and headless traffic into Daniel's live turns.
   if (clientKey.trim() === "" || clientKey === "unknown") {
-    console.warn(`[vale-db] refusing turn without client key (role=${role})`);
+    vlog({
+      turn: "-",
+      process: "DB",
+      status: "error",
+      detail: { role },
+      content: "refusing turn without client key",
+    });
     return;
   }
   db.prepare("INSERT INTO turns (client_key, role, text, tool) VALUES (?, ?, ?, ?)").run(
@@ -603,7 +610,12 @@ export function getDb(): ValeDb {
   if (process.env.VALE_DB_MEMORY === "1") {
     shared = new DatabaseSync(":memory:");
     seedDatabase(shared);
-    console.log("[vale-db] VALE_DB_MEMORY=1; using in-memory seed");
+    vlog({
+      turn: "-",
+      process: "DB",
+      status: "ok",
+      content: "VALE_DB_MEMORY=1; using in-memory seed",
+    });
     return shared;
   }
   if (process.env.VITEST === "true") {
@@ -620,7 +632,12 @@ export function getDb(): ValeDb {
   } catch {
     shared = new DatabaseSync(":memory:");
     seedDatabase(shared);
-    console.log("[vale-db] writable FS unavailable; using in-memory seed");
+    vlog({
+      turn: "-",
+      process: "DB",
+      status: "ok",
+      content: "writable FS unavailable; using in-memory seed",
+    });
     return shared;
   }
 }

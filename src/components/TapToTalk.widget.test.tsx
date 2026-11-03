@@ -100,9 +100,13 @@ describe("confirm card (touch equals voice)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Yes" }));
     await waitFor(() => {
-      expect(ws.sentStrings()).toContain(
-        JSON.stringify({ type: "vote", vote: "yes" }),
-      );
+      const votes = ws
+        .sentStrings()
+        .map((raw) => JSON.parse(raw) as { type?: string; vote?: string; turn?: unknown })
+        .filter((msg) => msg.type === "vote");
+      expect(votes.length).toBeGreaterThan(0);
+      expect(votes[votes.length - 1].vote).toBe("yes");
+      expect(votes[votes.length - 1].turn).toMatch(/^t\d+$/);
     });
   });
 
@@ -117,9 +121,13 @@ describe("confirm card (touch equals voice)", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "No" }));
     await waitFor(() => {
-      expect(ws.sentStrings()).toContain(
-        JSON.stringify({ type: "vote", vote: "no" }),
-      );
+      const votes = ws
+        .sentStrings()
+        .map((raw) => JSON.parse(raw) as { type?: string; vote?: string; turn?: unknown })
+        .filter((msg) => msg.type === "vote");
+      expect(votes.length).toBeGreaterThan(0);
+      expect(votes[votes.length - 1].vote).toBe("no");
+      expect(votes[votes.length - 1].turn).toMatch(/^t\d+$/);
     });
   });
 
@@ -165,9 +173,16 @@ describe("confirm card (touch equals voice)", () => {
       final: true,
     });
     await waitFor(() => {
-      expect(ws.sentStrings()).toContain(
-        JSON.stringify({ type: "dismiss", transcript: "close the price" }),
-      );
+      const dismisses = ws
+        .sentStrings()
+        .map(
+          (raw) =>
+            JSON.parse(raw) as { type?: string; transcript?: string; turn?: unknown },
+        )
+        .filter((msg) => msg.type === "dismiss");
+      expect(dismisses.length).toBeGreaterThan(0);
+      expect(dismisses[dismisses.length - 1].transcript).toBe("close the price");
+      expect(dismisses[dismisses.length - 1].turn).toMatch(/^t\d+$/);
     });
     await waitFor(() => {
       expect(screen.queryByText("Price")).toBeNull();

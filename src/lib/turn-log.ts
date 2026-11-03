@@ -12,6 +12,8 @@ const ASR_USD_PER_SECOND = 0.18 / 3600;
 export interface TurnLogFields {
   /** End-of-speech timestamp (ISO). */
   ts: string;
+  /** Shared turn id (t042) from the client; "-" or absent off-turn. */
+  turn?: string | null;
   /** Screen language on the connection when the turn ran. */
   language: ValeLanguage;
   transcript: string;
@@ -97,22 +99,6 @@ export function formatTurnLog(fields: TurnLogFields): string {
 }
 
 /**
- * One brief line per Meta model call, for the demo video evidence:
- * which model ran, how long it took, what text it got.
- */
-export function formatModelLog(
-  model: string,
-  responseMs: number | null,
-  content: string,
-): string {
-  const flat = content.replace(/[\r\n]+/g, " ");
-  const clipped = flat.length > 80 ? `${flat.slice(0, 80)}…` : flat;
-  const safe = clipped.replace(/"/g, "'");
-  const response = responseMs === null ? "-" : `${Math.round(responseMs)}ms`;
-  return `[vale-model] content="${safe}" model="${model}" response=${response}`;
-}
-
-/**
  * Agent reply time: time to first token when the model streamed, otherwise
  * the elapsed time since the turn's speech ended.
  */
@@ -123,13 +109,160 @@ export function modelElapsedMs(
   return firstTokenMs ?? Date.now() - sinceMs;
 }
 
-/** Console-only: demo evidence, never persisted to the turn log. */
-export function emitModelLog(
-  model: string,
-  responseMs: number | null,
-  content: string,
-): void {
-  console.log(formatModelLog(model, responseMs, content));
+/**
+ * Secret scrubber for anything that reaches a log: Bearer-looking values
+ * and JSON key/token/secret fields become [redacted]. No length cap here;
+ * callers that need one (provider error bodies) slice after.
+ */
+export function scrubSecrets(text: string): string {
+  return text
+    .replace(/bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(
+      /"(api_?key|token|secret)"\s*:\s*"[^"]*"/gi,
+      '"$1":"[redacted]"',
+    );
+}
+
+/** Processes that can own a unified log line; ERROR is server-lifecycle only. */
+export type VLogProcess =
+  | "ASR"
+  | "AGENT"
+  | "TOOL"
+  | "VOICE"
+  | "IMAGE"
+  | "SAM"
+  | "GLIMMER"
+  | "DB"
+  | "ERROR";
+
+/** Turn outcome from the screen's point of view. */
+export type VLogStatus = "ok" | "ignored" | "error" | "timeout";
+
+export interface VLogEvent {
+  /** Shared turn id (t042) from the client; "-" off-turn. */
+  turn: string;
+  process: VLogProcess;
+  /** Exact model id, or "-" when the event is not a model call. */
+  model?: string | null;
+  durationMs?: number | null;
+  status: VLogStatus;
+  /** Typed key=value pairs for the console detail column. */
+  detail?: Record<string, string | number | boolean | null | undefined>;
+  /** Console: flattened and clipped; JSONL: full. */
+  content?: string | null;
+  /** Full payloads for the JSONL recording only: tool args, widget, board. */
+  extra?: Record<string, unknown> | null;
+}
+
+/**
+ * Deep secret scrub for recording payloads: strings are scrubbed before
+ * JSON encoding, because after it the quotes are escaped and the key
+ * pattern no longer matches. Keys ride along; they are code constants.
+ */
+function scrubValue(value: unknown): unknown {
+  if (typeof value === "string") return scrubSecrets(value);
+  if (Array.isArray(value)) return value.map(scrubValue);
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) out[key] = scrubValue(entry);
+    return out;
+  }
+  return value;
+}
+
+/** Longest known model id; longer ids overflow the column, never wrap it. */
+const VLOG_MODEL_WIDTH = 24;
+/** Console content budget; the JSONL recording keeps the full text. */
+const VLOG_CONTENT_WIDTH = 100;
+
+function vlogDetail(detail: VLogEvent["detail"]): string {
+  if (!detail) return "-";
+  const pairs = Object.entries(detail).flatMap(([key, value]) =>
+    value === null || value === undefined ? [] : [`${key}=${value}`],
+  );
+  return pairs.length > 0 ? scrubSecrets(pairs.join(" ")) : "-";
+}
+
+function vlogContent(content: VLogEvent["content"]): string {
+  if (!content) return "-";
+  const flat = scrubSecrets(content.replace(/[\r\n]+/g, " "));
+  return flat.length > VLOG_CONTENT_WIDTH
+    ? `${flat.slice(0, VLOG_CONTENT_WIDTH)}…`
+    : flat;
+}
+
+/**
+ * One aligned console line per event: time | turn | process | model |
+ * duration | status | key=value detail | content (clipped, last). Time is
+ * UTC, matching the turn timestamps the harness reads from the log files.
+ */
+export function formatVlog(event: VLogEvent): string {
+  const time = new Date().toISOString().slice(11, 23);
+  const turn = (event.turn || "-").padEnd(5);
+  const process = event.process.padEnd(7);
+  const model = (event.model ?? "-").padEnd(VLOG_MODEL_WIDTH);
+  const duration =
+    event.durationMs === null || event.durationMs === undefined
+      ? "-".padStart(8)
+      : `${Math.round(event.durationMs)}ms`.padStart(8);
+  const status = event.status.padEnd(7);
+  return `${time} | ${turn} | ${process} | ${model} | ${duration} | ${status} | ${vlogDetail(event.detail)} | ${vlogContent(event.content)}`;
+}
+
+/**
+ * Daily JSONL recording for replay (HACK-024): every vlog event with full
+ * content plus tool args and widget/sheet payloads. VALE_EVENTLOG_PATH
+ * points it elsewhere; otherwise eval turns (VALE_TURNS_PATH) keep their
+ * recording next to their turns file, and live turns land in data/logs/.
+ */
+export function eventLogFile(day: Date = new Date()): string {
+  const override = process.env.VALE_EVENTLOG_PATH?.trim();
+  if (override) return override;
+  const date = day.toISOString().slice(0, 10);
+  const turnsOverride = process.env.VALE_TURNS_PATH?.trim();
+  if (turnsOverride)
+    return join(dirname(turnsOverride), `events-${date}.jsonl`);
+  return join(process.cwd(), "data", "logs", `${date}.jsonl`);
+}
+
+/** Append one recording line; logging never breaks a turn. */
+export function persistEventLog(line: string): void {
+  try {
+    const file = eventLogFile();
+    mkdirSync(dirname(file), { recursive: true });
+    appendFileSync(file, `${line}\n`);
+  } catch {
+    /* the console line already went out; a full disk must not fail the turn */
+  }
+}
+
+/**
+ * Unified server log in one call: aligned console columns for the live
+ * demo plus the full event (text, tool args, widget/sheet payloads) in the
+ * daily JSONL recording. Errors and timeouts go to stderr.
+ */
+export function vlog(event: VLogEvent): void {
+  const line = formatVlog(event);
+  if (event.status === "error" || event.status === "timeout")
+    console.error(line);
+  else console.log(line);
+  try {
+    persistEventLog(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        turn: event.turn || "-",
+        process: event.process,
+        model: event.model ?? "-",
+        durationMs: event.durationMs ?? null,
+        status: event.status,
+        detail: scrubValue(event.detail ?? {}),
+        content: scrubSecrets(event.content ?? ""),
+        ...(scrubValue(event.extra ?? {}) as Record<string, unknown>),
+      }),
+    );
+  } catch {
+    /* console already shows it; the recording must not fail the turn */
+  }
 }
 
 /**
@@ -154,9 +287,31 @@ export function persistTurnLog(line: string): void {
   }
 }
 
-/** Console plus persistent log in one call. */
+/**
+ * Console plus persistent logs in one call: the console shows the aligned
+ * turn row, while the full [voice-turn] JSON lands in data/turns.jsonl
+ * (kept until replay replaces it) for the harness to read.
+ */
 export function emitTurnLog(fields: TurnLogFields): void {
   const line = formatTurnLog(fields);
-  console.log(line);
+  vlog({
+    turn: fields.turn ?? "-",
+    process: "VOICE",
+    durationMs: fields.totalMs ?? null,
+    status:
+      fields.error === "timeout"
+        ? "timeout"
+        : fields.error !== null
+          ? "error"
+          : fields.ignored
+            ? "ignored"
+            : "ok",
+    detail: { gate: fields.gate, tool: fields.tool },
+    content: fields.transcript,
+    // The recording keeps the whole turn (stats, slots, cost) for replay;
+    // the console row above carries only the screen-level columns.
+    // (turnFields, not turn: turn is the shared id on every row.)
+    extra: { turnFields: { ...fields } },
+  });
   persistTurnLog(line);
 }

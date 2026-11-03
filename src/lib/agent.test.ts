@@ -1,4 +1,7 @@
 // @vitest-environment node
+import { readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_MODEL,
@@ -156,6 +159,56 @@ describe("agent turn with tools", () => {
     const notes = db.prepare("SELECT COUNT(*) AS n FROM notes WHERE client_id = ?").get(anaId) as { n: number };
     expect(notes.n).toBe(1);
     db.close();
+  });
+
+  it("logs each tool call with its args and the shared turn id", async () => {
+    const db = freshTestDb();
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        return calls === 1
+          ? sseResponse([
+              toolCall("resp_1", "client_note_add", { client_name: "Ana", text: "prefiere viernes" }, "call_1"),
+            ])
+          : sseResponse([spoken("resp_2", "Nota guardada.")]);
+      }),
+    );
+    const saved = process.env.VALE_EVENTLOG_PATH;
+    const file = join(tmpdir(), `agent-events-${Date.now()}.jsonl`);
+    const seen: string[] = [];
+    const savedLog = console.log;
+    console.log = (line: string) => void seen.push(line);
+    try {
+      process.env.VALE_EVENTLOG_PATH = file;
+      const result = await runAgentTurn({
+        key: "test-key",
+        transcript: "anota que prefiere viernes",
+        language: "es",
+        db,
+        turn: "t042",
+      });
+      expect(result.toolUsed).toBe("client_note_add");
+      const tools = seen.filter((line) => line.includes("| TOOL "));
+      expect(tools).toHaveLength(1);
+      expect(tools[0]).toContain("t042");
+      expect(tools[0]).toContain("tool=client_note_add");
+      const rows = readFileSync(file, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const tool = rows.find((row) => row.process === "TOOL");
+      expect(tool).toMatchObject({ turn: "t042", status: "ok" });
+      expect(tool.args).toEqual({ client_name: "Ana", text: "prefiere viernes" });
+      expect(tool.detail).toEqual({ tool: "client_note_add" });
+    } finally {
+      console.log = savedLog;
+      if (saved === undefined) delete process.env.VALE_EVENTLOG_PATH;
+      else process.env.VALE_EVENTLOG_PATH = saved;
+      rmSync(file, { force: true });
+      db.close();
+    }
   });
 
   it("resends the call with its output on the second round, chainless", async () => {

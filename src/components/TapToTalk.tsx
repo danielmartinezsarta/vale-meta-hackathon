@@ -141,6 +141,8 @@ export function TapToTalk({
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);
   const turnIdRef = useRef(0);
+  /** Shared turn tag counter (t001…): the server logs what the client tags. */
+  const turnTagRef = useRef(1);
   const controllersRef = useRef(new Set<AbortController>());
   const socketsRef = useRef(new Set<WebSocket>());
   const quietTimerRef = useRef(0);
@@ -597,6 +599,8 @@ export function TapToTalk({
       let pendingConvTurn: number | null = null;
       interface TurnTransport {
         socket: WebSocket | null;
+        /** Shared turn tag (t001…) assigned at birth, sent with every close. */
+        tag: string;
         /** This turn's audio rode the shared conversation socket. */
         conv: boolean;
         frames: Int16Array[];
@@ -720,6 +724,7 @@ export function TapToTalk({
       const openTurn = (arm = true) => {
         const id = turnIdRef.current++;
         currentId = id;
+        const tag = `t${String(turnTagRef.current++).padStart(3, "0")}`;
         posted = false;
         droppedRef.current = false;
         pending.length = 0;
@@ -728,6 +733,7 @@ export function TapToTalk({
         turnRebuildsRef.current = 0;
         transports.set(id, {
           socket: null,
+          tag,
           conv: false,
           frames: [],
           opened: false,
@@ -764,7 +770,11 @@ export function TapToTalk({
         setWidget(null);
         posted = true;
         if (!final) droppedRef.current = true;
-        const payload = JSON.stringify({ type: "dismiss", transcript: text });
+        const payload = JSON.stringify({
+          type: "dismiss",
+          transcript: text,
+          turn: transport?.tag ?? null,
+        });
         try {
           if (
             convOpen &&
@@ -1007,7 +1017,8 @@ export function TapToTalk({
             transport.endQueued = false;
             try {
               socket.send(
-                transport.endPayload ?? JSON.stringify({ type: "endStream" }),
+                transport.endPayload ??
+                  JSON.stringify({ type: "endStream", turn: transport.tag }),
               );
             } catch {
               /* the close handler decides: reconnect or fail */
@@ -1134,6 +1145,7 @@ export function TapToTalk({
         // Freeze what the client saw: the same evidence on every (re)send.
         const endPayload = JSON.stringify({
           type: "endStream",
+          turn: transport?.tag ?? null,
           peakLevel: turnPeakRef.current,
           voicedMs: (transport?.voiced ?? 0) * FRAME_MS,
           mutedMs: snapMutedMs(),
@@ -1182,7 +1194,8 @@ export function TapToTalk({
         ) {
           try {
             socket.send(
-              transport.endPayload ?? JSON.stringify({ type: "endStream" }),
+              transport.endPayload ??
+                JSON.stringify({ type: "endStream", turn: transport.tag }),
             );
           } catch {
             transport.failed = true;
@@ -1341,7 +1354,7 @@ export function TapToTalk({
         subscribePostTurn(
           id,
           fetch(
-            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}&turn=${transport?.tag ?? ""}`,
             {
               method: "POST",
               headers: { "content-type": "audio/l16" },
@@ -1357,7 +1370,11 @@ export function TapToTalk({
       // a JSON turn when no socket is open. Either way it equals a spoken vote.
       const castVote = (vote: "yes" | "no") => {
         if (!sessionRef.current) return;
-        const payload = JSON.stringify({ type: "vote", vote });
+        const payload = JSON.stringify({
+          type: "vote",
+          vote,
+          turn: transports.get(currentId)?.tag ?? null,
+        });
         try {
           if (
             convOpen &&
@@ -1388,7 +1405,7 @@ export function TapToTalk({
         subscribePostTurn(
           id,
           fetch(
-            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}&turn=${transports.get(id)?.tag ?? ""}`,
             {
               method: "POST",
               headers: { "content-type": "application/json" },

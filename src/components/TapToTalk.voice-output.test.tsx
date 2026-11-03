@@ -178,6 +178,8 @@ describe("browser voice output", () => {
     expect(endPayload.voicedMs).toBeGreaterThan(0);
     expect(endPayload.srcBlocks).toBe(9);
     expect(endPayload.lostBlocks).toBe(0);
+    // The shared turn id rides every close frame for the server log.
+    expect(endPayload.turn).toMatch(/^t\d+$/);
   });
 
   it("a sub-300ms blip never opens a socket: zero binary frames on the wire", async () => {
