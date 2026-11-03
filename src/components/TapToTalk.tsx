@@ -177,8 +177,9 @@ export function TapToTalk({
   useEffect(() => {
     widgetRef.current = widget;
   }, [widget]);
-  // Final upload result waiting behind the confirm sheet for Accept.
-  const finalPendingRef = useRef<{ mosaicUrl: string | null; description: string | null } | null>(null);
+  // Final upload result waiting behind the confirm sheet for Accept. The
+  // result shows the final user photo; the mosaic URL stays server-side.
+  const finalPendingRef = useRef<{ photoUrl: string | null; description: string | null } | null>(null);
   // Client-side mirror of the server attention window: the tap, her replies
   // and heard names restart it, exactly the events the server notes. It only
   // ever keeps a phrase on the wire; the server gate owns every discard.
@@ -298,7 +299,7 @@ export function TapToTalk({
       });
     } else {
       finalPendingRef.current = {
-        mosaicUrl: typeof body.mosaicUrl === "string" ? body.mosaicUrl : null,
+        photoUrl: typeof body.photoUrl === "string" ? body.photoUrl : null,
         description: typeof body.description === "string" ? body.description : null,
       };
       openWidget({
@@ -485,8 +486,8 @@ export function TapToTalk({
   }, [stopSession, onSleep]);
 
   // Sheet buttons: price answers close; Final uploads then confirms, whose
-  // Accept opens the result with the mosaic. Visits and the photo button
-  // load the real stored photos first.
+  // Accept opens the result with the final user photo. Visits and the
+  // photo button load the real stored photos first.
   const sheetCallbacks = {
     onAccept: () => {
       if (widgetRef.current?.kind === "final_photo_confirm") {
@@ -496,7 +497,7 @@ export function TapToTalk({
           kind: "final_result",
           title: widgetTitle("final_result"),
           size: "full",
-          data: { photo: pending?.mosaicUrl ?? null, description: pending?.description ?? null },
+          data: { photo: pending?.photoUrl ?? null, description: pending?.description ?? null },
         });
       } else {
         closeWidgetByHand();

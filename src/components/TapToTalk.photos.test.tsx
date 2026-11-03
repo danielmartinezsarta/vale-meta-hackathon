@@ -186,7 +186,7 @@ describe("session photo flows (mocked fetch, no network)", () => {
     expect(img?.getAttribute("src")).toBe("/api/photos?file=pre_7.jpg");
   });
 
-  it("uploads final, confirms, and shows the mosaic result", async () => {
+  it("uploads final, confirms, and shows the final photo result", async () => {
     vi.stubGlobal("fetch", stubRoutes({ photos: () => false, upload: UPLOAD_OK }));
     const created = capturePicker();
     await openSessionScreen();
@@ -203,9 +203,10 @@ describe("session photo flows (mocked fetch, no network)", () => {
       expect(screen.getByRole("dialog", { name: "Final result" })).toBeTruthy();
     });
     expect(document.querySelector('.aw-result-photo img')?.getAttribute("src")).toBe(
-      "/api/photos?file=mosaic_7.png",
+      "/api/photos?file=post_7.jpg",
     );
     expect(screen.getByText("Matte nude with black lace and copper foil.")).toBeTruthy();
+    expect(document.body.innerHTML).not.toContain("mosaic");
   });
 
   it("shows a notice when the upload fails", async () => {

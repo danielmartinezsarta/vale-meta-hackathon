@@ -118,7 +118,7 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
     });
   });
 
-  it("opens the full photos sheet with the Muse Spark tag", () => {
+  it("opens the full photos sheet with the Muse Image tag", () => {
     const onOpenPhotos = vi.fn();
     render(
       <SessionScreen
