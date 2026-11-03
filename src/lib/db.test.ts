@@ -157,7 +157,15 @@ describe("demo seed (HACK-018)", () => {
         `SELECT c.name AS client, v.photo FROM visits v JOIN clients c ON c.id = v.client_id ORDER BY v.id`,
       )
       .all() as { client: string; photo: string }[];
-    expect(rows.map((row) => row.client).sort()).toEqual(["Ana", "David", "Paola", "Sofia"]);
+    // HACK-005 seeds David's 3-week visit pattern: three rows for David.
+    expect(rows.map((row) => row.client).sort()).toEqual([
+      "Ana",
+      "David",
+      "David",
+      "David",
+      "Paola",
+      "Sofia",
+    ]);
     for (const row of rows) expect(row.photo.length).toBeGreaterThan(0);
     db.close();
   });

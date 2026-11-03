@@ -25,3 +25,11 @@ export function resolveSeedDay(day, when = new Date()) {
   if (day === "tomorrow") return seedDay(1, when);
   return day;
 }
+
+// HACK-005 relative birthday: mirror of src/lib/seed-dates.ts. Month and
+// day from an offset off today, fixed birth year, clamped to the month.
+export function seedBirthday(inDays, year, when = new Date()) {
+  const [, month, day] = seedDay(inDays, when).split("-").map(Number);
+  const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${pad(month)}-${pad(Math.min(day, last))}`;
+}

@@ -16,6 +16,7 @@ import {
 } from "./agent";
 import { freshTestDb, recordTurn, recentTurns } from "./db";
 import { refreshClientBrief } from "./client-briefs";
+import { seedBirthday } from "./seed-dates";
 import { openSession } from "./vale-tools";
 import {
   clearPendingAction,
@@ -1007,10 +1008,11 @@ describe("client card privacy (HACK-005)", () => {
   const CARD_SECRETS = [
     "+1-555-0101",
     "david@example.com",
-    "1990-04-17",
+    seedBirthday(5, 1990),
     "HO HO HO",
     "latex",
     "Rangers",
+    "Prefers dark matte designs",
   ];
 
   function stubCardCall(bodies: Record<string, unknown>[]) {
