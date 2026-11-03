@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { SplashScreen } from "@/components/SplashScreen";
 import { HomeScreen } from "@/components/HomeScreen";
+import { KeyStatusBanner } from "@/components/KeyStatusBanner";
 import { ReplayScreen } from "@/components/ReplayScreen";
 import { TapToTalk } from "@/components/TapToTalk";
 import { useValeLanguage } from "@/components/useValeLanguage";
@@ -55,10 +56,16 @@ export default function Home() {
   if (replayMode) return <ReplayScreen />;
 
   if (screen === "voice")
-    return <TapToTalk autoStart onSleep={() => setScreen("home")} />;
+    return (
+      <>
+        <KeyStatusBanner language={language} />
+        <TapToTalk autoStart onSleep={() => setScreen("home")} />
+      </>
+    );
 
   return (
     <main>
+      <KeyStatusBanner language={language} />
       <HomeScreen
         data={homeData}
         language={language}
