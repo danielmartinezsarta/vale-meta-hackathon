@@ -139,6 +139,25 @@ export function utteranceLoss(spanMs: number, framesOut: number): number {
   return Math.max(0, Math.round(spanMs / 40) - framesOut);
 }
 
+/** Clock watchdog window and floor: below 0.95x real time over 2 s the
+ * context clock is broken and capture rebuilds instead of limping on. */
+export const CLOCK_WINDOW_MS = 2000;
+export const CLOCK_MIN_RATIO = 0.95;
+
+/**
+ * True when captured source samples cover less than 0.95 of the wall span:
+ * the context delivers audio slower than real time. Muted spans never reach
+ * here; the caller re-anchors the window while paused.
+ */
+export function clockDrifted(
+  audioSamples: number,
+  sampleRate: number,
+  spanMs: number,
+): boolean {
+  if (spanMs < CLOCK_WINDOW_MS || sampleRate <= 0) return false;
+  return audioSamples / ((spanMs * sampleRate) / 1000) < CLOCK_MIN_RATIO;
+}
+
 /**
  * Which audio thread feeds the VAD. The worklet runs off the main thread,
  * so occluded tabs and render bursts cannot skip mic blocks; the
@@ -153,6 +172,12 @@ export interface CaptureCallbacks {
   onSpeechEnd: (stats?: UtteranceStats) => void;
   /** Fires once per startCapture with the engine above; keep it ref-only. */
   onEngine?: (engine: CaptureEngine) => void;
+  /**
+   * Clock watchdog: captured samples drifted below 0.95 of real time over
+   * 2 s, so the context and worklet were rebuilt. Total rebuilds; the turn
+   * log persists it. Keep it ref-only.
+   */
+  onClockRebuild?: (total: number) => void;
   /** Fires on every audio block, speech or silence: the stall watchdog. */
   onHeartbeat?: () => void;
   /** Listening feedback, 0..1 mic level; optional. */
@@ -196,7 +221,9 @@ export function unlockAudioContext(): void {
     } catch {
       /* already torn down */
     }
-    prepared = new Ctor({ sampleRate: CAPTURE_RATE });
+    // Native device rate: forcing 24 kHz here made Chrome resample a 48 kHz
+    // mic on the context clock, which rhythms the capture wrong.
+    prepared = new Ctor();
     void prepared.resume().catch(() => {});
     warmWorklet(prepared);
   } catch {
@@ -220,6 +247,18 @@ function workletEnabled(): boolean {
 }
 
 let workletModuleUrl: string | null = null;
+/** Pending warm of the prepared context; the setup wait below consumes it. */
+let warmPending: Promise<void> | null = null;
+
+/** Blob URL for the worklet module, shared by the warm and rebuild paths. */
+function ensureWorkletUrl(): string {
+  if (!workletModuleUrl) {
+    workletModuleUrl = URL.createObjectURL(
+      new Blob([captureWorkletSource()], { type: "application/javascript" }),
+    );
+  }
+  return workletModuleUrl;
+}
 
 /**
  * Fire-and-forget from the tap gesture: register the processor module on
@@ -237,13 +276,8 @@ function warmWorklet(context: AudioContext): void {
     const flag = context as unknown as { __valeWorklet?: string };
     if (flag.__valeWorklet) return;
     flag.__valeWorklet = "warming";
-    if (!workletModuleUrl) {
-      workletModuleUrl = URL.createObjectURL(
-        new Blob([captureWorkletSource()], { type: "application/javascript" }),
-      );
-    }
-    const url = workletModuleUrl;
-    void audioWorklet.addModule(url).then(
+    const url = ensureWorkletUrl();
+    warmPending = audioWorklet.addModule(url).then(
       () => {
         flag.__valeWorklet = "ready";
       },
@@ -261,6 +295,47 @@ function takePrepared(): AudioContext | null {
   prepared = null;
   if (!ctx || ctx.state === "closed") return null;
   return ctx;
+}
+
+/**
+ * Bounded wait for the worklet module on the tap-warmed context, so session
+ * start does not coin-flip between engines: the tap won the race or it did
+ * not, and startCapture below reads a settled flag either way. Resolves
+ * true when the worklet path is ready. Never throws; false keeps the
+ * ScriptProcessor fallback exactly as before.
+ */
+export async function ensureCaptureReady(timeoutMs = 1500): Promise<boolean> {
+  try {
+    if (!workletEnabled()) return false;
+    const Ctor = audioCtor();
+    if (!Ctor) return false;
+    if (!prepared || prepared.state === "closed") {
+      try {
+        prepared?.close().catch(() => {});
+      } catch {
+        /* already torn down */
+      }
+      prepared = new Ctor();
+    }
+    const target = prepared;
+    const audioWorklet = (
+      target as unknown as {
+        audioWorklet?: { addModule: (url: string) => Promise<void> };
+      }
+    ).audioWorklet;
+    if (!audioWorklet) return false;
+    warmWorklet(target);
+    const pending = warmPending;
+    if (!pending) return isWorkletReady(target);
+    if (timeoutMs <= 0) return isWorkletReady(target);
+    await Promise.race([
+      pending,
+      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
+    return isWorkletReady(target);
+  } catch {
+    return false;
+  }
 }
 
 export interface CaptureHandle {
@@ -306,7 +381,9 @@ export function startCapture(
   if (!AudioContextCtor) throw new Error("AudioContext is not supported.");
   // Prefer the context warmed inside the tap gesture; a post-await resume
   // does not unlock iOS, so a context born here may stay suspended.
-  const context = takePrepared() ?? new AudioContextCtor({ sampleRate: CAPTURE_RATE });
+  // Native device rate (see unlockAudioContext): the worklet decimates to
+  // 24 kHz with a low-pass instead of the browser resampling the context.
+  let context = takePrepared() ?? new AudioContextCtor();
   try {
     void context.resume().catch(() => {});
   } catch {
@@ -324,11 +401,19 @@ export function startCapture(
     }
   }, 1000);
   const actualRate = context.sampleRate;
-  const source = context.createMediaStreamSource(stream);
+  let source: MediaStreamAudioSourceNode =
+    context.createMediaStreamSource(stream);
   // Muted tap so capture runs without audible feedback.
-  const mute = context.createGain();
+  let mute: GainNode = context.createGain();
   mute.gain.value = 0;
   mute.connect(context.destination);
+  /** Rebuild the source graph on a context: nodes belong to one context. */
+  const buildGraph = (ctx: AudioContext) => {
+    source = ctx.createMediaStreamSource(stream);
+    mute = ctx.createGain();
+    mute.gain.value = 0;
+    mute.connect(ctx.destination);
+  };
 
   let detector = new SpeechDetector(detectorOptions);
   const preroll: Int16Array[] = [];
@@ -358,8 +443,52 @@ export function startCapture(
   let carry: Float32Array = new Float32Array(0);
   /** Source intake events: ScriptProcessor runs, or worklet quanta. */
   let runQuanta = 0;
+  /**
+   * Captured source samples since (re)build: the clock watchdog compares
+   * their time against wall time, skipping spans muted while she speaks.
+   */
+  let audioSamples = 0;
+  let lastQuanta: number | null = null;
+  let winStart = Date.now();
+  let winAudio = 0;
+  let rebuilding = false;
+  let rebuildTotal = 0;
+  let engine: CaptureEngine = "script";
+
+  const noteQuanta = (quanta: number) => {
+    if (lastQuanta === null) {
+      lastQuanta = quanta;
+      return;
+    }
+    if (quanta > lastQuanta) audioSamples += (quanta - lastQuanta) * 128;
+    lastQuanta = quanta;
+  };
+
+  const checkClock = () => {
+    if (stopped || rebuilding) return;
+    const now = Date.now();
+    if (paused) {
+      winStart = now;
+      winAudio = audioSamples;
+      return;
+    }
+    if (now - winStart < CLOCK_WINDOW_MS) return;
+    const drifted = clockDrifted(
+      audioSamples - winAudio,
+      context.sampleRate,
+      now - winStart,
+    );
+    winStart = now;
+    winAudio = audioSamples;
+    if (drifted) void rebuildCapture();
+  };
 
   const heartbeat = () => {
+    try {
+      checkClock();
+    } catch {
+      /* the watchdog must never break capture */
+    }
     try {
       callbacks.onHeartbeat?.();
     } catch {
@@ -443,21 +572,21 @@ export function startCapture(
 
   let workletNode: AudioWorkletNode | null = null;
   let scriptProcessor: ScriptProcessorNode | null = null;
-  try {
-    const ready = isWorkletReady(context);
-    if (ready) {
-      const node = new AudioWorkletNode(context, CAPTURE_WORKLET_NAME);
-      node.port.onmessage = (event: MessageEvent) => {
-        const msg = event.data as {
-          type?: string;
-          pcm?: unknown;
-          quanta?: unknown;
-        } | null;
-        if (!msg || stopped) return;
-        if (msg.type === "beat") {
-          heartbeat();
-          return;
-        }
+  /** Worklet graph on a context; throws when the node cannot attach. */
+  const attachWorklet = (ctx: AudioContext) => {
+    const node = new AudioWorkletNode(ctx, CAPTURE_WORKLET_NAME);
+    node.port.onmessage = (event: MessageEvent) => {
+      const msg = event.data as {
+        type?: string;
+        pcm?: unknown;
+        quanta?: unknown;
+      } | null;
+      if (!msg || stopped) return;
+      if (typeof msg.quanta === "number") noteQuanta(msg.quanta);
+      if (msg.type === "beat") {
+        heartbeat();
+        return;
+      }
         if (msg.type !== "frame" || !(msg.pcm instanceof ArrayBuffer)) return;
         // Belt and suspenders with the worklet-side pause: drop here too.
         if (paused) {
@@ -475,7 +604,88 @@ export function startCapture(
       source.connect(node);
       node.connect(mute);
       workletNode = node;
+  };
+
+  const detachGraph = () => {
+    try {
+      try {
+        workletNode?.port.close();
+      } catch {
+        /* already closed */
+      }
+      workletNode?.disconnect();
+      scriptProcessor?.disconnect();
+      source.disconnect();
+      mute.disconnect();
+    } catch {
+      /* already torn down */
     }
+    workletNode = null;
+    scriptProcessor = null;
+    try {
+      void context.close().catch(() => {});
+    } catch {
+      /* already closed */
+    }
+  };
+
+  /**
+   * Clock watchdog recovery: a fresh native-rate context plus worklet.
+   * Never the ScriptProcessor fallback: a drifting main thread is exactly
+   * what the fallback cannot survive.
+   */
+  const rebuildCapture = async () => {
+    if (rebuilding || stopped) return;
+    rebuilding = true;
+    try {
+      detachGraph();
+      const fresh = new AudioContextCtor();
+      try {
+        await fresh.resume();
+      } catch {
+        /* resume is best-effort; the stuck-context check reports it */
+      }
+      const worklet = fresh.audioWorklet as unknown as
+        | { addModule: (url: string) => Promise<void> }
+        | undefined;
+      if (!worklet) throw new Error("AudioWorklet is not supported.");
+      await worklet.addModule(ensureWorkletUrl());
+      context = fresh;
+      buildGraph(fresh);
+      attachWorklet(fresh);
+      detector = new SpeechDetector(detectorOptions);
+      preroll.length = 0;
+      carry = new Float32Array(0);
+      uttTripAt = 0;
+      audioSamples = 0;
+      lastQuanta = null;
+      winStart = Date.now();
+      winAudio = 0;
+      engine = "worklet";
+      rebuildTotal += 1;
+      try {
+        callbacks.onClockRebuild?.(rebuildTotal);
+      } catch {
+        /* reporting never breaks capture */
+      }
+      try {
+        callbacks.onEngine?.(engine);
+      } catch {
+        /* reporting never breaks capture */
+      }
+    } catch {
+      try {
+        callbacks.onBlocked?.();
+      } catch {
+        /* the alert must never break capture */
+      }
+    } finally {
+      rebuilding = false;
+    }
+  };
+
+  try {
+    if (isWorkletReady(context)) attachWorklet(context);
   } catch {
     workletNode = null;
   }
@@ -487,6 +697,7 @@ export function startCapture(
     processor.onaudioprocess = (event: AudioProcessingEvent) => {
       if (stopped) return;
       runQuanta += 1;
+      audioSamples += event.inputBuffer.length;
       // Muted while Vale speaks: blocks still heartbeat, nothing else flows.
       if (paused) {
         heartbeat();
@@ -509,7 +720,7 @@ export function startCapture(
     scriptProcessor = processor;
   }
 
-  const engine: CaptureEngine = workletNode ? "worklet" : "script";
+  engine = workletNode ? "worklet" : "script";
   try {
     callbacks.onEngine?.(engine);
   } catch {
@@ -520,20 +731,7 @@ export function startCapture(
     engine: () => engine,
     stop() {
       stopped = true;
-      try {
-        try {
-          workletNode?.port.close();
-        } catch {
-          /* already closed */
-        }
-        workletNode?.disconnect();
-        scriptProcessor?.disconnect();
-        source.disconnect();
-        mute.disconnect();
-      } catch {
-        /* already torn down */
-      }
-      void context.close().catch(() => {});
+      detachGraph();
     },
     setPaused(next: boolean) {
       paused = next;

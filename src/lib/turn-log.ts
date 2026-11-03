@@ -67,6 +67,8 @@ export interface TurnLogFields {
   visible?: string | null;
   actualRate?: number | null;
   ctxState?: string | null;
+  /** Clock-watchdog context rebuilds during the turn; null when none ran. */
+  rebuilds?: number | null;
   /** Muted-start room tone discarded before the gate and the model. */
   junk?: boolean;
 }

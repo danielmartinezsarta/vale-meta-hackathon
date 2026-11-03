@@ -1581,6 +1581,7 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
       visible: null,
       actualRate: null,
       ctxState: null,
+      rebuilds: null,
     };
     expect(tryParseControl(JSON.stringify({ type: "endStream" }))).toEqual({
       type: "endStream",
@@ -1617,6 +1618,7 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
         visible: null,
         actualRate: null,
         ctxState: null,
+        rebuilds: null,
       },
       language: null,
     });
