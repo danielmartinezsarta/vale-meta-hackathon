@@ -47,12 +47,18 @@ class FakeWs {
   }
 }
 
+let captureStarted = false;
+
 function stubSessionOnce() {
-  mockStartCapture.mockImplementation(() => ({
-    stop: () => {},
-    state: () => "running",
+  captureStarted = false;
+  mockStartCapture.mockImplementation(() => {
+    captureStarted = true;
+    return {
+      stop: () => {},
+      state: () => "running",
       engine: () => "script" as const,
-  }));
+    };
+  });
 }
 
 afterEach(() => {
@@ -78,6 +84,10 @@ async function openConversation() {
   const ws = FakeWs.instances[0];
   expect(ws.url).toContain("/voice");
   ws.open();
+  // Capture (and the first turn) starts only after /voice answers.
+  await waitFor(() => {
+    expect(captureStarted).toBe(true);
+  });
   return ws;
 }
 

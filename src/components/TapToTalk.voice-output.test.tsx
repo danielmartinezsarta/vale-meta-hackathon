@@ -97,6 +97,7 @@ let driver: CaptureDriver | null = null;
 afterEach(() => {
   cleanup();
   FakeWs.instances = [];
+  driver = null;
   speakAudibleRef.current = false;
   settleListener = null;
   setVoiceEngine("browser");
@@ -124,13 +125,13 @@ describe("browser voice output", () => {
     render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
-      expect(driver).not.toBeNull();
-    });
-    await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     // The conversation socket is up before speech: no per-turn socket.
     FakeWs.instances[0].open();
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
     const ws = FakeWs.instances[0];
     const voiced = new Int16Array(960).fill(4000);
     await waitFor(() => {
@@ -201,12 +202,12 @@ describe("browser voice output", () => {
     render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
-      expect(driver).not.toBeNull();
-    });
-    await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     FakeWs.instances[0].open();
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
     const ws = FakeWs.instances[0];
     const endStreams = () =>
       ws.sentStrings().filter((raw) => raw.includes("endStream")).length;
@@ -320,13 +321,13 @@ describe("voice engine switch", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
-      expect(driver).not.toBeNull();
-    });
-    await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     // The conversation socket is up before speech: no per-turn socket.
     FakeWs.instances[0].open();
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
     driver!.onSpeechStart();
     const ws = FakeWs.instances[0];
     for (let i = 0; i < 8; i += 1) driver!.onFrame?.(new Int16Array(960).fill(4000));
@@ -356,13 +357,13 @@ describe("voice engine switch", () => {
     render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
-      expect(driver).not.toBeNull();
-    });
-    await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     // The conversation socket is up before speech: no per-turn socket.
     FakeWs.instances[0].open();
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
     driver!.onSpeechStart();
     const ws = FakeWs.instances[0];
     for (let i = 0; i < 8; i += 1) driver!.onFrame?.(new Int16Array(960).fill(4000));
@@ -396,13 +397,13 @@ describe("voice engine switch", () => {
     render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
-      expect(driver).not.toBeNull();
-    });
-    await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     // The conversation socket is up before speech: no per-turn socket.
     FakeWs.instances[0].open();
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
     driver!.onSpeechStart();
     const ws = FakeWs.instances[0];
     for (let i = 0; i < 8; i += 1) driver!.onFrame?.(new Int16Array(960).fill(4000));
@@ -448,13 +449,13 @@ describe("voice engine switch", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
-      expect(driver).not.toBeNull();
-    });
-    await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     // The conversation socket is up before speech: no per-turn socket.
     FakeWs.instances[0].open();
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
     const ws = FakeWs.instances[0];
     const voiced = new Int16Array(960).fill(4000);
     const voice = (n: number) => {
@@ -533,12 +534,12 @@ describe("voice engine switch", () => {
     render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
-      expect(driver).not.toBeNull();
-    });
-    await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     FakeWs.instances[0].open();
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
     const ws = FakeWs.instances[0];
     await waitFor(() => {
       expect(screen.getByRole("status").textContent).toBe("Listening");

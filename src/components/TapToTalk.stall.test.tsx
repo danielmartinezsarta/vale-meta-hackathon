@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -43,8 +44,7 @@ async function tapToTalk() {
   vi.stubGlobal("navigator", {
     mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
   });
-  // No real sockets in tests: hide WebSocket to force the POST path.
-  vi.stubGlobal("WebSocket", undefined);
+  stubVoiceSocket();
   vi.stubGlobal(
     "fetch",
     vi.fn(() => new Promise(() => {})),

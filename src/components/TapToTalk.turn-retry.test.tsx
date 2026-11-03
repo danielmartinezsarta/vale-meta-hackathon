@@ -77,25 +77,14 @@ function speechFrame(): Int16Array {
   return new Int16Array(960).fill(4000);
 }
 
-function sseRetryTurn() {
-  const raw =
-    `event: final\ndata: {"transcript":"second final","audioProcessedMs":800}\n\n` +
-    `event: reply\ndata: {"text":"second reply from Vale"}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
+function answerTurn(
+  ws: FakeWs,
+  transcript: string,
+  reply: string,
+) {
+  ws.serverMessage({ type: "transcript", transcript, final: true });
+  ws.serverMessage({ type: "reply", text: reply });
+  ws.serverMessage({ type: "done" });
 }
 
 afterEach(() => {
@@ -106,59 +95,50 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("socket drop retries once over POST on the same turn", () => {
-  it("drop and reopen before the final: the reply still arrives under its own turn", async () => {
+describe("socket drop reconnects on the same path, never POSTs", () => {
+  it("drop mid-turn and drop after the end: the reply still arrives under its own turn", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
     vi.stubGlobal("WebSocket", FakeWs);
-    const fetchMock = vi.fn(() =>
-      Promise.resolve({ ok: true, body: sseRetryTurn() }),
-    );
+    const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
     stubSessionOnce();
 
     render(<TapToTalk debug />);
     fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
     await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(1);
+    });
+    const first = FakeWs.instances[0];
+    expect(first.url).toContain("/voice");
+    first.open();
+    await waitFor(() => {
       expect(driver).not.toBeNull();
     });
 
-    // /voice is down: the turns fall back to one bridge socket per turn.
-    await waitFor(() => {
-      expect(FakeWs.instances).toHaveLength(1);
-    });
-    FakeWs.instances[0].drop();
-
     driver!.onFrame(speechFrame());
     driver!.onSpeechStart();
-    // Retention: the turn socket opens at the 300 ms voice release.
     for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
-    await waitFor(() => {
-      expect(FakeWs.instances).toHaveLength(2);
-    });
-    const first = FakeWs.instances[1];
-    first.open();
     driver!.onSpeechEnd();
-    first.serverMessage({
-      type: "transcript",
-      transcript: "first final",
-      final: true,
-    });
-    first.serverMessage({ type: "reply", text: "first reply from Vale" });
-    first.serverMessage({ type: "done" });
+    answerTurn(first, "first final", "first reply from Vale");
     await waitFor(() => {
       expect(screen.getByText("first reply from Vale")).toBeTruthy();
     });
 
+    // Drop mid-turn: backoff redials /voice and replays the buffered turn.
     driver!.onFrame(speechFrame());
     driver!.onSpeechStart();
-    // Retention: the turn socket opens at the 300 ms voice release.
     for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
-    await waitFor(() => {
-      expect(FakeWs.instances).toHaveLength(3);
-    });
-    const second = FakeWs.instances[2];
+    first.drop();
+    await waitFor(
+      () => {
+        expect(FakeWs.instances).toHaveLength(2);
+      },
+      { timeout: 5000 },
+    );
+    const second = FakeWs.instances[1];
+    expect(second.url).toContain("/voice");
     second.open();
     driver!.onSpeechEnd();
     await waitFor(() => {
@@ -166,22 +146,18 @@ describe("socket drop retries once over POST on the same turn", () => {
         second.sentStrings().some((raw) => raw.includes("endStream")),
       ).toBe(true);
     });
-
-    second.drop();
-    await waitFor(
-      () => {
-        expect(FakeWs.instances).toHaveLength(4);
-      },
-      { timeout: 3000 },
-    );
-    const third = FakeWs.instances[3];
-    third.open();
-    third.drop();
+    // The live turn replayed on reconnect: buffered frames rode again.
+    expect(
+      second.sent.filter((item) => item instanceof ArrayBuffer).length,
+    ).toBeGreaterThan(0);
+    answerTurn(second, "second final", "second reply from Vale");
 
     await waitFor(() => {
       expect(screen.getByText("second reply from Vale")).toBeTruthy();
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // One transport: two /voice sockets total, no POST, no alert.
+    expect(FakeWs.instances).toHaveLength(2);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getByText("first reply from Vale")).toBeTruthy();
     expect(screen.getByText("second final")).toBeTruthy();
     expect(screen.getAllByText("Vale:")).toHaveLength(2);

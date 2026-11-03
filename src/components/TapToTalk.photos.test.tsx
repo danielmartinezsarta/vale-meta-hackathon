@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -10,39 +11,34 @@ vi.mock("@/lib/capture", () => ({
 const mockStartCapture = vi.mocked(startCapture);
 const STARTED_AT = new Date(Date.now() - 3723 * 1000).toISOString();
 
-function sseBody(): {
-  getReader: () => {
-    read: () => Promise<{ done: boolean; value?: Uint8Array }>;
-    releaseLock: () => void;
-  };
-} {
-  const encoder = new TextEncoder();
-  const raw =
-    'event: interim\ndata: {"transcript":"vale"}\n\n' +
-    'event: final\ndata: {"transcript":"vale open a session","audioProcessedMs":800}\n\n' +
-    `event: board\ndata: {"board":{"session":{"id":7,"clientName":"David","serviceName":"Gel manicure","startedAt":${JSON.stringify(STARTED_AT)}},"card":null,"list":[]}}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = encoder.encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
+function answerSessionTurn() {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({
+    type: "transcript",
+    transcript: "vale open a session",
+    final: true,
+  });
+  ws.serverMessage({
+    type: "board",
+    board: {
+      session: {
+        id: 7,
+        clientName: "David",
+        serviceName: "Gel manicure",
+        startedAt: STARTED_AT,
       },
-      releaseLock: () => {},
-    }),
-  };
+      card: null,
+      list: [],
+    },
+  });
+  ws.serverMessage({ type: "done" });
 }
 
 function driveSession() {
   vi.stubGlobal("navigator", {
     mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
   });
-  vi.stubGlobal("WebSocket", undefined);
+  stubVoiceSocket();
   mockStartCapture.mockImplementation((_stream, callbacks) => {
     const frame = new Int16Array(960).fill(4000);
     window.setTimeout(() => {
@@ -76,7 +72,8 @@ function stubRoutes(opts: {
         ? { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }
         : { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };
     }
-    return { ok: true, body: sseBody() };
+    // No voice transport on fetch: photo uploads ride REST, turns ride /voice.
+    return { ok: false, status: 500, json: async () => ({}) };
   }) as unknown as typeof fetch;
 }
 
@@ -124,6 +121,14 @@ function pickFile(input: HTMLInputElement): void {
 async function openSessionScreen() {
   driveSession();
   render(<TapToTalk autoStart />);
+  await waitFor(() => {
+    expect(
+      FakeVoiceSocket.instances[0]
+        ?.sentStrings()
+        .some((raw) => raw.includes("endStream")),
+    ).toBe(true);
+  });
+  answerSessionTurn();
   await waitFor(() => {
     expect(screen.getByRole("timer", { name: "Session time" })).toBeTruthy();
   });
