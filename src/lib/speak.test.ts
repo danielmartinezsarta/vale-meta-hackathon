@@ -733,4 +733,33 @@ describe("primeSpokenAudio (iOS gesture unlock)", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("clears a warm utterance that never ends, and leaves an ended one", () => {
+    const { synth } = stubSpeechSynthesis();
+    vi.useFakeTimers();
+    try {
+      primeSpokenAudio();
+      // The pre-clear runs once up front; the fallback has not fired yet.
+      expect(synth.cancel).toHaveBeenCalledTimes(1);
+      const said = synth.speak.mock.calls[0][0] as unknown as {
+        onend: (() => void) | null;
+      };
+      expect(typeof said.onend).toBe("function");
+      // A stuck warm trips the fallback clear.
+      vi.advanceTimersByTime(2000);
+      expect(synth.cancel).toHaveBeenCalledTimes(2);
+      // A warm that ended on its own needs no clear.
+      vi.clearAllMocks();
+      primeSpokenAudio();
+      const saidAgain = synth.speak.mock.calls[0][0] as unknown as {
+        onend: (() => void) | null;
+      };
+      saidAgain.onend?.();
+      vi.advanceTimersByTime(5000);
+      expect(synth.cancel).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
 });

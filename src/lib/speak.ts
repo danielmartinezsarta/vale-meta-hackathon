@@ -331,9 +331,33 @@ export function primeSpokenAudio(): void {
   try {
     const s = synth();
     if (s) {
+      // Clear any wedge an earlier prime left before queueing ours.
+      try {
+        s.cancel();
+      } catch {
+        /* nothing queued or nothing to clear */
+      }
       const warm = new SpeechSynthesisUtterance(" ");
       warm.volume = 0;
+      let warmEnded = false;
+      const markEnded = (): void => {
+        warmEnded = true;
+      };
+      warm.onend = markEnded;
+      warm.onerror = markEnded;
       s.speak(warm);
+      // A blank utterance that never ends would wedge speaking forever
+      // (isSpeaking reads the synth flag and the warm owes no estimate):
+      // clear it so the mic reopens.
+      setTimeout(() => {
+        if (!warmEnded) {
+          try {
+            s.cancel();
+          } catch {
+            /* already clear */
+          }
+        }
+      }, 2000);
     }
   } catch {
     /* voice output is best-effort */
