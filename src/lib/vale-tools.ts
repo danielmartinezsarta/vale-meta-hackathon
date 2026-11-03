@@ -681,7 +681,9 @@ export async function clientSummaryAsync(
   const result = showClientSummary(db, args, language);
   const data = result.data as ClientSummaryData | undefined;
   if (!result.ok || !data?.needsBrief) return result;
-  const stored = await refreshClientBrief(db, data.client_id, fetchImpl);
+  // Voice opts out of the cold-start retry: a loading model answers the
+  // card fallback at once instead of blocking speech for minutes.
+  const stored = await refreshClientBrief(db, data.client_id, fetchImpl, { retryLoading: false });
   if (!stored) return result;
   return {
     ok: true,
