@@ -418,8 +418,9 @@ describe("agent turn with tools", () => {
       onDelta: (text) => deltas.push(text),
     });
 
-    expect(result.text).toBe("Esta es la ficha.");
-    expect(deltas.join("")).toBe("Esta es la ficha.");
+    // The card answers itself in one round: no second-round narration.
+    expect(result.text).toBe("Ana's card is on screen.");
+    expect(deltas.join("")).toBe("");
     expect(deltas.join("")).not.toContain("Ana");
   });
 
@@ -473,27 +474,27 @@ describe("agent narration buffering", () => {
         calls += 1;
         if (calls === 1) {
           return sseResponse([
-            { type: "response.output_text.delta", data: { delta: "Abro la sesión ahora." } },
-            toolCall("resp_1", "client_card_show", { name: "Ana" }, "call_1"),
+            { type: "response.output_text.delta", data: { delta: "Abro la agenda ahora." } },
+            toolCall("resp_1", "agenda_show", { range: "week" }, "call_1"),
           ]);
         }
         return sseResponse([
           { type: "response.output_text.delta", data: { delta: "Esta es " } },
-          { type: "response.output_text.delta", data: { delta: "la ficha." } },
-          spoken("resp_2", "Esta es la ficha."),
+          { type: "response.output_text.delta", data: { delta: "la semana." } },
+          spoken("resp_2", "Esta es la semana."),
         ]);
       }),
     );
 
     const result = await runAgentTurn({
       key: "test-key",
-      transcript: "busca a ana",
+      transcript: "qué tengo esta semana",
       db: freshTestDb(),
       onDelta: (text) => deltas.push(text),
     });
 
-    expect(result.text).toBe("Esta es la ficha.");
-    expect(deltas.join("")).toBe("Esta es la ficha.");
+    expect(result.text).toBe("Esta es la semana.");
+    expect(deltas.join("")).toBe("Esta es la semana.");
     expect(deltas.join("")).not.toContain("Abro");
   });
 });
@@ -1001,6 +1002,76 @@ describe("closed reply language", () => {
     db.close();
   });
 
+describe("client card privacy (HACK-005)", () => {
+  const CARD_SECRETS = [
+    "+1-555-0101",
+    "david@example.com",
+    "1990-04-17",
+    "HO HO HO",
+    "latex",
+    "Rangers",
+  ];
+
+  function stubCardCall(bodies: Record<string, unknown>[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(JSON.parse((init as { body: string }).body) as Record<string, unknown>);
+        return sseResponse([toolCall("resp_1", "client_card_show", { name: "David" }, "call_1")]);
+      }),
+    );
+  }
+
+  it("answers the card in one round with no client details in any Meta input", async () => {
+    const db = freshTestDb();
+    db.prepare(
+      "INSERT INTO notes (client_id, text, kind, private_for_glimmer) VALUES ((SELECT id FROM clients WHERE name = 'David'), 'Hockey fan, ask about the Rangers', 'note', 0)",
+    ).run();
+    const bodies: Record<string, unknown>[] = [];
+    stubCardCall(bodies);
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "David is here",
+      language: "en",
+      slotKey: "card-leak-1",
+      db,
+    });
+    expect(result.toolUsed).toBe("client_card_show");
+    expect(result.text).toBe("David's card is on screen.");
+    expect(result.widget?.kind).toBe("client_card");
+    expect(bodies).toHaveLength(1);
+    const seen = JSON.stringify(bodies);
+    for (const secret of CARD_SECRETS) expect(seen).not.toContain(secret);
+    db.close();
+  });
+
+  it("keeps client details out of the history fed back to Meta", async () => {
+    const db = freshTestDb();
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init: unknown) => {
+        bodies.push(JSON.parse((init as { body: string }).body) as Record<string, unknown>);
+        return sseResponse([spoken("resp_2", "Anything else?")]);
+      }),
+    );
+    await runAgentTurn({
+      key: "test-key",
+      transcript: "thanks",
+      language: "en",
+      slotKey: "card-leak-2",
+      db,
+      history: [
+        { role: "user", text: "David is here", tool: null },
+        { role: "vale", text: "David's card is on screen.", tool: "client_card_show" },
+      ],
+    });
+    expect(bodies).toHaveLength(1);
+    const seen = JSON.stringify(bodies);
+    for (const secret of CARD_SECRETS) expect(seen).not.toContain(secret);
+    db.close();
+  });
+
   it("still clarifies a yes when Vale's question already ran a tool", async () => {
     const modelFetch = vi.fn(async () => sseResponse([spoken("resp_z", "Done.")]));
     vi.stubGlobal("fetch", modelFetch);
@@ -1021,4 +1092,5 @@ describe("closed reply language", () => {
     expect(modelFetch).not.toHaveBeenCalled();
     db.close();
   });
+});
 });

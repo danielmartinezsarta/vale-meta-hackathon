@@ -506,21 +506,6 @@ export function closeSession(db: ValeDb, args: { products_used?: unknown }, lang
   };
 }
 
-export interface ClientCard {
-  id: number;
-  name: string;
-  notes: PublicNote[];
-}
-
-export function findClient(db: ValeDb, args: { name?: unknown }): ToolResult & { card?: ClientCard } {
-  const name = typeof args.name === "string" ? args.name : "";
-  const found = matchOne(allClients(db), name);
-  if (found.kind === "none") return { ok: false, message: `No encuentro a "${name}".` };
-  if (found.kind === "ambiguous") return { ok: false, message: ambiguousMessage(found.options) };
-  const card: ClientCard = { id: found.row.id, name: found.row.name, notes: getPublicNotes(db, found.row.id) };
-  return { ok: true, message: `Esta es la ficha de ${found.row.name}.`, data: card, card };
-}
-
 export interface ClientVisit {
   service: string;
   visited_at: string;
