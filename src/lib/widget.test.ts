@@ -179,6 +179,14 @@ describe("buildWidget (typed payloads per kind)", () => {
       buildWidget("photo_preview", {}, { before: "b-url", expected: "e-url" }, NO_DB)?.data,
     ).toEqual({ before: "b-url", reference: null, expected: "e-url", final: null });
     expect(buildWidget("photo_preview", {}, { before: "", expected: "e-url" }, NO_DB)).toBeNull();
+    expect(
+      buildWidget("photo_show", {}, { before: null, reference: "r-url", expected: null, final: null }, NO_DB),
+    ).toEqual({
+      kind: "photos",
+      title: "Photos",
+      size: "full",
+      data: { before: null, reference: "r-url", expected: null, final: null },
+    });
   });
 
   it("fills the card health block from the store past the masked feed", () => {

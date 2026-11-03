@@ -12,6 +12,7 @@ import {
   contractWidgetFor,
   runAgentTurn,
   sessionContext,
+  toolWaitPhrase,
 } from "./agent";
 import { freshTestDb } from "./db";
 import { openSession } from "./vale-tools";
@@ -101,6 +102,47 @@ describe("agent prompt", () => {
       args: {},
       data,
     });
+    expect(contractWidgetFor("photo_show", {}, data)).toEqual({
+      tool: "photo_show",
+      args: {},
+      data,
+    });
+  });
+
+  it("names the wait line for image generation only", () => {
+    expect(toolWaitPhrase("photo_preview_design", "en")).toBe(
+      "Give me a moment, creating your preview…",
+    );
+    expect(toolWaitPhrase("photo_preview_design", "es")).toBe(
+      "Dame un momento, estoy creando tu vista previa…",
+    );
+    expect(toolWaitPhrase("session_open", "en")).toBeNull();
+    expect(toolWaitPhrase("unknown_tool", "en")).toBeNull();
+  });
+
+  it("fires onToolStart before the tool runs", async () => {
+    const db = freshTestDb();
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        return calls === 1
+          ? sseResponse([toolCall("resp_1", "session_open", { client_name: "Ana" }, "call_1")])
+          : sseResponse([spoken("resp_2", "Done.")]);
+      })
+    );
+    const started: string[] = [];
+    const result = await runAgentTurn({
+      key: "test-key",
+      transcript: "vale, open a session for Ana",
+      language: "en",
+      db,
+      onToolStart: (tool) => started.push(tool),
+    });
+    expect(started).toEqual(["session_open"]);
+    expect(result.toolUsed).toBe("session_open");
+    db.close();
   });
 
   it("carries the warm coworker persona and capabilities in English", () => {

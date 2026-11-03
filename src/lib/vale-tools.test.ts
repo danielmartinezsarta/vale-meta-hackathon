@@ -67,6 +67,7 @@ describe("tool definitions", () => {
         "client_note_add",
         "goal_show",
         "photo_preview_design",
+        "photo_show",
         "session_close",
         "session_log_supply",
         "session_open",
@@ -1212,6 +1213,40 @@ describe("photo_preview_design", () => {
   it("keeps sync tools working through the async runner", async () => {
     const db = freshTestDb();
     expect((await runValeToolAsync(db, "goal_show", {})).ok).toBe(true);
+    db.close();
+  });
+});
+
+describe("photo_show", () => {
+  it("needs an open session", () => {
+    const db = freshTestDb();
+    const result = runValeTool(db, "photo_show", {}, "en");
+    expect(result.ok).toBe(false);
+    db.close();
+  });
+
+  it("returns stored slots, nulls where nothing is stored", () => {
+    const db = freshTestDb();
+    previewPhotoDir = mkdtempSync(join(tmpdir(), "tool-photo-show-"));
+    process.env.VALE_PHOTO_DIR = previewPhotoDir;
+    mkdirSync(sessionPhotosDir(), { recursive: true });
+    const opened = openSession(db, { client_name: "Ana", service_name: "Retiro de gel" });
+    expect(opened.ok).toBe(true);
+    const session = db
+      .prepare("SELECT id FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1")
+      .get() as { id: number };
+    const empty = runValeTool(db, "photo_show", {}, "en") as { ok: boolean; data: Record<string, unknown> };
+    expect(empty.ok).toBe(true);
+    expect(empty.data.before).toBeNull();
+    expect(empty.data.expected).toBeNull();
+    expect(empty.data.final).toBeNull();
+    writeFileSync(join(sessionPhotosDir(), `pre_${session.id}.jpg`), Buffer.from([1, 2, 3]));
+    mkdirSync(previewsDir(), { recursive: true });
+    writeFileSync(join(previewsDir(), `preview_${session.id}.png`), Buffer.from([1, 2, 3]));
+    const stored = runValeTool(db, "photo_show", {}, "en") as { ok: boolean; data: Record<string, unknown> };
+    expect(stored.data.before).toBe(`/api/photos?file=pre_${session.id}.jpg`);
+    expect(stored.data.expected).toBe(`/api/photos?file=preview_${session.id}.png`);
+    expect(stored.data.final).toBeNull();
     db.close();
   });
 });
