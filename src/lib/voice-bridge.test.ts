@@ -187,6 +187,20 @@ function attachForTest(
 }
 
 describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
+  it("sends the current board on connect so a running session shows at once", async () => {
+    const browser = new FakeBrowser();
+    attachForTest(browser);
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+    const boards = browser.frames().filter((frame) => frame.type === "board");
+    expect(boards.length).toBeGreaterThan(0);
+    expect(boards[0].board).toHaveProperty("session");
+    browser.close(1000, "test done");
+  });
+
   it("relays live partials, ends the turn on a Buffer control frame, then replies", async () => {
     receivedBinaryBytes = 0;
     receivedEndStream = 0;
@@ -1544,14 +1558,15 @@ describe("empty finals (noise, not Daniel)", () => {
           browser.frames().filter((frame) => frame.type === "done").length,
         ).toBe(1);
       });
-      // Nothing executed: no model call, no reply, no board move.
+      // Nothing executed: no model call, no reply, and no board move past
+      // the connect-time board.
       expect(agent).not.toHaveBeenCalled();
       expect(
         browser.frames().filter((frame) => frame.type === "reply"),
       ).toHaveLength(0);
       expect(
         browser.frames().filter((frame) => frame.type === "board"),
-      ).toHaveLength(0);
+      ).toHaveLength(1);
       const empty = loggedTurns().find((entry) => entry.transcript === "");
       expect(empty).toMatchObject({ modelSkipped: true, gate: null });
       browser.close(1000, "test done");

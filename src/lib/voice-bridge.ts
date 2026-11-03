@@ -1444,4 +1444,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   // No Meta dial here: the first audio frames open it (dial-on-voice), so a
   // tap with no speech never holds an upstream socket that idles out.
   sendJson(browser, { type: "bridge", state: "open" });
+  // The screen opens on the truth: an already-running session shows at
+  // once instead of hiding until the first executed turn.
+  sendBoard();
 }
