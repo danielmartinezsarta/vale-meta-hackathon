@@ -1,5 +1,5 @@
 // @vitest-environment node
-// HACK-005 seed: David's record for the private brief (spec point 8).
+// David's record for the private brief: 3-week visits, relative birthday.
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
@@ -27,7 +27,7 @@ function davidId(db: DatabaseSync): number {
   return (db.prepare("SELECT id FROM clients WHERE name = ?").get("David") as { id: number }).id;
 }
 
-describe("HACK-005 David seed (spec point 8)", () => {
+describe("David seed for the private brief", () => {
   it("keeps the birthday five days out with the 1990 year", () => {
     const db = freshTestDb();
     try {

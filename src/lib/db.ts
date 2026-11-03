@@ -58,12 +58,12 @@ interface SeedClient {
   phone?: string;
   email?: string;
   birthday?: string;
-  /** HACK-005 relative birthday: month/day this many days out, fixed year. */
+  /** Relative birthday: month/day this many days out, fixed year. */
   birthday_in_days?: number;
   birthday_year?: number;
 }
 
-/** HACK-005: David's birthday stays this week no matter when the seed runs. */
+/** David's birthday stays this week no matter when the seed runs. */
 function birthdayForSeed(client: SeedClient): string {
   if (typeof client.birthday_in_days === "number") {
     return seedBirthday(client.birthday_in_days, client.birthday_year ?? 1990);
@@ -407,7 +407,7 @@ function seedDemoNotes(db: ValeDb, notes: SeedDemoNote[], clientIds: Map<string,
     const clientId = clientIds.get(note.client);
     if (clientId === undefined) continue;
     const kind = note.kind === "health_note" || note.kind === "health" ? "health_note" : "note";
-    // HACK-005: dedup on the full row so one client can seed several notes.
+    // Dedup on the full row so one client can seed several notes.
     const existing = db
       .prepare("SELECT id FROM notes WHERE client_id = ? AND kind = ? AND text = ?")
       .get(clientId, kind, note.text) as { id: number } | undefined;
@@ -548,8 +548,8 @@ export function recordTurn(
     });
     return;
   }
-  // HACK-005: the spoken brief never reaches the history fed back to the
-  // cloud model. Only its label is stored; the brief itself stays in the
+  // The spoken brief never reaches the history fed back to the cloud
+  // model. Only its label is stored; the brief itself stays in the
   // private store and on the screen that showed it.
   const storedText =
     role === "vale" && tool === "client_summary" ? "(client summary shown)" : text;

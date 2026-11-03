@@ -1004,7 +1004,7 @@ describe("closed reply language", () => {
     db.close();
   });
 
-describe("client card privacy (HACK-005)", () => {
+describe("client card privacy", () => {
   const CARD_SECRETS = [
     "+1-555-0101",
     "david@example.com",

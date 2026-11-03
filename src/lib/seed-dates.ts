@@ -1,7 +1,7 @@
 // Relative-date helper for the demo seed (HACK-024). The demo agenda is
 // always "today", so the seed resolves day markers on the salon clock
 // (America/Bogota, same as the tools) instead of storing fixed dates.
-// HACK-005 extends the JSON markers on top of this helper; keep the
+// The JSON markers extend on top of this helper; keep the
 // marker set ("today", "tomorrow", plain YYYY-MM-DD) stable.
 // Server-side only like the rest of the seed; never import from client code.
 import { bogotaDay } from "./natural-date";
@@ -26,7 +26,7 @@ export function resolveSeedDay(day: string, when = new Date()): string {
 }
 
 /**
- * HACK-005 relative birthday: month and day from an offset off today, with
+ * Relative birthday: month and day from an offset off today, with
  * a fixed birth year, so the birthday is always that many days out. The
  * day clamps to the month length (Feb 29 never lands on a common year).
  */
