@@ -717,81 +717,71 @@ function PhotosBody({ data }: { data: PhotosData }) {
 }
 
 function SummaryBody({ data }: { data: SessionSummaryData }) {
+  const row = (key: string, label: React.ReactNode, value: React.ReactNode, cls = "") => (
+    <div key={key} className={`aw-sum__row${cls === "" ? "" : ` ${cls}`}`}>
+      <span>{label}</span>
+      <b>{value}</b>
+    </div>
+  );
   return (
     <div className="aw-sum">
       {data.client !== null && (
-        <p>
-          <b>{data.client}</b>
-          {data.date !== null && (
-            <>
-              {" · "}
-              <span>{data.date}</span>
-            </>
-          )}
-        </p>
-      )}
-      {(data.service !== null || data.extras.length > 0 || data.suggested !== null) && (
-        <div className="aw-sum__sec">
-          <b>Service</b>
-          {data.service !== null && (
-            <p>
-              <span>{data.service.name}</span>
-              <span>{usdWhole(data.service.price)}</span>
-            </p>
-          )}
-          {data.extras.map((extra) => (
-            <p key={extra.label}>
-              <span>{extra.label}</span>
-              <span>{usdWhole(extra.amount)}</span>
-            </p>
-          ))}
-          {data.suggested !== null && (
-            <p>
-              <span>Suggested</span>
-              <span>{usdWhole(data.suggested)}</span>
-            </p>
-          )}
+        <div className="aw-sum__who">
+          <span className="aw-sum__avatar" aria-hidden="true">
+            {initials(data.client)}
+          </span>
+          <div className="aw-sum__name">
+            <b>{data.client}</b>
+            {data.date !== null && <small>{data.date}</small>}
+          </div>
         </div>
+      )}
+      {(data.service !== null ||
+        data.extras.length > 0 ||
+        data.suggested !== null ||
+        data.charged !== null) && (
+        <section className="aw-sum__block">
+          <h3>Service and extras</h3>
+          {data.service !== null && row("service", data.service.name, usdWhole(data.service.price))}
+          {data.extras.map((extra) =>
+            row(`extra-${extra.label}`, `+ ${extra.label}`, usdWhole(extra.amount), "aw-sum__row--sub"),
+          )}
+          {data.suggested !== null &&
+            row("suggested", "Suggested price", usdWhole(data.suggested), "aw-sum__row--total")}
+          {data.charged !== null && (
+            <div className="aw-sum__row aw-sum__row--paid">
+              <span>
+                {CHECK_ICON}Charged
+              </span>
+              <b>{usdWhole(data.charged)}</b>
+            </div>
+          )}
+        </section>
       )}
       {(data.timeTotal !== null || data.timeParts.length > 0) && (
-        <div className="aw-sum__sec">
-          <b>Time</b>
-          {data.timeTotal !== null && (
-            <p>
-              <span>Total</span>
-              <span>{data.timeTotal}</span>
-            </p>
+        <section className="aw-sum__block">
+          <div className="aw-sum__h">
+            <h3>Time</h3>
+            {data.timeTotal !== null && <span>{data.timeTotal}</span>}
+          </div>
+          {data.timeParts.length > 0 && (
+            <div className="aw-sum__time">
+              {data.timeParts.map((part) => (
+                <div key={part.label}>
+                  <b>{part.time}</b>
+                  <small>{part.label}</small>
+                </div>
+              ))}
+            </div>
           )}
-          {data.timeParts.map((part) => (
-            <p key={part.label}>
-              <span>{part.label}</span>
-              <span>{part.time}</span>
-            </p>
-          ))}
-        </div>
+        </section>
       )}
-      {(data.charged !== null || data.costs.length > 0 || data.fixedDetail !== null) && (
-        <div className="aw-sum__sec">
-          <b>Cost</b>
-          {data.charged !== null && (
-            <p>
-              <span>Charged</span>
-              <span>{usdWhole(data.charged)}</span>
-            </p>
-          )}
-          {data.costs.map((cost) => (
-            <p key={cost.label}>
-              <span>{cost.label}</span>
-              <span>{usdWhole(cost.amount)}</span>
-            </p>
-          ))}
-          {data.fixedDetail !== null && (
-            <p>
-              <span>Fixed</span>
-              <span>{data.fixedDetail}</span>
-            </p>
-          )}
-        </div>
+      {(data.costs.length > 0 || data.fixedDetail !== null) && (
+        <section className="aw-sum__block">
+          <h3>How the price was calculated</h3>
+          {data.costs.map((cost) => row(`cost-${cost.label}`, cost.label, usdWhole(cost.amount)))}
+          {data.fixedDetail !== null && <p className="aw-sum__fixed">Fixed costs: {data.fixedDetail}</p>}
+        </section>
       )}
     </div>
   );
@@ -1002,7 +992,13 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
     case "session_summary":
       return (
         <section className={sheet("aw-sheet aw-summary-sheet")} role="dialog" aria-label="Session summary">
-          <SheetHead icon={SUMMARY_ICON} title={widget.title} />
+          <SheetHead
+            icon={SUMMARY_ICON}
+            title={widget.title}
+            closeClass="aw-close"
+            closeLabel="Close session summary"
+            onClose={onClose}
+          />
           <SummaryBody data={widget.data} />
         </section>
       );

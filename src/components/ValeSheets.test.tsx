@@ -203,6 +203,38 @@ describe("ValeSheets (sheet per kind)", () => {
     expect(screen.getByText("1h 12m")).toBeTruthy();
   });
 
+  it("renders the summary in design markup with rows and a close button", () => {
+    const onClose = vi.fn();
+    render(
+      <ValeSheets
+        widget={{
+          kind: "session_summary",
+          title: "Session summary",
+          size: "full",
+          data: {
+            client: "David",
+            date: "Nov 2, 2026",
+            service: { name: "Gel manicure", price: 28 },
+            extras: [{ label: "Gold foil", amount: 7 }],
+            suggested: 35,
+            charged: 35,
+            timeTotal: "1h 12m",
+            timeParts: [{ label: "Apply", time: "20m" }],
+            costs: [{ label: "Supplies", amount: 4 }],
+            fixedDetail: "$0.60 of this service",
+          },
+        }}
+        onClose={onClose}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Session summary" });
+    expect(dialog.querySelector(".aw-sum__avatar")?.textContent).toBe("D");
+    expect(dialog.querySelectorAll(".aw-sum__row").length).toBeGreaterThan(0);
+    expect(dialog.querySelector(".aw-sum__row--paid")).toBeTruthy();
+    screen.getByRole("button", { name: "Close session summary" }).click();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("renders the health and regular note sheets", () => {
     renderSheet({
       kind: "health_note",
