@@ -151,3 +151,74 @@ describe("in-session screen (names, stopwatch, sheets)", () => {
     });
   });
 });
+
+describe("already-open session on connect", () => {
+  class FakeWs {
+    static instances: FakeWs[] = [];
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = 0;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: { data: unknown }) => void) | null = null;
+    onclose: (() => void) | null = null;
+    sent: unknown[] = [];
+    url: string;
+    constructor(url: string) {
+      this.url = url;
+      FakeWs.instances.push(this);
+    }
+    send(data: unknown): void {
+      this.sent.push(data);
+    }
+    close(): void {
+      this.readyState = 3;
+      this.onclose?.();
+    }
+    open(): void {
+      this.readyState = 1;
+      this.onopen?.();
+    }
+    serverMessage(message: unknown): void {
+      this.onmessage?.({ data: JSON.stringify(message) });
+    }
+  }
+
+  it("shows the running session with its timer before any turn", async () => {
+    FakeWs.instances = [];
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+    });
+    vi.stubGlobal("WebSocket", FakeWs);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("no post", { status: 500 })));
+    mockStartCapture.mockImplementation(() => ({
+      stop: () => {},
+      state: () => "running",
+      engine: () => "script" as const,
+    }));
+    render(<TapToTalk autoStart />);
+    await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(1);
+    });
+    const ws = FakeWs.instances[0];
+    ws.open();
+    // The server sends the current board right on connect.
+    ws.serverMessage({
+      type: "board",
+      board: {
+        session: {
+          clientName: "David",
+          serviceName: "Gel manicure",
+          startedAt: STARTED_AT,
+        },
+        card: null,
+        list: [],
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("David")).toBeTruthy();
+    });
+    expect(screen.getByText("Gel manicure")).toBeTruthy();
+    expect(screen.getByRole("timer", { name: "Session time" })).toBeTruthy();
+    expect(screen.getByText(/01:02:0[3-9]/)).toBeTruthy();
+  });
+});
