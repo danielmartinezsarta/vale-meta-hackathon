@@ -9,6 +9,11 @@ export const CAPTURE_RATE = 24000;
 export const FRAME_SAMPLES = 960; // 40 ms frames at 24 kHz mono.
 // 25 frames x 40 ms ≈ 1 s of pre-roll so a soft onset is never clipped.
 export const PREROLL_FRAMES = 25;
+/**
+ * Resume delay: after unpausing, frames refill the pre-roll ring without
+ * feeding the VAD, so her last word never trips the next segment.
+ */
+export const RESUME_QUIET_MS = 300;
 
 export function floatToPcm16(input: Float32Array): Int16Array {
   const out = new Int16Array(input.length);
@@ -82,10 +87,11 @@ export class SpeechDetector {
     // Mean-abs 200: the fixture's softest onset scores 244, silence scores 0.
     this.threshold = options.threshold ?? 200;
     const frameMs = options.frameMs ?? 40;
-    // 800 ms: short pauses stay in one turn, longer ones split without losing audio.
+    // 1000 ms: short pauses stay in one turn, longer ones split without
+    // losing audio.
     this.endSilenceFrames = Math.max(
       1,
-      Math.round((options.endSilenceMs ?? 800) / frameMs),
+      Math.round((options.endSilenceMs ?? 1000) / frameMs),
     );
   }
 
@@ -184,6 +190,12 @@ export interface CaptureCallbacks {
   onLevel?: (level: number) => void;
   /** The context never left "suspended": zeros would flow. Tap again. */
   onBlocked?: () => void;
+  /**
+   * The detector is about to reset (clock rebuild): the client must close
+   * a released segment with endStream first, or the frames in flight lose
+   * their ending and the Meta turn hangs open without audio.
+   */
+  onInterrupt?: () => void;
 }
 
 /** Warm context adopted by the next startCapture. Only one lives at a time. */
@@ -439,6 +451,8 @@ export function startCapture(
   };
   let stopped = false;
   let paused = false;
+  /** Resume delay: the ring refills while the VAD stays deaf. */
+  let resumeQuietUntil = 0;
   /** Sub-frame remainder: the previous block's tail joins the next head. */
   let carry: Float32Array = new Float32Array(0);
   /** Source intake events: ScriptProcessor runs, or worklet quanta. */
@@ -525,6 +539,12 @@ export function startCapture(
   // utterance accounting behave identically on ScriptProcessor blocks and
   // worklet frames.
   const feedFrame = (frame: Int16Array, quanta: number) => {
+    // Resume delay: the ring refills while the VAD stays deaf.
+    if (Date.now() < resumeQuietUntil) {
+      preroll.push(frame);
+      if (preroll.length > PREROLL_FRAMES) preroll.shift();
+      return;
+    }
     const transition = detector.feed(frame);
     if (!detector.isSpeaking && transition === "silence") {
       preroll.push(frame);
@@ -537,9 +557,11 @@ export function startCapture(
       uttFrames = preroll.length + 1;
       uttQuantaFirst = quanta;
       uttQuantaLast = quanta;
+      // The turn opens before its audio replays: a speech-opened turn
+      // would otherwise wipe the pre-roll it just flushed.
+      callbacks.onSpeechStart();
       for (const buffered of preroll) callbacks.onFrame(buffered);
       preroll.length = 0;
-      callbacks.onSpeechStart();
       callbacks.onFrame(frame);
       return;
     }
@@ -637,6 +659,13 @@ export function startCapture(
   const rebuildCapture = async () => {
     if (rebuilding || stopped) return;
     rebuilding = true;
+    // The detector state dies here: the client closes a released segment
+    // with endStream first, or its ending rides nowhere.
+    try {
+      callbacks.onInterrupt?.();
+    } catch {
+      /* ending the turn never breaks capture */
+    }
     try {
       detachGraph();
       const fresh = new AudioContextCtor();
@@ -740,7 +769,12 @@ export function startCapture(
       } catch {
         /* torn down; the local flags still hold */
       }
-      if (!next) resetListening();
+      if (!next) {
+        resetListening();
+        resumeQuietUntil = Date.now() + RESUME_QUIET_MS;
+      } else {
+        resumeQuietUntil = 0;
+      }
     },
     state() {
       try {
