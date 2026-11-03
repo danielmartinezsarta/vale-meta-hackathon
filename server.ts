@@ -16,7 +16,8 @@ const port = Number(process.env.PORT ?? process.env.VOICE_PORT ?? 3000);
 
 async function main(): Promise<void> {
   // A missing key fails every turn as E-ASR downstream; fail here instead.
-  if (!process.env.META_API_KEY) {
+  // VALE_REPLAY=1 plays the committed run with no model, so it boots keyless.
+  if (!process.env.META_API_KEY && process.env.VALE_REPLAY !== "1") {
     console.error("[voice-server] META_API_KEY is not set; refusing to start.");
     process.exit(1);
   }

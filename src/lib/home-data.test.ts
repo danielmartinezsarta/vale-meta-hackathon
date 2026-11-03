@@ -5,7 +5,7 @@ import { getHomeData } from "./home-data";
 describe("getHomeData (home screen snapshot)", () => {
   it("returns the user name with the seeded demo agenda on a fresh seed", () => {
     const data = getHomeData(freshTestDb());
-    expect(data.userName).toBe("Daniel");
+    expect(data.userName).toBe("Demo");
     expect(data.today.length).toBeGreaterThan(0);
     expect(data.goal).toMatchObject({ month: expect.any(String) });
     expect(Array.isArray(data.supplies)).toBe(true);

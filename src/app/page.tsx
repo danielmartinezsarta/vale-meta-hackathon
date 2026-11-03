@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { SplashScreen } from "@/components/SplashScreen";
 import { HomeScreen } from "@/components/HomeScreen";
+import { KeyStatusBanner } from "@/components/KeyStatusBanner";
+import { ReplayScreen } from "@/components/ReplayScreen";
 import { TapToTalk } from "@/components/TapToTalk";
 import { useValeLanguage } from "@/components/useValeLanguage";
 import type { HomeData } from "@/lib/home-data";
@@ -14,6 +16,22 @@ export default function Home() {
   const [screen, setScreen] = useState<Screen>("home");
   const [language, setLanguage] = useValeLanguage();
   const [homeData, setHomeData] = useState<HomeData | null>(null);
+  const [replayMode, setReplayMode] = useState(false);
+
+  // A served run file means VALE_REPLAY=1: play the recording, no mic.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/replay")
+      .then((response) => {
+        if (!cancelled && response.ok) setReplayMode(true);
+      })
+      .catch(() => {
+        /* live mode: the home screen renders its empty states instead */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (showSplash) return;
@@ -35,11 +53,19 @@ export default function Home() {
 
   if (showSplash) return <SplashScreen onDone={() => setShowSplash(false)} />;
 
+  if (replayMode) return <ReplayScreen />;
+
   if (screen === "voice")
-    return <TapToTalk autoStart onSleep={() => setScreen("home")} />;
+    return (
+      <>
+        <KeyStatusBanner language={language} />
+        <TapToTalk autoStart onSleep={() => setScreen("home")} />
+      </>
+    );
 
   return (
     <main>
+      <KeyStatusBanner language={language} />
       <HomeScreen
         data={homeData}
         language={language}
