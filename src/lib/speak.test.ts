@@ -13,6 +13,7 @@ import {
   pickVoice,
   preferredVoice,
   prosodyFor,
+  prosodyForVoice,
   setVoiceEngine,
   setVoiceForLanguage,
   setVoicePrefs,
@@ -660,5 +661,32 @@ describe("one voice per language (lead round p2)", () => {
     // A 25-word reply still fits far inside its cap.
     const reply = "All set, timer is running for Nina. Take your time.".repeat(2);
     expect(estimateSpeechMs(reply, 0.9)).toBeGreaterThan(2 * reply.length * 70);
+  });
+});
+
+describe("tuned prosody only for Ava and Paulina (HACK-024)", () => {
+  it("uses the picked rate and pitch for Ava and Paulina", () => {
+    window.localStorage.removeItem("vale-voice");
+    setVoicePrefs({ rateEn: 1.2, rateEs: 0.8, pitchEn: 1.1, pitchEs: 0.9 });
+    expect(prosodyForVoice(namedVoice("Ava (Premium)"), "en")).toEqual({ rate: 1.2, pitch: 1.1 });
+    expect(prosodyForVoice(namedVoice("Ava (Enhanced)"), "en")).toEqual({ rate: 1.2, pitch: 1.1 });
+    expect(prosodyForVoice(namedVoice("Paulina (Enhanced)"), "es")).toEqual({ rate: 0.8, pitch: 0.9 });
+  });
+
+  it("stays neutral at 1.0/1.0 for a list with neither Ava nor Paulina", () => {
+    window.localStorage.removeItem("vale-voice");
+    setVoicePrefs({ rateEn: 1.2, rateEs: 0.8, pitchEn: 1.1, pitchEs: 0.9 });
+    const list = [
+      namedVoice("Samantha"),
+      namedVoice("Zoe (Premium)"),
+      namedVoice("Google US English"),
+      namedVoice("Marisol (Premium)", "es-ES"),
+      namedVoice("Jorge", "es-MX"),
+    ];
+    for (const voice of list) {
+      expect(prosodyForVoice(voice, "en")).toEqual({ rate: 1, pitch: 1 });
+      expect(prosodyForVoice(voice, "es")).toEqual({ rate: 1, pitch: 1 });
+    }
+    expect(prosodyForVoice(null, "en")).toEqual({ rate: 1, pitch: 1 });
   });
 });
