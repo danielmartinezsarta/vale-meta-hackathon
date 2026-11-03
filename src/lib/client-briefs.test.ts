@@ -158,7 +158,7 @@ describe("client briefs store (HACK-005)", () => {
     expect(
       await refreshClientBrief(db, id, always as unknown as typeof fetch, { retryDelayMs: 1 }),
     ).toBeNull();
-    expect(always).toHaveBeenCalledTimes(4);
+    expect(always).toHaveBeenCalledTimes(6);
     db.close();
   });
 
