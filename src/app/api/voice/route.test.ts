@@ -144,6 +144,18 @@ function stubAgent(text = "Got it, all set.") {
   return vi.fn(async () => fakeAgentReply(text));
 }
 
+function fakeToolCall(tool: string, id = "resp_tool"): Response {
+  const raw =
+    `event: response.completed\ndata: ${JSON.stringify({
+      response: {
+        id,
+        output: [{ type: "function_call", name: tool, call_id: "call_1", arguments: "{}" }],
+        usage: { input_tokens: 100, output_tokens: 20 },
+      },
+    })}\n\n`;
+  return new Response(new TextEncoder().encode(raw), { status: 200 });
+}
+
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   vi.unstubAllEnvs();
@@ -219,10 +231,6 @@ describe("POST /api/voice", () => {
 
   it("runs a typed turn without the wake gate", async () => {
     vi.stubGlobal("fetch", stubAgent());
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
     const request = new Request("http://localhost/api/voice", {
       method: "POST",
       headers: {
@@ -237,12 +245,52 @@ describe("POST /api/voice", () => {
     expect(text).toContain("book a gel refill");
     expect(text).toContain("event: reply");
     expect(text).not.toContain("event: ignored");
-    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    // The unified log carries the turn with gate "typed" for replay.
+    const turns = loggedTurns();
     expect(turns).toHaveLength(1);
-    expect(JSON.parse(turns[0].replace("[voice-turn] ", "")).gate).toBe(
-      "typed",
+    expect(turns[0].gate).toBe("typed");
+    vi.unstubAllGlobals();
+  });
+
+  it("narrates image generation at once, before the tool finishes", async () => {
+    const costLog = join(process.cwd(), "data", "preview-cost.jsonl");
+    let costBefore = "";
+    try {
+      costBefore = readFileSync(costLog, "utf8");
+    } catch {
+      costBefore = "";
+    }
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        return calls === 1 ? fakeToolCall("photo_preview_design") : fakeAgentReply("Listo, ya la tienes.");
+      }),
     );
-    spy.mockRestore();
+    const request = new Request("http://localhost/api/voice", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": "typed-wait-1",
+      },
+      body: JSON.stringify({ transcript: "show me how it will look", typed: true }),
+    });
+    const response = await POST(request);
+    const text = await response.text();
+    // No open session and no before photo in the test DB: the tool fails
+    // fast, so this burns zero Image calls and the cost log never moves.
+    const waitAt = text.indexOf("Give me a moment, creating your preview");
+    expect(waitAt).toBeGreaterThan(-1);
+    expect(text.indexOf("event: reply-delta")).toBeGreaterThan(-1);
+    expect(text.indexOf("event: reply-delta")).toBeLessThan(text.indexOf("event: reply\n"));
+    let costAfter = "";
+    try {
+      costAfter = readFileSync(costLog, "utf8");
+    } catch {
+      costAfter = "";
+    }
+    expect(costAfter).toBe(costBefore);
     vi.unstubAllGlobals();
   });
 
