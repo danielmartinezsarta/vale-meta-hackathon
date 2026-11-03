@@ -1,4 +1,4 @@
-// HACK-005: private client briefs from the open-weights model (Glimmer).
+// Private client briefs from the open-weights model (Glimmer).
 // Server-side only: the record below (including health-note text) never
 // leaves this module toward the cloud model. Meta only ever sees the
 // client name and agenda; the stored brief is spoken and shown, never
@@ -224,6 +224,31 @@ export async function fetchClientBrief(
   return { brief, ms: Date.now() - started };
 }
 
+/** Lowercase alphanumeric tokens, short glue words dropped. */
+export function contentWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 4);
+}
+
+/**
+ * Voice-safety net behind the prompt rule: a brief that repeats any
+ * health-note word is dropped. The record's own notes supply the word set,
+ * so the check follows whatever the client file holds.
+ */
+export function briefLeaksHealth(brief: ClientBrief, record: BriefRecord): boolean {
+  const banned = new Set<string>();
+  for (const note of record.notes) {
+    if (note.kind !== "health_note") continue;
+    for (const word of contentWords(note.text)) banned.add(word);
+  }
+  if (banned.size === 0) return false;
+  return [brief.spoken, ...brief.summary]
+    .flatMap(contentWords)
+    .some((word) => banned.has(word));
+}
+
 export interface RefreshOptions {
   /** Ride out cold starts: retry a 503 with backoff. Voice turns opt out. */
   retryLoading?: boolean;
@@ -265,10 +290,15 @@ export async function refreshClientBrief(
     | undefined;
   const tries = options.retryLoading === false ? 1 : REFRESH_ATTEMPTS;
   const baseDelay = options.retryDelayMs ?? 15000;
+  let regenerated = false;
   for (let attempt = 0; attempt < tries; attempt += 1) {
     try {
       const { brief, ms } = await fetchClientBrief(record, client?.sex ?? "", fetchImpl);
-      return storeBrief(db, clientId, brief, hash, ms);
+      if (!briefLeaksHealth(brief, record)) return storeBrief(db, clientId, brief, hash, ms);
+      // A leaking brief is dropped and generated once more; a second
+      // leak stores nothing so the voice falls back to the card.
+      if (regenerated) return null;
+      regenerated = true;
     } catch (error) {
       if (!(error instanceof GlimmerLoadingError) || attempt + 1 >= tries) return null;
       await sleep(baseDelay * (attempt + 1));
