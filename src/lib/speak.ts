@@ -550,6 +550,7 @@ async function playSentence(
     onDone();
     return;
   }
+  let clearSentenceAudio = (): void => {};
   try {
     const blob = await response.blob();
     if (playId !== seamlessPlayId) {
@@ -559,13 +560,35 @@ async function playSentence(
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     seamlessAudio = audio;
-    audio.onended = () => {
+    let audioDone = false;
+    clearSentenceAudio = (): void => {
+      if (audioDone) return;
+      audioDone = true;
+      clearTimeout(watchdog);
+      try {
+        audio.pause();
+      } catch {
+        /* already stopped */
+      }
       URL.revokeObjectURL(url);
       if (seamlessAudio === audio) seamlessAudio = null;
+    };
+    // iOS can drop onended: without this the reply holds the mic
+    // forever (mute clears it, which is why mute unblocked the field).
+    // next() ignores a stale playId, so forcing the end is safe.
+    const watchdog = setTimeout(() => {
+      clearSentenceAudio();
+      onDone();
+    }, estimateSpeechMs(sentence, 1) + SEAMLESS_SENTENCE_GRACE_MS);
+    const endSentence = (): void => {
+      clearSentenceAudio();
       onDone();
     };
+    audio.onended = endSentence;
+    audio.onerror = endSentence;
     await audio.play();
   } catch {
+    clearSentenceAudio();
     if (playId === seamlessPlayId) {
       seamlessClean = false;
       sayBrowserFallback(sentence, language, false);
@@ -785,6 +808,8 @@ export function stopSpeaking(reason: string): void {
  */
 export const SPEECH_MS_PER_CHAR = 150;
 export const SPEECH_END_MARGIN_MS = 2500;
+/** Per-sentence grace past the estimate before a missing onended is forced. */
+export const SEAMLESS_SENTENCE_GRACE_MS = 5000;
 
 /** When the queued reply should be over, worst case. 0 means nothing queued. */
 let speechDueUntil = 0;
