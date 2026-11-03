@@ -231,7 +231,9 @@ export interface RefreshOptions {
   retryDelayMs?: number;
 }
 
-const REFRESH_ATTEMPTS = 4;
+// Six tries ride out a multi-minute cold load: 15 + 30 + 45 + 60 + 75 s
+// of backoff between attempts, background only.
+const REFRESH_ATTEMPTS = 6;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
