@@ -261,5 +261,8 @@ describe("ValeSheets (Ali's sheet per kind)", () => {
     expect(screen.queryByText(/Muse Spark/)).toBeNull();
     const expected = document.querySelector('[data-slot="expected"]');
     expect(expected?.className).toContain("aw-pic--wide");
+    const note = document.querySelector(".aw-pics__note");
+    expect(note?.closest('[data-slot="expected"]')).not.toBeNull();
+    expect(document.querySelectorAll(".aw-pics > .aw-pic")).toHaveLength(3);
   });
 });
