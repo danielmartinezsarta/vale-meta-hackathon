@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:audio": "vitest run asr route capture agent",
     "db:seed": "node scripts/seed.mjs",
-    "db:reset": "node scripts/db-reset.mjs"
+    "db:reset": "node scripts/db-reset.mjs",
+    "replay:record": "tsx scripts/record-replay.ts"
   },
   "dependencies": {
     "@types/ws": "^8.18.2",
