@@ -4,12 +4,14 @@
 // user audio never lands here (the unified log carries WAV paths, and the
 // transform below never reads them).
 import type { Board } from "./board";
+import type { ValeLanguage } from "./vale-language";
 import type { Widget } from "./widget";
 
 /** One recorded turn: everything the screen showed, no audio. */
 export interface ReplayTurn {
   turn: string;
   transcript: string;
+  language: ValeLanguage;
   tool: string | null;
   toolArgs: unknown;
   reply: string;
@@ -68,6 +70,7 @@ export function buildReplayRun(lines: string[]): ReplayRun {
     const fresh: ReplayTurn = {
       turn: tag,
       transcript: "",
+      language: "en",
       tool: null,
       toolArgs: null,
       reply: "",
@@ -103,6 +106,9 @@ export function buildReplayRun(lines: string[]): ReplayRun {
     // spreads the extra payloads (turnFields, args, widget, board).
     const fields = recordOf(row.turnFields);
     if (Object.keys(fields).length > 0) {
+      if (fields.language === "es" || fields.language === "en") {
+        current.language = fields.language;
+      }
       const transcript = text(fields.transcript);
       if (transcript !== "") current.transcript = transcript;
       if (typeof fields.tool === "string") current.tool = fields.tool;

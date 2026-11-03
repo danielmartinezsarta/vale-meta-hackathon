@@ -30,7 +30,8 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.00447
+      "costUsd": 0.00447,
+      "language": "en"
     },
     {
       "turn": "t902",
@@ -86,7 +87,8 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.0092635
+      "costUsd": 0.0092635,
+      "language": "en"
     },
     {
       "turn": "t903",
@@ -123,7 +125,8 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.00879375
+      "costUsd": 0.00879375,
+      "language": "en"
     },
     {
       "turn": "t904",
@@ -162,7 +165,8 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.00509975
+      "costUsd": 0.00509975,
+      "language": "en"
     },
     {
       "turn": "t905",
@@ -197,7 +201,8 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.00447925
+      "costUsd": 0.00447925,
+      "language": "en"
     },
     {
       "turn": "t906",
@@ -240,7 +245,8 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.0093005
+      "costUsd": 0.0093005,
+      "language": "en"
     },
     {
       "turn": "t907",
@@ -275,7 +281,8 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.0099315
+      "costUsd": 0.0099315,
+      "language": "en"
     },
     {
       "turn": "t908",
@@ -322,7 +329,8 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.004609
+      "costUsd": 0.004609,
+      "language": "en"
     }
   ]
 }

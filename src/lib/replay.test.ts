@@ -21,6 +21,7 @@ const LINES = [
     status: "ok",
     content: "Vale, show me David",
     turnFields: {
+      language: "en",
       transcript: "Vale, show me David",
       tool: "find_client",
       costUsd: 0.004,
@@ -77,6 +78,7 @@ describe("buildReplayRun", () => {
     expect(turn.widget).toEqual(WIDGET);
     expect(turn.board).toEqual(BOARD);
     expect(turn.costUsd).toBeCloseTo(0.004);
+    expect(turn.language).toBe("en");
   });
 
   it("keeps no audio and scrubs secret-looking strings", () => {
