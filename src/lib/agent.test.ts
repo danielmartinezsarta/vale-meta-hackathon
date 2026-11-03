@@ -9,6 +9,7 @@ import {
   SPOKEN_SYSTEM_PROMPT,
   buildInstructions,
   buildStateFacts,
+  contractWidgetFor,
   runAgentTurn,
   sessionContext,
 } from "./agent";
@@ -89,6 +90,17 @@ describe("agent prompt", () => {
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/in doubt/i);
     expect(SPOKEN_SYSTEM_PROMPT).toMatch(/ambiguous/i);
     expect(SPOKEN_SYSTEM_PROMPT).not.toMatch(/need a short confirmation first/);
+  });
+
+  it("maps photo_preview_design to the photo_preview widget contract", () => {
+    const preview = VALE_TOOLS.find((tool) => tool.name === "photo_preview_design");
+    expect(preview?.parameters).toEqual({ type: "object", properties: {}, required: [] });
+    const data = { before: "b", reference: "r", expected: "e" };
+    expect(contractWidgetFor("photo_preview_design", {}, data)).toEqual({
+      tool: "photo_preview",
+      args: {},
+      data,
+    });
   });
 
   it("carries the warm coworker persona and capabilities in English", () => {
