@@ -180,7 +180,7 @@ describe("browser voice output", () => {
     expect(endPayload.lostBlocks).toBe(0);
   });
 
-  it("drops a sub-300ms blip before the wire: no turn, no cut, no window move", async () => {
+  it("a sub-300ms blip never opens a socket: zero binary frames on the wire", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
@@ -218,6 +218,15 @@ describe("browser voice output", () => {
     driver!.onSpeechEnd();
     // Nothing reached the wire, no bubble, no alert: the session lives on.
     expect(endStreams()).toBe(0);
+    // Retention: only the session socket exists; the blip opened no turn
+    // socket and sent zero binary frames (the old code streamed them live
+    // on the open conversation socket before killing the turn).
+    expect(FakeWs.instances).toHaveLength(1);
+    expect(
+      FakeWs.instances.flatMap((ws) => ws.sent).filter(
+        (message) => message instanceof ArrayBuffer,
+      ),
+    ).toHaveLength(0);
     expect(mockStopSpeaking.mock.calls.length).toBe(stopsBefore);
     expect(screen.queryByRole("alert")).toBeNull();
 
@@ -227,6 +236,7 @@ describe("browser voice output", () => {
     driver!.onSpeechEnd();
     expect(endStreams()).toBe(1);
     expect(FakeWs.instances).toHaveLength(1);
+    expect(FakeWs.instances[0].sentBinaryCount()).toBeGreaterThan(0);
   });
 });
 

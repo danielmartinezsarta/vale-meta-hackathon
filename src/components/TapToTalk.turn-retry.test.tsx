@@ -106,8 +106,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("pre-final cut retries once over POST on the same turn (fix 2)", () => {
-  it("cut twice before the final: the reply still arrives under its own turn", async () => {
+describe("socket drop retries once over POST on the same turn", () => {
+  it("drop and reopen before the final: the reply still arrives under its own turn", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
@@ -132,12 +132,13 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
 
     driver!.onFrame(speechFrame());
     driver!.onSpeechStart();
+    // Retention: the turn socket opens at the 300 ms voice release.
+    for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(2);
     });
     const first = FakeWs.instances[1];
     first.open();
-    for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
     driver!.onSpeechEnd();
     first.serverMessage({
       type: "transcript",
@@ -152,12 +153,13 @@ describe("pre-final cut retries once over POST on the same turn (fix 2)", () => 
 
     driver!.onFrame(speechFrame());
     driver!.onSpeechStart();
+    // Retention: the turn socket opens at the 300 ms voice release.
+    for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(3);
     });
     const second = FakeWs.instances[2];
     second.open();
-    for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());
     driver!.onSpeechEnd();
     await waitFor(() => {
       expect(

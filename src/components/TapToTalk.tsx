@@ -14,12 +14,7 @@ import type {
 import type { Board } from "@/lib/board";
 import { hasVisibleContent, type Turn } from "@/lib/turn-view";
 import { parseSseStream } from "@/lib/sse";
-import {
-  isCloseSheetIntent,
-  namesVale,
-  shouldCutPhrase,
-  windowMs,
-} from "@/lib/wake";
+import { isCloseSheetIntent } from "@/lib/wake";
 import {
   isSpeaking,
   onSpeechSettled,
@@ -187,8 +182,7 @@ export function TapToTalk({
   useEffect(() => {
     boardRef.current = board;
   }, [board]);
-  const lastExecuteAtRef = useRef(0);
-  /** Remainder of a cut phrase drains here until the pause; never transcribed. */
+  /** Remainder of a dismissed phrase drains here until the pause; never transcribed. */
   const droppedRef = useRef(false);
   // Single source of truth for what Vale is doing; the indicator mirrors it.
   const valeStoreRef = useRef(createValeState());
@@ -576,8 +570,6 @@ export function TapToTalk({
       // anchor. Muted replies never voiced, so they anchor nothing.
       settleReleaseRef.current?.();
       settleReleaseRef.current = onSpeechSettled(() => {
-        // The window counts from her real last word, like the server anchor.
-        lastExecuteAtRef.current = Date.now();
         if (!sessionRef.current || mutedOutRef.current) return;
         if (valeStoreRef.current.get() === "speaking") {
           valeStoreRef.current.set("listening");
@@ -625,6 +617,11 @@ export function TapToTalk({
         endFrames: Int16Array[] | null;
         /** Frames with real voice (energy above the VAD threshold). */
         voiced: number;
+        /**
+         * 300 ms of voice passed the gate: the buffered frames rode a
+         * socket. Before that nothing leaves the device, not even a blip.
+         */
+        released: boolean;
         /** Frozen endStream payload: the same stats on every (re)send. */
         endPayload: string | null;
       }
@@ -742,6 +739,7 @@ export function TapToTalk({
           postRetried: false,
           endFrames: null,
           voiced: 0,
+          released: false,
           endPayload: null,
         });
         setTurns((prev) => [
@@ -751,15 +749,13 @@ export function TapToTalk({
         if (arm) armQuiet();
       };
 
-      // A heard name restarts the mirrored window, like the server notes it.
-      const noteHeardName = (text: string) => {
-        if (namesVale(text)) lastExecuteAtRef.current = Date.now();
-      };
-
       // Spoken sheet close with a sheet open: the card goes away with no
       // model call and no spoken reply. The user bubble stays; the server
       // logs the discard (gate cierre) and only sends ignored+done.
-      const dismissSheetTurn = (id: number, text: string) => {
+      // A close that arrived mid-utterance drops the remainder so it never
+      // rides after the dismiss. A close in the final leaves the turn
+      // complete: posted, and the pause opens fresh.
+      const dismissSheetTurn = (id: number, text: string, final: boolean) => {
         if (widgetRef.current === null) return;
         const transport = transports.get(id);
         if (transport?.dismissed) return;
@@ -767,9 +763,7 @@ export function TapToTalk({
         clearWidgetTimer();
         setWidget(null);
         posted = true;
-        // The remainder drains until the pause like a cut phrase: no frames,
-        // no orphan turn, and the pause opens fresh with a re-armed window.
-        droppedRef.current = true;
+        if (!final) droppedRef.current = true;
         const payload = JSON.stringify({ type: "dismiss", transcript: text });
         try {
           if (
@@ -800,51 +794,16 @@ export function TapToTalk({
         }
       };
 
-      const maybeDismissSheet = (id: number, text: string) => {
-        noteHeardName(text);
+      const maybeDismissSheet = (id: number, text: string, final: boolean) => {
         if (!sessionRef.current) return;
         if (id !== currentId || text.trim() === "") return;
         if (widgetRef.current === null || !isCloseSheetIntent(text)) return;
-        dismissSheetTurn(id, text);
+        dismissSheetTurn(id, text, final);
       };
 
-      // Unaddressed chatter never rides to the model: past the opening
-      // words, with no session and the window closed, the phrase is cut
-      // here and its remainder drains until the pause. A phrase that names
-      // her is never cut; the server gate owns that verdict.
-      const maybeCutUnaddressed = (id: number, text: string) => {
-        noteHeardName(text);
-        if (!sessionRef.current || posted || droppedRef.current) return;
-        if (id !== currentId) return;
-        const sessionOpen = boardRef.current?.session != null;
-        // A sheet she opened holds the window like the server gate does.
-        const windowOpen =
-          widgetRef.current !== null ||
-          Date.now() - lastExecuteAtRef.current < windowMs(sessionOpen);
-        if (!shouldCutPhrase({ text, sessionOpen, windowOpen })) return;
-        droppedRef.current = true;
-        posted = true;
-        const transport = transports.get(id);
-        if (transport) {
-          transport.failed = true;
-          const socket = transport.socket;
-          transport.socket = null;
-          if (socket) {
-            socketsRef.current.delete(socket);
-            try {
-              socket.close();
-            } catch {
-              /* already closed */
-            }
-          }
-        }
-        removeTurn(id);
-        try {
-          console.log(`[cut] unaddressed phrase cut (${text.slice(0, 64)})`);
-        } catch {
-          /* logging never breaks capture */
-        }
-      };
+      // No client-side cut: an unaddressed phrase rides to the server and
+      // the gate owns the verdict. Cutting here desyncs from the server and
+      // orphans the frames already streamed.
 
       // A failed turn ends the session so the user can tap to retry.
       const failTurn = (id: number, message: string, code: string | null = null) => {
@@ -891,24 +850,21 @@ export function TapToTalk({
             if (typeof message.transcript !== "string") return;
             if ((message as { final?: unknown }).final === true) {
               finalReceivedRef.current.add(id);
-              noteHeardName(message.transcript);
               // An empty final never wipes a shown interim: the done path
               // prunes contentless rows, and a row with interim text stays
               // as heard instead of blanking.
               if (message.transcript.trim() !== "") {
                 patchTurn(id, { final: message.transcript, interim: "" });
-                maybeDismissSheet(id, message.transcript);
+                maybeDismissSheet(id, message.transcript, true);
               }
             } else {
               patchTurn(id, { interim: message.transcript });
-              maybeCutUnaddressed(id, message.transcript);
-              maybeDismissSheet(id, message.transcript);
+              maybeDismissSheet(id, message.transcript, false);
             }
             break;
           case "reply-delta":
             if (typeof message.text !== "string") return;
             // Append fragments and voice complete sentences at once.
-            lastExecuteAtRef.current = Date.now();
             {
               const next = `${repliesRef.current.get(id) ?? ""}${message.text}`;
               repliesRef.current.set(id, next);
@@ -923,7 +879,6 @@ export function TapToTalk({
             break;
           case "reply":
             if (typeof message.text !== "string") return;
-            lastExecuteAtRef.current = Date.now();
             // Deltas already voiced this turn: only flush the tail.
             if (!mutedOutRef.current) {
               if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
@@ -937,7 +892,6 @@ export function TapToTalk({
           case "board": {
             const board = (message as { board?: unknown }).board;
             if (board && typeof board === "object") {
-              lastExecuteAtRef.current = Date.now();
               setBoard(board as Board);
             }
             break;
@@ -1128,6 +1082,48 @@ export function TapToTalk({
         };
       };
 
+      // 300 ms of voice passed the gate: the buffered frames may ride. The
+      // turn socket opens now (its replay flushes the buffer); on the shared
+      // socket the held-back frames go out at once. Before this point in a
+      // turn nothing left the device, so a blip never opens anything.
+      const releaseTurn = () => {
+        const transport = transports.get(currentId);
+        if (!transport || transport.released || transport.failed) return;
+        transport.released = true;
+        if (!convOpen) openTurnSocket(currentId);
+        if (
+          convOpen &&
+          convSocket &&
+          typeof WebSocket !== "undefined" &&
+          convSocket.readyState === WebSocket.OPEN
+        ) {
+          try {
+            for (const frame of transport.frames) {
+              sendFrameBytes(convSocket, frame);
+            }
+            transport.conv = true;
+            return;
+          } catch {
+            /* endTurnTransport falls back to POST */
+          }
+        }
+        const socket = transport.socket;
+        if (
+          socket &&
+          typeof WebSocket !== "undefined" &&
+          socket.readyState === WebSocket.OPEN
+        ) {
+          try {
+            for (const frame of transport.frames) {
+              sendFrameBytes(socket, frame);
+            }
+          } catch {
+            /* the close handler decides: reconnect or fail */
+          }
+        }
+        // Otherwise the open replay flushes transport.frames on connect.
+      };
+
       // Speech end: conversation socket first, then the turn socket, then POST.
       const endTurnTransport = (id: number) => {
         // The log keeps what she was doing when speech ended; thinking
@@ -1256,18 +1252,16 @@ export function TapToTalk({
             await parseSseStream(response.body, {
               onInterim: (transcript) => {
                 patchTurn(id, { interim: transcript });
-                maybeCutUnaddressed(id, transcript);
-                maybeDismissSheet(id, transcript);
+                maybeDismissSheet(id, transcript, false);
               },
               onFinal: (transcript) => {
                 // The turn ends at `done`; reply/notice/error follow on this stream.
                 // An empty final never wipes a shown interim: the done path
                 // prunes contentless rows instead.
                 finalReceivedRef.current.add(id);
-                noteHeardName(transcript);
                 if (transcript.trim() !== "") {
                   patchTurn(id, { final: transcript, interim: "" });
-                  maybeDismissSheet(id, transcript);
+                  maybeDismissSheet(id, transcript, true);
                 }
               },
               onErrorEvent: (message, code) => {
@@ -1276,7 +1270,6 @@ export function TapToTalk({
               },
               onReplyDelta: (text) => {
                 // Append fragments and voice complete sentences at once.
-                lastExecuteAtRef.current = Date.now();
                 const next = `${repliesRef.current.get(id) ?? ""}${text}`;
                 repliesRef.current.set(id, next);
                 patchTurn(id, { reply: next });
@@ -1286,7 +1279,6 @@ export function TapToTalk({
                 }
               },
               onReply: (text) => {
-                lastExecuteAtRef.current = Date.now();
                 // Deltas already voiced this turn: only flush the tail.
                 if (!mutedOutRef.current) {
                   if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
@@ -1297,7 +1289,6 @@ export function TapToTalk({
                 patchTurn(id, { reply: text });
               },
               onBoard: (next) => {
-                lastExecuteAtRef.current = Date.now();
                 setBoard(next);
               },
               onWidget: (next) => handleWidget(next),
@@ -1366,7 +1357,6 @@ export function TapToTalk({
       // a JSON turn when no socket is open. Either way it equals a spoken vote.
       const castVote = (vote: "yes" | "no") => {
         if (!sessionRef.current) return;
-        lastExecuteAtRef.current = Date.now();
         const payload = JSON.stringify({ type: "vote", vote });
         try {
           if (
@@ -1528,11 +1518,20 @@ export function TapToTalk({
             }
             framesOut += 1;
             pending.push(frame.slice());
-            // Stream each frame live and keep it buffered for replay or POST fallback.
+            // Buffer every frame for replay or POST fallback; nothing rides
+            // until 300 ms of voice released the turn, so a blip never
+            // leaves the device and no socket opens for it.
             const transport = transports.get(currentId);
             if (transport && !transport.failed) {
               if (countVoiced(frame)) transport.voiced += 1;
               transport.frames.push(frame.slice());
+              if (!transport.released) {
+                if (transport.voiced * FRAME_MS >= MIN_VOICED_MS) {
+                  releaseTurn();
+                } else {
+                  return;
+                }
+              }
               if (
                 convOpen &&
                 convSocket &&
@@ -1566,9 +1565,8 @@ export function TapToTalk({
             // A new utterance after a posted turn opens the next turn on the same capture.
             // After a cut the remainder is still draining: wait for the pause.
             if (posted && !droppedRef.current) openTurn(false);
-            // Without a conversation socket, open one per turn so the
-            // ~0.9 s handshake hides inside the utterance.
-            if (!convOpen) openTurnSocket(currentId);
+            // The turn socket opens at the 300 ms release, not here: a blip
+            // never leaves the device, so it must not open anything either.
           },
           onSpeechEnd: (utterance?: UtteranceStats) => {
             // The pause after a cut: the remainder drained, open fresh.
