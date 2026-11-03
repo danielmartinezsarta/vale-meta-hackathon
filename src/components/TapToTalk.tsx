@@ -148,6 +148,7 @@ export function TapToTalk({
   const socketsRef = useRef(new Set<WebSocket>());
   const quietTimerRef = useRef(0);
   const dropTimerRef = useRef(0);
+  const convReconnectTimerRef = useRef(0);
   const watchdogRef = useRef(0);
   const visibilityHandlerRef = useRef<(() => void) | null>(null);
   const languageHandlerRef = useRef<((event: Event) => void) | null>(null);
@@ -429,6 +430,7 @@ export function TapToTalk({
 
   const clearCaptureWatch = useCallback(() => {
     window.clearTimeout(quietTimerRef.current);
+    window.clearTimeout(convReconnectTimerRef.current);
     window.clearInterval(watchdogRef.current);
     if (visibilityHandlerRef.current) {
       document.removeEventListener(
@@ -783,11 +785,14 @@ export function TapToTalk({
           /* the reply-time anchor stands */
         }
       });
-      // One conversation socket when /voice is up, else one bridge socket
-      // per turn; frames stay buffered for replay or POST fallback.
+      // One conversation socket, always: /voice must open within 2 s of
+      // the tap or the session never starts capturing. It reconnects with
+      // backoff on a drop and replays the live turn; there is no per-turn
+      // socket and no POST.
       let convSocket: WebSocket | null = null;
       let convOpen = false;
       let pendingConvTurn: number | null = null;
+      let convAttempt = 0;
       interface TurnTransport {
         socket: WebSocket | null;
         /** Shared turn tag (t001…) assigned at birth, sent with every close. */
@@ -844,6 +849,7 @@ export function TapToTalk({
         socket.binaryType = "arraybuffer";
         socket.onopen = () => {
           convOpen = true;
+          convAttempt = 0;
           try {
             socket.send(
               JSON.stringify({
@@ -854,7 +860,38 @@ export function TapToTalk({
             socket.send(JSON.stringify({ type: "client", client: clientId }));
             socket.send(JSON.stringify({ type: "wake" }));
           } catch {
-            /* the close handler falls back to per-turn sockets */
+            /* the close handler reschedules the reconnect */
+          }
+          flushConv();
+        };
+        // The shared socket replays the live turn on reconnect: buffered
+        // frames ride again, then the frozen endStream when speech ended.
+        const flushConv = () => {
+          const live = transports.get(currentId);
+          if (
+            !live ||
+            live.settled ||
+            live.failed ||
+            !convSocket ||
+            convSocket.readyState !== WebSocket.OPEN
+          ) {
+            return;
+          }
+          try {
+            for (const frame of live.frames) {
+              sendFrameBytes(convSocket, frame);
+            }
+            live.conv = true;
+            if (live.ended || live.endQueued) {
+              live.endQueued = false;
+              convSocket.send(
+                live.endPayload ??
+                  JSON.stringify({ type: "endStream", turn: live.tag }),
+              );
+              pendingConvTurn = currentId;
+            }
+          } catch {
+            /* the close handler reschedules the reconnect */
           }
         };
         socket.onmessage = (event: MessageEvent) => {
@@ -880,12 +917,43 @@ export function TapToTalk({
           socketsRef.current.delete(socket);
         };
         socket.onerror = () => {
-          // The close event follows; in-flight turns fall back below.
+          // The close event follows with the reconnect decision.
         };
         socket.onclose = () => {
           dropConv();
+          scheduleConvReconnect();
         };
       };
+      // A drop never ends the session: back off and redial while she is
+      // live; the open replay above resends what the turn buffered.
+      const scheduleConvReconnect = () => {
+        if (!sessionRef.current) return;
+        const delay = Math.min(500 * 2 ** convAttempt, 4000);
+        convAttempt += 1;
+        window.clearTimeout(convReconnectTimerRef.current);
+        convReconnectTimerRef.current = window.setTimeout(() => {
+          if (!sessionRef.current) return;
+          openConvSocket();
+        }, delay);
+      };
+      // /voice must answer within 2 s of the tap: without it nothing is
+      // captured and the session ends with a visible error, never a POST.
+      const convReady = (timeoutMs: number): Promise<boolean> =>
+        new Promise((resolve) => {
+          const end = Date.now() + timeoutMs;
+          const tick = () => {
+            if (convOpen) {
+              resolve(true);
+              return;
+            }
+            if (!sessionRef.current || Date.now() >= end) {
+              resolve(false);
+              return;
+            }
+            window.setTimeout(tick, 50);
+          };
+          tick();
+        });
 
       const showNotice = (message: string, code: string | null = null) => {
         setNotice(message);
@@ -976,17 +1044,8 @@ export function TapToTalk({
             convSocket.send(payload);
             return;
           }
-          const socket = transport?.socket ?? null;
-          if (
-            socket &&
-            typeof WebSocket !== "undefined" &&
-            socket.readyState === WebSocket.OPEN
-          ) {
-            socket.send(payload);
-            return;
-          }
         } catch {
-          /* the POST abort below covers a dead socket */
+          /* the reconnect replay covers a dead socket */
         }
         try {
           transport?.controller?.abort();
@@ -1285,14 +1344,12 @@ export function TapToTalk({
       };
 
       // 300 ms of voice passed the gate: the buffered frames may ride. The
-      // turn socket opens now (its replay flushes the buffer); on the shared
-      // socket the held-back frames go out at once. Before this point in a
-      // turn nothing left the device, so a blip never opens anything.
+      // The hold released: the buffered frames ride the shared socket now,
+      // or wait for its reconnect. Nothing else ever carries audio.
       const releaseTurn = () => {
         const transport = transports.get(currentId);
         if (!transport || transport.released || transport.failed) return;
         transport.released = true;
-        if (!convOpen) openTurnSocket(currentId);
         if (
           convOpen &&
           convSocket &&
@@ -1304,29 +1361,15 @@ export function TapToTalk({
               sendFrameBytes(convSocket, frame);
             }
             transport.conv = true;
-            return;
           } catch {
-            /* endTurnTransport falls back to POST */
+            /* the close handler reschedules the reconnect */
           }
         }
-        const socket = transport.socket;
-        if (
-          socket &&
-          typeof WebSocket !== "undefined" &&
-          socket.readyState === WebSocket.OPEN
-        ) {
-          try {
-            for (const frame of transport.frames) {
-              sendFrameBytes(socket, frame);
-            }
-          } catch {
-            /* the close handler decides: reconnect or fail */
-          }
-        }
-        // Otherwise the open replay flushes transport.frames on connect.
+        // Otherwise the open replay flushes transport.frames on reconnect.
       };
 
-      // Speech end: conversation socket first, then the turn socket, then POST.
+      // Speech end: the shared socket carries endStream, or the reconnect
+      // replay does. Nothing else ever closes a turn.
       const endTurnTransport = (id: number) => {
         // The log keeps what she was doing when speech ended; thinking
         // starts after, so the evidence is not always "thinking".
@@ -1357,8 +1400,15 @@ export function TapToTalk({
           sheetOpen: widgetRef.current !== null,
         });
         if (transport) transport.endPayload = endPayload;
+        // The turn is over: the reconnect replay must send endStream too.
+        if (transport) {
+          transport.ended = true;
+          // Freeze the retry audio here; gap frames belong to the next turn.
+          transport.endFrames = transport.frames.slice();
+        }
         if (
-          transport?.conv &&
+          transport &&
+          !transport.failed &&
           convSocket &&
           convSocket.readyState === WebSocket.OPEN
         ) {
@@ -1367,61 +1417,11 @@ export function TapToTalk({
             pendingConvTurn = id;
             return;
           } catch {
-            /* fall through to the turn socket or POST */
+            /* the close handler reschedules the reconnect */
           }
         }
-        const socket = transport?.socket ?? null;
-        // The turn is over: any (re)open must send endStream after replay.
-        if (transport) {
-          transport.ended = true;
-          // Freeze the retry audio here; gap frames belong to the next turn.
-          transport.endFrames = transport.frames.slice();
-        }
-        if (
-          socket &&
-          transport &&
-          !transport.failed &&
-          socket.readyState === WebSocket.OPEN
-        ) {
-          try {
-            socket.send(
-              transport.endPayload ??
-                JSON.stringify({ type: "endStream", turn: transport.tag }),
-            );
-          } catch {
-            transport.failed = true;
-            postTurn(id, pending.splice(0));
-          }
-          return;
-        }
-        if (
-          socket &&
-          transport &&
-          !transport.failed &&
-          socket.readyState === WebSocket.CONNECTING
-        ) {
-          // Still dialing: queue the end, POST only if it never connects.
-          transport.endQueued = true;
-          window.setTimeout(() => {
-            const current = transports.get(id);
-            if (
-              current &&
-              !current.settled &&
-              !current.failed &&
-              socket.readyState !== WebSocket.OPEN
-            ) {
-              current.failed = true;
-              try {
-                socket.close();
-              } catch {
-                /* already closed */
-              }
-              postTurn(id, pending.splice(0));
-            }
-          }, 5000);
-          return;
-        }
-        postTurn(id, pending.splice(0));
+        // Shared socket down: queue the end for the reconnect replay.
+        if (transport && !transport.failed) transport.endQueued = true;
       };
 
       const subscribePostTurn = (
@@ -1581,8 +1581,8 @@ export function TapToTalk({
         );
       };
 
-      // Touch on a confirm card: rides the open socket like any control, or
-      // a JSON turn when no socket is open. Either way it equals a spoken vote.
+      // Touch on a confirm card: rides the shared socket like any control.
+      // With the socket down the tap waits for the reconnect, like speech.
       const castVote = (vote: "yes" | "no") => {
         if (!sessionRef.current) return;
         const payload = JSON.stringify({
@@ -1600,35 +1600,12 @@ export function TapToTalk({
             convSocket.send(payload);
             return;
           }
-          const socket = transports.get(currentId)?.socket;
-          if (
-            socket &&
-            typeof WebSocket !== "undefined" &&
-            socket.readyState === WebSocket.OPEN
-          ) {
-            socket.send(payload);
-            return;
-          }
         } catch {
-          /* fall through to the JSON turn */
+          /* the reconnect replay covers a dead socket */
         }
-        openTurn();
-        const id = currentId;
-        const controller = new AbortController();
-        controllersRef.current.add(controller);
-        setNotice(null);
-        subscribePostTurn(
-          id,
-          fetch(
-            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}&turn=${transports.get(id)?.tag ?? ""}`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ transcript: vote }),
-              signal: controller.signal,
-            },
-          ),
-          controller,
+        showNotice(
+          turnErrorText("lost", languageRef.current),
+          "E-NET",
         );
       };
 
@@ -1676,15 +1653,6 @@ export function TapToTalk({
             convSocket.readyState === WebSocket.OPEN
           ) {
             convSocket.send(payload);
-            return;
-          }
-          const socket = transports.get(currentId)?.socket;
-          if (
-            socket &&
-            typeof WebSocket !== "undefined" &&
-            socket.readyState === WebSocket.OPEN
-          ) {
-            socket.send(payload);
           }
         } catch {
           /* diagnostics never break the turn */
@@ -1749,10 +1717,9 @@ export function TapToTalk({
               return;
             }
             framesOut += 1;
-            pending.push(frame.slice());
-            // Buffer every frame for replay or POST fallback; nothing rides
-            // until 300 ms of voice released the turn, so a blip never
-            // leaves the device and no socket opens for it.
+            // Buffer every frame for the reconnect replay; nothing rides
+            // until the hold released the turn, so a blip never leaves the
+            // device and no socket opens for it.
             const transport = transports.get(currentId);
             if (transport && !transport.failed) {
               if (countVoiced(frame)) transport.voiced += 1;
@@ -1773,16 +1740,7 @@ export function TapToTalk({
                   sendFrameBytes(convSocket, frame);
                   transport.conv = true;
                 } catch {
-                  /* endTurnTransport falls back to POST */
-                }
-                return;
-              }
-              const socket = transport.socket;
-              if (socket && socket.readyState === WebSocket.OPEN) {
-                try {
-                  sendFrameBytes(socket, frame);
-                } catch {
-                  /* the close handler decides: reconnect or fail */
+                  /* the close handler reschedules the reconnect */
                 }
               }
             }
@@ -1825,17 +1783,7 @@ export function TapToTalk({
               dropTimerRef.current = window.setTimeout(() => {
                 if (sessionRef.current) valeStoreRef.current.set("listening");
               }, 2000);
-              if (transport) {
-                transport.failed = true;
-                const socket = transport.socket;
-                if (socket) {
-                  try {
-                    socket.close();
-                  } catch {
-                    /* already closed */
-                  }
-                }
-              }
+              if (transport) transport.failed = true;
               removeTurn(currentId);
               openTurn(false);
               return;
@@ -1865,7 +1813,17 @@ export function TapToTalk({
         };
         castVoteRef.current = castVote;
         sendTypedRef.current = sendTyped;
-      await beginCapture();
+        // /voice first: without it nothing is captured and the session ends
+        // here with a visible error, never a POST.
+        openConvSocket();
+        if (!(await convReady(2000))) {
+          endSessionWithAlert(
+            turnErrorText("lost", languageRef.current),
+            "E-NET",
+          );
+          return;
+        }
+        await beginCapture();
       // A stall resumes alone: no audio blocks for STALL_MS restarts
       // capture on the same stream instead of ending the session. The mic
       // stream itself dead is the only honest alert left.
@@ -1925,7 +1883,6 @@ export function TapToTalk({
       };
       languageHandlerRef.current = onLanguage;
       window.addEventListener("vale-language", onLanguage);
-      openConvSocket();
       openTurn();
       await ended;
       clearCaptureWatch();
