@@ -488,6 +488,25 @@ export function buildWidget(
         data: { before, reference: reference === "" ? null : reference, expected, final: null },
       };
     }
+    case "photo_show": {
+      // Showing beats generating: every slot stays as-is, nulls included,
+      // so a lone reference still opens the sheet instead of failing.
+      const slot = (value: unknown): string | null => {
+        const url = text(value);
+        return url === "" ? null : url;
+      };
+      return {
+        kind: "photos",
+        title: widgetTitle("photos"),
+        size: "full",
+        data: {
+          before: slot(info.before),
+          reference: slot(info.reference),
+          expected: slot(info.expected),
+          final: slot(info.final),
+        },
+      };
+    }
     case "create_appointment":
     case "move_appointment": {
       const client = text(args.client_name);

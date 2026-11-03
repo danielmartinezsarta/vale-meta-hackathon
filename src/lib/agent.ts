@@ -210,6 +210,8 @@ export function contractWidgetFor(
       return { tool: "quote_price", args: {}, data };
     case "photo_preview_design":
       return { tool: "photo_preview", args: {}, data };
+    case "photo_show":
+      return { tool: "photo_show", args: {}, data };
     case "agenda_create_appointment":
       if (typeof info.appointment_id !== "number") return null;
       return {
