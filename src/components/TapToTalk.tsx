@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { startCapture, unlockAudioContext } from "@/lib/capture";
+import {
+  ensureCaptureReady,
+  startCapture,
+  unlockAudioContext,
+} from "@/lib/capture";
 import type {
   CaptureCallbacks,
   CaptureHandle,
@@ -168,6 +172,7 @@ export function TapToTalk({
   const turnMutedMsRef = useRef(0);
   const turnLostRef = useRef(0);
   const turnSrcRef = useRef(0);
+  const turnRebuildsRef = useRef(0);
   const turnEngineRef = useRef<"worklet" | "script" | null>(null);
   const trackRateRef = useRef<number | null>(null);
   // Widget open at endStream: the sheet-loss measurement (point 10).
@@ -723,6 +728,7 @@ export function TapToTalk({
         pending.length = 0;
         turnPeakRef.current = 0;
         turnMutedMsRef.current = 0;
+        turnRebuildsRef.current = 0;
         transports.set(id, {
           socket: null,
           conv: false,
@@ -1147,6 +1153,7 @@ export function TapToTalk({
           valeState: stateBeforeEnd,
           lostBlocks: turnLostRef.current,
           srcBlocks: turnSrcRef.current,
+          rebuilds: turnRebuildsRef.current,
           engine: turnEngineRef.current,
           sheetOpen: widgetRef.current !== null,
         });
@@ -1472,11 +1479,18 @@ export function TapToTalk({
         }
         sendClientState(event);
       };
-      const beginCapture = () => {
+      const beginCapture = async () => {
         try {
           captureRef.current?.stop();
         } catch {
           /* already stopped */
+        }
+        // Settle the tap-warmed worklet module before attaching: session
+        // start must not coin-flip between engines on the module race.
+        try {
+          await ensureCaptureReady();
+        } catch {
+          /* startCapture below keeps the ScriptProcessor fallback */
         }
         captureRef.current = startCapture(stream, captureCallbacks, {
           threshold: 200,
@@ -1488,6 +1502,9 @@ export function TapToTalk({
           onEngine: (engine) => {
             turnEngineRef.current = engine;
             logClientState(`engine-${engine}`);
+          },
+          onClockRebuild: () => {
+            turnRebuildsRef.current += 1;
           },
           onHeartbeat: () => {
             lastBeatAt = Date.now();
@@ -1617,13 +1634,14 @@ export function TapToTalk({
         // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
         };
         castVoteRef.current = castVote;
-      beginCapture();
+      await beginCapture();
       // A stall resumes alone: no audio blocks for STALL_MS restarts
       // capture on the same stream instead of ending the session. The mic
       // stream itself dead is the only honest alert left.
       watchdogRef.current = window.setInterval(() => {
-        if (!sessionRef.current) return;
-        if (Date.now() - lastBeatAt < STALL_MS) return;
+        void (async () => {
+          if (!sessionRef.current) return;
+          if (Date.now() - lastBeatAt < STALL_MS) return;
         const tracks =
           typeof stream.getTracks === "function" ? stream.getTracks() : [];
         const micLive =
@@ -1638,13 +1656,14 @@ export function TapToTalk({
         }
         logClientState("stall-restart");
         try {
-          beginCapture();
+          await beginCapture();
         } catch {
           endSessionWithAlert(
             turnErrorText("suspended", languageRef.current),
             null,
           );
         }
+        })();
       }, 2000);
       // Hidden tabs stop the processor on some platforms: log the state on
       // every change and re-check on return; the watchdog restarts a stall.

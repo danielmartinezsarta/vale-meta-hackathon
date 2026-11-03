@@ -114,6 +114,7 @@ export interface TurnClientStats {
   visible: string | null;
   actualRate: number | null;
   ctxState: string | null;
+  rebuilds: number | null;
 }
 
 function parseClientStats(message: {
@@ -128,6 +129,7 @@ function parseClientStats(message: {
   visible?: unknown;
   actualRate?: unknown;
   ctxState?: unknown;
+  rebuilds?: unknown;
 }): TurnClientStats {
   const num = (value: unknown, max: number): number | null =>
     typeof value === "number" &&
@@ -166,6 +168,7 @@ function parseClientStats(message: {
         ? message.actualRate
         : null,
     ctxState: typeof message.ctxState === "string" ? message.ctxState : null,
+    rebuilds: int(message.rebuilds, 3600000),
   };
 }
 
@@ -209,6 +212,7 @@ export function tryParseControl(
       visible?: unknown;
       actualRate?: unknown;
       ctxState?: unknown;
+      rebuilds?: unknown;
     };
     if (message.type === "endStream")
       return {
@@ -312,6 +316,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     visible: null,
     actualRate: null,
     ctxState: null,
+    rebuilds: null,
   };
   let pendingEnd = false;
   let agentRan = false;
@@ -393,6 +398,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       visible: null,
       actualRate: null,
       ctxState: null,
+      rebuilds: null,
     };
     pendingEnd = false;
     agentRan = false;
@@ -514,6 +520,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       visible: turnStats.visible,
       actualRate: turnStats.actualRate,
       ctxState: turnStats.ctxState,
+      rebuilds: turnStats.rebuilds,
       costUsd: estimateCost(
         {
           inputTokens: fields.inputTokens,
