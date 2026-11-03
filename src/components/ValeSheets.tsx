@@ -957,6 +957,7 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
             <SlotPhoto
               src={widget.data.photo}
               seed={<PlaceholderHand bg="#E6329B" skin="#FFD9EC" nail="#E6329B" tip="#8FE6F2" view="0 0 120 140" gems />}
+              cover
             />
           </div>
           <div className="aw-result-card">

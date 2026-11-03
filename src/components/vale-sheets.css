@@ -143,9 +143,10 @@ so a square photo leaves no empty band below. */
 .aw-final-photo{border-radius:16px;overflow:hidden;border:1px solid var(--aw-field-line);aspect-ratio:4/3}
 .aw-final-photo svg,.aw-result-photo svg{display:block;width:100%;height:100%}
 .aw-final-q{font-size:1rem;font-weight:600;line-height:1.3;text-align:center}
-.aw-result-sheet{top:0;gap:12px;padding:14px 16px 16px;border-radius:0;box-shadow:none;overflow-y:auto}
+.aw-result-sheet{top:0;gap:8px;padding:14px 16px 16px;border-radius:0;box-shadow:none;overflow-y:auto}
 .aw-result-close{margin-left:auto;width:42px;height:42px}
-.aw-result-photo{border-radius:16px;overflow:hidden;border:1px solid var(--aw-field-line);aspect-ratio:1/1.28}
+.aw-result-photo{border-radius:16px;overflow:hidden;border:1px solid var(--aw-field-line);aspect-ratio:1/1}
+.aw-result-photo img{width:100%;height:100%;object-fit:cover}
 .aw-result-card{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:12px 14px;border:1px solid var(--aw-field-line);border-radius:16px}
 .aw-result-card small{font-size:.75rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--aw-link)}
 .aw-result-text{font-size:1.05rem;font-weight:600;line-height:1.35}

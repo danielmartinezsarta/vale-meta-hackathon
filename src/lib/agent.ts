@@ -271,6 +271,22 @@ const WRITE_TOOLS = new Set([
 ]);
 
 /**
+ * Immediate narration for slow tools, spoken and shown while the tool runs.
+ * Only image generation is slow enough to need one.
+ */
+const TOOL_WAIT_PHRASE: Record<string, { en: string; es: string }> = {
+  photo_preview_design: {
+    en: "Give me a moment, creating your preview…",
+    es: "Dame un momento, estoy creando tu vista previa…",
+  },
+};
+
+export function toolWaitPhrase(tool: string, language: ValeLanguage): string | null {
+  const entry = TOOL_WAIT_PHRASE[tool];
+  return entry ? (entry[language] ?? entry.en) : null;
+}
+
+/**
  * Provider error bodies stay in the server log: they tell a stale chain
  * apart from a malformed request. Secrets never travel in them (the key
  * goes in a header), but Bearer-looking values are scrubbed anyway.
@@ -516,6 +532,8 @@ export interface AgentTurnOptions {
   history?: HistoryTurn[];
   url?: string;
   onDelta?: (text: string) => void;
+  /** Fires before each tool runs so the route can narrate slow tools at once. */
+  onToolStart?: (toolName: string) => void;
   startedAt?: number;
   /** Defaults to the shared database; tests inject an in-memory one. */
   db?: ValeDb;
@@ -533,6 +551,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   const url = options.url ?? RESPONSES_URL;
   const startedAt = options.startedAt ?? Date.now();
   const onDelta = options.onDelta ?? (() => {});
+  const onToolStart = options.onToolStart ?? (() => {});
   const db = options.db ?? getDb();
   const language = options.language ?? DEFAULT_LANGUAGE;
   const slotKey = options.slotKey ?? "local";
@@ -622,6 +641,9 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       parsed = {};
     }
     const toolAt = Date.now();
+    // Slow tools narrate at once: model deltas of a tool round stay
+    // buffered until the tool finishes, so the wait line cannot ride them.
+    onToolStart(call.name);
     const toolResult = await runValeToolAsync(db, call.name, parsed, language);
     vlog({
       turn: options.turn ?? "-",

@@ -1561,7 +1561,6 @@ export function TapToTalk({
       // vote, with typed:true so the server skips ASR and the wake gate.
       // No session needed: typing is always addressed to Vale.
       const sendTyped = (text: string) => {
-        lastExecuteAtRef.current = Date.now();
         openTurn();
         const id = currentId;
         const controller = new AbortController();
