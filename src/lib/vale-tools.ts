@@ -2,7 +2,7 @@
 // Server-side only: executors run here; only short speakable results and
 // masked public notes ever reach the model. Private health-note text never
 // leaves this module toward the cloud.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 import { PRICING, getPublicNotes, type PublicNote, type ValeDb } from "./db";
 import { segmentNails } from "./nails";
@@ -315,7 +315,15 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "photo_preview_design",
-    description: "Preview the appointment reference design on the open session nails from the before photo, shown on screen.",
+    description:
+      "Generate a brand-new AI preview of the appointment reference design on the open session nails from the before photo, shown on screen. Only for generating: to show photos already stored (reference, before, preview, final), use photo_show.",
+    parameters: noParams,
+  },
+  {
+    type: "function",
+    name: "photo_show",
+    description:
+      "Show the stored session photos on the photos sheet: before, reference, preview and final, whichever exist. Call it when the user asks to see the reference, the before photo, the preview, the final photo, or the stored photos. Never for generating anything new.",
     parameters: noParams,
   },
   {
@@ -1466,6 +1474,43 @@ export async function previewDesign(
 }
 
 /**
+ * photo_show: the stored session photos, whichever exist. No SAM, no
+ * image generation, no description: only file presence probed, so showing
+ * the reference never demands a before photo or spends an Image call.
+ * Operates on the open session, like session_quote: no arguments.
+ */
+export function showPhotos(db: ValeDb, language: ValeLanguage = "es"): ToolResult {
+  const open = getOpenSession(db);
+  if (!open) return { ok: false, message: language === "en" ? "No session is open." : "No hay sesión abierta." };
+  const stored = (file: string): string | null =>
+    existsSync(join(sessionPhotosDir(), file)) ? `/api/photos?file=${file}` : null;
+  const storedPreview = (file: string): string | null =>
+    existsSync(join(previewsDir(), file)) ? `/api/photos?file=${file}` : null;
+  const session = db
+    .prepare("SELECT client_id, service_id FROM sessions WHERE id = ?")
+    .get(open.id) as { client_id: number; service_id: number } | undefined;
+  const appointment = session
+    ? (db
+        .prepare(
+          "SELECT reference_photo FROM appointments WHERE client_id = ? AND service_id = ? ORDER BY id DESC LIMIT 1",
+        )
+        .get(session.client_id, session.service_id) as { reference_photo: string | null } | undefined)
+    : undefined;
+  const refValue = appointment?.reference_photo?.trim() ?? "";
+  const reference = refValue === "" ? null : (resolveReferencePhoto(refValue)?.url ?? null);
+  return {
+    ok: true,
+    message: language === "en" ? "Here are the stored session photos." : "Aquí están las fotos guardadas de la sesión.",
+    data: {
+      before: stored(`pre_${open.id}.jpg`),
+      reference,
+      expected: storedPreview(`preview_${open.id}.png`),
+      final: stored(`post_${open.id}.jpg`),
+    },
+  };
+}
+
+/**
  * Today on the salon clock. America/Bogota always: the server-local date
  * is a different day for hours around midnight. Exported for tests.
  */
@@ -2026,6 +2071,8 @@ export function runValeTool(db: ValeDb, name: string, args: Record<string, unkno
       return showService(db, args, language);
     case "widget_show":
       return showWidget(db, args, language);
+    case "photo_show":
+      return showPhotos(db, language);
     case "tool_get_details":
       return getToolDetails(args, language);
     case "agenda_create_appointment":
