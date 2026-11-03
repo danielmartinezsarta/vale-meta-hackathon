@@ -74,4 +74,30 @@ describe("GET /api/photos", () => {
       );
     }
   });
+
+  it("serves a repo-committed seed-assets reference photo", async () => {
+    useTmpPhotos();
+    const res = await GET(getRequest("seed-assets/david-last-service.jpg"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("image/jpeg");
+    expect((await res.arrayBuffer()).byteLength).toBeGreaterThan(0);
+  });
+
+  it("404s seed-assets traversal, absolute paths, other dirs, and missing files", async () => {
+    useTmpPhotos();
+    for (const file of [
+      "seed-assets/%2E%2E/secret.jpg",
+      "seed-assets/%2E%2E.jpg",
+      "%2Fetc%2Fpasswd",
+      "other/dir.jpg",
+      "seed-assets/nope.txt",
+      "seed-assets/missing.jpg",
+    ]) {
+      const res = await GET(getRequest(file));
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual(
+        expect.objectContaining({ code: "E-NO-PHOTO" }),
+      );
+    }
+  });
 });

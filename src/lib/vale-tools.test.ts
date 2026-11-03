@@ -1,11 +1,15 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { freshTestDb } from "./db";
 import { PRICING } from "./db";
 import { quotePrice } from "./quote";
 import seedData from "./seed-data.json";
 import { bogotaDay } from "./natural-date";
 import { buildPendingActions } from "./pending-action";
+import { previewsDir, sessionPhotoPath, sessionPhotosDir } from "./session-photo";
 import {
   VALE_TOOLS,
   acceptQuote,
@@ -37,6 +41,7 @@ import {
   rejectQuote,
   removeFromShoppingList,
   runValeTool,
+  runValeToolAsync,
   setStock,
   showAgenda,
   showClientCard,
@@ -61,6 +66,7 @@ describe("tool definitions", () => {
         "client_create",
         "client_note_add",
         "goal_show",
+        "photo_preview_design",
         "session_close",
         "session_log_supply",
         "session_open",
@@ -1075,5 +1081,137 @@ describe("error style", () => {
       ).kind,
     ).toBe("ambiguous");
     expect(matchOne([{ id: 1, name: "Ana Beltran" }], "cohetes").kind).toBe("none");
+  });
+});
+
+const TINY_PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+function samBoxText(count: number, shift = 0): string {
+  return Array.from(
+    { length: count },
+    (_, index) =>
+      `<|box;x1=${index * 10 + shift};y1=${index * 10 + shift};x2=${index * 10 + 50 + shift};y2=${index * 10 + 50 + shift};w=200;h=100|>`,
+  ).join(" ");
+}
+
+const savedPreviewKey = process.env.META_API_KEY;
+const savedPreviewPhotoDir = process.env.VALE_PHOTO_DIR;
+let previewPhotoDir = "";
+
+afterEach(() => {
+  if (savedPreviewKey === undefined) delete process.env.META_API_KEY;
+  else process.env.META_API_KEY = savedPreviewKey;
+  if (savedPreviewPhotoDir === undefined) delete process.env.VALE_PHOTO_DIR;
+  else process.env.VALE_PHOTO_DIR = savedPreviewPhotoDir;
+  vi.unstubAllGlobals();
+  if (previewPhotoDir) {
+    rmSync(previewPhotoDir, { recursive: true, force: true });
+    previewPhotoDir = "";
+  }
+});
+
+/** Open session, before photo, and appointment reference for the preview tool. */
+function openPreviewSession(
+  db: ReturnType<typeof freshTestDb>,
+  referencePhoto: string,
+): { sessionId: number } {
+  previewPhotoDir = mkdtempSync(join(tmpdir(), "tool-photo-preview-"));
+  process.env.VALE_PHOTO_DIR = previewPhotoDir;
+  process.env.META_API_KEY = "test-key";
+  mkdirSync(sessionPhotosDir(), { recursive: true });
+  const opened = openSession(db, { client_name: "Ana", service_name: "Retiro de gel" });
+  expect(opened.ok).toBe(true);
+  const session = db
+    .prepare("SELECT id, client_id, service_id FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1")
+    .get() as { id: number; client_id: number; service_id: number };
+  writeFileSync(
+    sessionPhotoPath(session.id, "pre", sessionPhotosDir()),
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]),
+  );
+  db.prepare(
+    "INSERT INTO appointments (client_id, service_id, day, time, reference_photo) VALUES (?, ?, '2026-11-02', '15:00', ?)",
+  ).run(session.client_id, session.service_id, referencePhoto);
+  return { sessionId: session.id };
+}
+
+/** Stubbed SAM plus Muse Image; records how many Image calls were made. */
+function stubPreviewModels(preBoxes: number, postBoxes: number[]): { imageCalls: number } {
+  const state = { imageCalls: 0, samCalls: 0, post: [...postBoxes] };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: unknown) => {
+      if (String(url).includes("images/")) {
+        state.imageCalls += 1;
+        return Response.json({ id: "img", data: [{ b64_json: TINY_PNG_B64 }] });
+      }
+      const count = state.samCalls === 0 ? preBoxes : (state.post.shift() ?? preBoxes);
+      state.samCalls += 1;
+      return Response.json({
+        id: "s",
+        output: [{ type: "message", content: [{ type: "output_text", text: samBoxText(count) }] }],
+      });
+    }),
+  );
+  return state;
+}
+
+describe("photo_preview_design", () => {
+  it("returns photos URLs plus aiPreview on success", async () => {
+    const db = freshTestDb();
+    const { sessionId } = openPreviewSession(db, "seed-assets/david-last-service.jpg");
+    const state = stubPreviewModels(5, [5]);
+    const result = await runValeToolAsync(db, "photo_preview_design", {}, "en");
+    expect(result.ok).toBe(true);
+    expect(result.message).toBe("Here is how it would look. The preview is on screen.");
+    expect(result.data).toEqual({
+      before: `/api/photos?file=pre_${sessionId}.jpg`,
+      reference: "/api/photos?file=seed-assets/david-last-service.jpg",
+      expected: `/api/photos?file=preview_${sessionId}.png`,
+      elapsedMs: expect.any(Number),
+      estimatedCostUsd: expect.any(Number),
+      aiPreview: true,
+      disclaimer: expect.any(String),
+    });
+    expect(state.imageCalls).toBe(1);
+    expect(existsSync(join(previewsDir(), `preview_${sessionId}.png`))).toBe(true);
+    db.close();
+  });
+
+  it("fails the pre-check with no Image call when nails are missing", async () => {
+    const db = freshTestDb();
+    openPreviewSession(db, `data:image/png;base64,${TINY_PNG_B64}`);
+    const state = stubPreviewModels(2, []);
+    const result = await runValeToolAsync(db, "photo_preview_design", {}, "en");
+    expect(result.ok).toBe(false);
+    expect(result.message).toBe("I need a photo with all five nails visible.");
+    expect(state.imageCalls).toBe(0);
+    db.close();
+  });
+
+  it("retries once on a post-check mismatch, hard-capped at two Image calls", async () => {
+    const db = freshTestDb();
+    const { sessionId } = openPreviewSession(db, "seed-assets/david-last-service.jpg");
+    const state = stubPreviewModels(5, [3, 5]);
+    const result = await runValeToolAsync(db, "photo_preview_design", {}, "en");
+    expect(result.ok).toBe(true);
+    expect(state.imageCalls).toBe(2);
+    expect(existsSync(join(previewsDir(), `preview_${sessionId}.png`))).toBe(true);
+    db.close();
+  });
+
+  it("fails without a key", async () => {
+    const db = freshTestDb();
+    openPreviewSession(db, "seed-assets/david-last-service.jpg");
+    delete process.env.META_API_KEY;
+    const result = await runValeToolAsync(db, "photo_preview_design", {}, "en");
+    expect(result.ok).toBe(false);
+    db.close();
+  });
+
+  it("keeps sync tools working through the async runner", async () => {
+    const db = freshTestDb();
+    expect((await runValeToolAsync(db, "goal_show", {})).ok).toBe(true);
+    db.close();
   });
 });

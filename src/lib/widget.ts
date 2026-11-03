@@ -461,6 +461,18 @@ export function buildWidget(
         data: { service, extras: null, suggested },
       };
     }
+    case "photo_preview": {
+      const before = text(info.before);
+      const expected = text(info.expected);
+      if (before === "" || expected === "") return null;
+      const reference = text(info.reference);
+      return {
+        kind: "photos",
+        title: widgetTitle("photos"),
+        size: "full",
+        data: { before, reference: reference === "" ? null : reference, expected },
+      };
+    }
     case "create_appointment":
     case "move_appointment": {
       const client = text(args.client_name);

@@ -2,7 +2,7 @@ import {
   VALE_TOOLS,
   clientLabel,
   getOpenSession,
-  runValeTool,
+  runValeToolAsync,
 } from "./vale-tools";
 import { bogotaDay } from "./natural-date";
 import { DEFAULT_USER_NAME, getDb, userName, type HistoryTurn, type ValeDb } from "./db";
@@ -175,7 +175,7 @@ export function sessionContext(db: ValeDb, now = new Date()): string {
  * each 018 tool to the dispatch key, args and data it renders. Tools
  * without a sheet map to null; the agenda speaks and bubbles only.
  */
-function contractWidgetFor(
+export function contractWidgetFor(
   tool: string,
   args: Record<string, unknown>,
   data: unknown,
@@ -208,6 +208,8 @@ function contractWidgetFor(
       };
     case "session_quote":
       return { tool: "quote_price", args: {}, data };
+    case "photo_preview_design":
+      return { tool: "photo_preview", args: {}, data };
     case "agenda_create_appointment":
       if (typeof info.appointment_id !== "number") return null;
       return {
@@ -252,6 +254,7 @@ const WRITE_TOOLS = new Set([
   "session_close",
   "session_log_supply",
   "session_quote_accept",
+  "photo_preview_design",
   "client_create",
   "client_note_add",
   "shopping_add",
@@ -617,7 +620,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       parsed = {};
     }
     const toolAt = Date.now();
-    const toolResult = runValeTool(db, call.name, parsed, language);
+    const toolResult = await runValeToolAsync(db, call.name, parsed, language);
     vlog({
       turn: options.turn ?? "-",
       process: "TOOL",

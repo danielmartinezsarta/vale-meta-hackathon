@@ -120,6 +120,26 @@ describe("buildWidget (typed payloads per kind)", () => {
     }
   });
 
+  it("builds the photos payload with full size for the preview", () => {
+    expect(
+      buildWidget(
+        "photo_preview",
+        {},
+        { before: "b-url", reference: "r-url", expected: "e-url" },
+        NO_DB,
+      ),
+    ).toEqual({
+      kind: "photos",
+      title: "Photos",
+      size: "full",
+      data: { before: "b-url", reference: "r-url", expected: "e-url" },
+    });
+    expect(
+      buildWidget("photo_preview", {}, { before: "b-url", expected: "e-url" }, NO_DB)?.data,
+    ).toEqual({ before: "b-url", reference: null, expected: "e-url" });
+    expect(buildWidget("photo_preview", {}, { before: "", expected: "e-url" }, NO_DB)).toBeNull();
+  });
+
   it("fills the card health block from the store past the masked feed", () => {
     const store = {
       prepare: (sql: string) =>
