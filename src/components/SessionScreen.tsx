@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import type { ValeState } from "@/lib/vale-state";
 import type { Widget } from "@/lib/widget";
 import type { ValeLanguage } from "@/lib/vale-language";
@@ -33,7 +34,10 @@ export function SessionScreen({
   muted,
   notice,
   alert,
+  micMuted,
+  typedField,
   onToggleMute,
+  onToggleMicMute,
   onSleep,
   onOpenWidget,
   onCloseWidget,
@@ -50,7 +54,10 @@ export function SessionScreen({
   muted: boolean;
   notice: string | null;
   alert: string | null;
+  micMuted?: boolean;
+  typedField?: ReactNode;
   onToggleMute: () => void;
+  onToggleMicMute?: () => void;
   onSleep: () => void;
   onOpenWidget: (widget: Widget) => void;
   onCloseWidget: () => void;
@@ -75,9 +82,11 @@ export function SessionScreen({
       widget={widget}
       language={language}
       muted={muted}
+      micMuted={micMuted}
       notice={notice}
       alert={alert}
       onToggleMute={onToggleMute}
+      onToggleMicMute={onToggleMicMute}
       onSleep={onSleep}
       onCloseWidget={onCloseWidget}
       sheetCallbacks={sheetCallbacks}
@@ -144,13 +153,16 @@ export function SessionScreen({
         </>
       }
       below={
-        <div className={styles.timer} role="timer" aria-label="Session time">
-          <span className={styles.tlabel}>
-            <i className={styles.tdot} aria-hidden="true" />
-            Session
-          </span>
-          <span className={styles.ttime}>{sessionClock(session.startedAt, now)}</span>
-        </div>
+        <>
+          <div className={styles.timer} role="timer" aria-label="Session time">
+            <span className={styles.tlabel}>
+              <i className={styles.tdot} aria-hidden="true" />
+              Session
+            </span>
+            <span className={styles.ttime}>{sessionClock(session.startedAt, now)}</span>
+          </div>
+          {micMuted && typedField}
+        </>
       }
     />
   );

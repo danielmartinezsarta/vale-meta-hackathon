@@ -217,6 +217,52 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
   });
 
+  it("runs a typed turn without the wake gate", async () => {
+    vi.stubGlobal("fetch", stubAgent());
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
+      logs.push(String(line));
+    });
+    const request = new Request("http://localhost/api/voice", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": "typed-fresh-1",
+      },
+      body: JSON.stringify({ transcript: "book a gel refill", typed: true }),
+    });
+    const response = await POST(request);
+    const text = await response.text();
+    expect(text).toContain("event: final");
+    expect(text).toContain("book a gel refill");
+    expect(text).toContain("event: reply");
+    expect(text).not.toContain("event: ignored");
+    const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+    expect(turns).toHaveLength(1);
+    expect(JSON.parse(turns[0].replace("[voice-turn] ", "")).gate).toBe(
+      "typed",
+    );
+    spy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("still gates a JSON turn without the typed flag", async () => {
+    vi.stubGlobal("fetch", stubAgent());
+    const request = new Request("http://localhost/api/voice", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": "typed-fresh-2",
+      },
+      body: JSON.stringify({ transcript: "book a gel refill" }),
+    });
+    const response = await POST(request);
+    const text = await response.text();
+    expect(text).toContain("event: ignored");
+    expect(text).not.toContain("event: reply");
+    vi.unstubAllGlobals();
+  });
+
   it("passes repeats through untouched: no server-side echo collapsing", async () => {
     // Strict turns: the client never captures her voice, so the server no
     // longer collapses repeats. A doubled transcript reaches the gate

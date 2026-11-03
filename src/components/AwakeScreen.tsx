@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import type { ValeState } from "@/lib/vale-state";
 import type { Widget } from "@/lib/widget";
 import type { ValeLanguage } from "@/lib/vale-language";
@@ -28,7 +29,10 @@ export function AwakeScreen({
   muted,
   notice,
   alert,
+  micMuted,
+  typedField,
   onToggleMute,
+  onToggleMicMute,
   onSleep,
   onCloseWidget,
   onVote,
@@ -43,7 +47,10 @@ export function AwakeScreen({
   muted: boolean;
   notice: string | null;
   alert: string | null;
+  micMuted?: boolean;
+  typedField?: ReactNode;
   onToggleMute: () => void;
+  onToggleMicMute?: () => void;
   onSleep: () => void;
   onCloseWidget: () => void;
   onVote: (vote: "yes" | "no") => void;
@@ -60,13 +67,16 @@ export function AwakeScreen({
       widget={widget}
       language={language}
       muted={muted}
+      micMuted={micMuted}
       notice={notice}
       alert={alert}
       onToggleMute={onToggleMute}
+      onToggleMicMute={onToggleMicMute}
       onSleep={onSleep}
       onCloseWidget={onCloseWidget}
       sheetCallbacks={sheetCallbacks}
       onVote={onVote}
+      below={micMuted ? typedField : null}
     />
   );
 }

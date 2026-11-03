@@ -56,12 +56,14 @@ export function ValeScreenShell({
   widget,
   language,
   muted,
+  micMuted = false,
   notice,
   alert,
   actions,
   below,
   overlays,
   onToggleMute,
+  onToggleMicMute,
   onSleep,
   onCloseWidget,
   onVote,
@@ -77,12 +79,14 @@ export function ValeScreenShell({
   widget: Widget | null;
   language: ValeLanguage;
   muted: boolean;
+  micMuted?: boolean;
   notice: string | null;
   alert: string | null;
   actions?: ReactNode;
   below?: ReactNode;
   overlays?: ReactNode;
   onToggleMute: () => void;
+  onToggleMicMute?: () => void;
   onSleep: () => void;
   onCloseWidget: () => void;
   onVote: (vote: "yes" | "no") => void;
@@ -120,6 +124,30 @@ export function ValeScreenShell({
             </g>
           </svg>
         </button>
+        {onToggleMicMute && (
+          <button
+            className={`${styles.abtn} ${styles.mute}`}
+            type="button"
+            aria-label={micMuted ? "Unmute microphone" : "Mute microphone"}
+            aria-pressed={micMuted}
+            onClick={onToggleMicMute}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <g
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="9" y="2.5" width="6" height="11" rx="3" />
+                <path d="M5.5 11a6.5 6.5 0 0 0 13 0" />
+                <path d="M12 17.5V21" />
+                <path className={styles.slash} d="M4 4l16 16" />
+              </g>
+            </svg>
+          </button>
+        )}
         {actions}
       </div>
 
