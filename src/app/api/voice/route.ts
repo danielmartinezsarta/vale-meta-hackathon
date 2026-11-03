@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { upgradeWebSocket } from "@vercel/functions";
-import { AGENT_MODEL, runAgentTurn } from "@/lib/agent";
+import { AGENT_MODEL, runAgentTurn, toolWaitPhrase } from "@/lib/agent";
 import { getDb, recentTurns, recordTurn } from "@/lib/db";
 import { getBoard } from "@/lib/board";
 import { getSlots } from "@/lib/slot-memory";
@@ -434,6 +434,10 @@ export async function POST(request: Request): Promise<Response> {
             url: process.env.META_RESPONSES_URL || undefined,
             startedAt: speechEndAt,
             onDelta: (text) => send("reply-delta", { text }),
+            onToolStart: (tool) => {
+              const wait = toolWaitPhrase(tool, language);
+              if (wait) send("reply-delta", { text: wait });
+            },
             language,
             slotKey: clientKey,
             turn: turnTag ?? undefined,
