@@ -44,6 +44,7 @@ import {
 } from "@/lib/vale-language";
 import { useValeLanguage } from "@/components/useValeLanguage";
 import { uiStrings } from "@/lib/vale-ui";
+import { AUTO_HIDE_WIDGET_KINDS } from "@/lib/widget";
 import type { PhotosData, Widget } from "@/lib/widget";
 import { loadPhotosData as loadPhotosDataFromDb } from "@/components/photos-data";
 import {
@@ -407,7 +408,7 @@ export function TapToTalk({
         doneTimerRef.current = 0;
         settleToListening();
       }, 1500);
-      if (next.kind === "booked" || next.kind === "note" || next.kind === "health_note" || next.kind === "notice") {
+      if (AUTO_HIDE_WIDGET_KINDS.includes(next.kind)) {
         widgetTimerRef.current = window.setTimeout(() => {
           widgetTimerRef.current = 0;
           closeWidgetByHand();

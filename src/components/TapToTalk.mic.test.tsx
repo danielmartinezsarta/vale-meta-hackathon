@@ -388,3 +388,5 @@ describe("muted mic (no mic errors while muted)", () => {
     expect(resume).toHaveBeenCalledTimes(1);
   });
 });
+
+

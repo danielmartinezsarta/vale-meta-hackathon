@@ -357,3 +357,34 @@ describe("buildWidget (typed payloads per kind)", () => {
     expect(initials("Ana Beltran")).toBe("AB");
   });
 });
+
+describe("AUTO_HIDE_WIDGET_KINDS (display-only sheets hide themselves)", () => {
+  it("covers every display-only kind and nothing with buttons", async () => {
+    const { AUTO_HIDE_WIDGET_KINDS } = await import("./widget");
+    // Display-only: confirm, then hide with no tap.
+    for (const kind of [
+      "booked",
+      "note",
+      "health_note",
+      "notice",
+      "goal",
+      "photos",
+      "shopping",
+      "low_stock",
+      "final_result",
+      "session_summary",
+    ] as const) {
+      expect(AUTO_HIDE_WIDGET_KINDS).toContain(kind);
+    }
+    // client_card closes by voice or its X; button kinds wait for the tap.
+    for (const kind of [
+      "client_card",
+      "price",
+      "confirm",
+      "camera_save_as",
+      "final_photo_confirm",
+    ] as const) {
+      expect(AUTO_HIDE_WIDGET_KINDS).not.toContain(kind);
+    }
+  });
+});

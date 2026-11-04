@@ -11,6 +11,7 @@ import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { chromium, type Page } from "playwright";
+import { AUTO_HIDE_WIDGET_KINDS } from "../src/lib/widget";
 import { parseReplayRun } from "../src/lib/replay";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -316,11 +317,14 @@ async function main(): Promise<void> {
           console.log(`[demo] shot: ${shot}`);
         }
         // Tidy the sheet like a user would, so the next turn's card is
-        // its own. The X names the open sheet; Escape is its close key.
-        const closer = page.getByRole("button", { name: /^Close / });
-        if ((await closer.count()) > 0) await closer.first().click({ timeout: 5000 });
-        await page.keyboard.press("Escape");
-        await page.waitForTimeout(500);
+        // its own. Display-only sheets auto-hide; only button kinds and
+        // the client card need a hand. The X names the open sheet.
+        if (!turn.widget || !AUTO_HIDE_WIDGET_KINDS.includes(turn.widget.kind)) {
+          const closer = page.getByRole("button", { name: /^Close / });
+          if ((await closer.count()) > 0) await closer.first().click({ timeout: 5000 });
+          await page.keyboard.press("Escape");
+          await page.waitForTimeout(500);
+        }
       };
       // The demo types whatever turn the cursor points at, one at a time;
       // the pill's pause holds the reply, its stop and jumps move the cursor.
