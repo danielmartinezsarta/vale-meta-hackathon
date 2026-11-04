@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { ValeLanguage } from "@/lib/vale-language";
 import { ManageField, ManageShell } from "./ManageShell";
 import { manageDelete, manageGet, managePost } from "./manageApi";
 import styles from "./ManageScreens.module.css";
@@ -22,6 +23,26 @@ interface Settings {
 
 const SCHEDULES = ["lun-vie", "lun-sab", "lun-dom"] as const;
 
+/** Stored schedule codes rendered as words in the screen language. */
+export function scheduleLabel(schedule: string, language: ValeLanguage): string {
+  const words: Record<string, { en: string; es: string }> = {
+    "lun-vie": { en: "Mon–Fri", es: "lun–vie" },
+    "lun-sab": { en: "Mon–Sat", es: "lun–sáb" },
+    "lun-dom": { en: "Mon–Sun", es: "lun–dom" },
+  };
+  return words[schedule]?.[language] ?? schedule;
+}
+
+/** Fixed-cost names display capitalized; the stored label stays as typed. */
+export function displayCostName(label: string): string {
+  return label.length > 0 ? label[0].toUpperCase() + label.slice(1) : label;
+}
+
+/** Money on screen is whole dollars, like the rest of the app. */
+export function wholeDollars(amount: number): number {
+  return Math.round(amount);
+}
+
 function monthLabel(month: string): string {
   const date = new Date(`${month}-01T00:00:00`);
   return Number.isNaN(date.getTime()) ? month : date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
@@ -32,7 +53,7 @@ function monthLabel(month: string): string {
  * goal form with fixed costs. Seeded from the seed; edits save to
  * business_settings.
  */
-export function GoalsScreen({ onBack }: { onBack: () => void }) {
+export function GoalsScreen({ onBack, language }: { onBack: () => void; language: ValeLanguage }) {
   const [progress, setProgress] = useState<GoalProgress | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -149,7 +170,7 @@ export function GoalsScreen({ onBack }: { onBack: () => void }) {
         ) : (
           <div className={styles.row}>
             <span className={styles.grow}>
-              ${progress.earned_usd} of ${progress.goal_usd}
+              ${wholeDollars(progress.earned_usd)} of ${wholeDollars(progress.goal_usd)}
               <span className={styles.sub}>{pct}% of the monthly goal</span>
             </span>
           </div>
@@ -158,9 +179,9 @@ export function GoalsScreen({ onBack }: { onBack: () => void }) {
       {!editing && settings && (
         <>
           <div className={styles.card}>
-            <div className={styles.row}><span className={styles.grow}>Monthly goal<span className={styles.sub}>${settings.monthlyGoalUsd}</span></span></div>
+            <div className={styles.row}><span className={styles.grow}>Monthly goal<span className={styles.sub}>${wholeDollars(settings.monthlyGoalUsd)}</span></span></div>
             <div className={styles.row}><span className={styles.grow}>Margin<span className={styles.sub}>{settings.marginPct}%</span></span></div>
-            <div className={styles.row}><span className={styles.grow}>Work days<span className={styles.sub}>{settings.schedule}</span></span></div>
+            <div className={styles.row}><span className={styles.grow}>Work days<span className={styles.sub}>{scheduleLabel(settings.schedule, language)}</span></span></div>
             <div className={styles.row}><span className={styles.grow}>Hours per day<span className={styles.sub}>{settings.workHoursPerDay} h</span></span></div>
           </div>
           <button className={styles.action} type="button" onClick={startEdit}>Edit goal</button>
@@ -169,8 +190,8 @@ export function GoalsScreen({ onBack }: { onBack: () => void }) {
             {settings.fixedCosts.map((cost) => (
               <div className={styles.row} key={cost.id}>
                 <span className={styles.grow}>
-                  {cost.label}
-                  <span className={styles.sub}>${cost.amountUsd}</span>
+                  {displayCostName(cost.label)}
+                  <span className={styles.sub}>${wholeDollars(cost.amountUsd)}</span>
                 </span>
                 <button
                   className={styles.danger}
@@ -207,7 +228,7 @@ export function GoalsScreen({ onBack }: { onBack: () => void }) {
               label="Work days"
               value={form.schedule}
               onChange={(schedule) => setForm({ ...form, schedule })}
-              options={SCHEDULES.map((value) => ({ value, label: value }))}
+              options={SCHEDULES.map((value) => ({ value, label: scheduleLabel(value, language) }))}
             />
           </fieldset>
           <div className={styles.field}>
