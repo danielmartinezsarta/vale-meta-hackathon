@@ -29,6 +29,8 @@ export interface NaturalDate {
   time: string;
 }
 
+import type { ValeLanguage } from "./vale-language";
+
 /** Today on the America/Bogota calendar for `when`. Same clock as bogotaParts. */
 export function bogotaDay(when: Date): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -71,19 +73,30 @@ export function hour12(time: string): string {
 }
 
 /**
- * Natural EN words for a Bogota day + time, for sheets and speech.
- * "2026-11-13" + "17:00" becomes "Friday the 13th at 5 PM".
+ * Natural words for a Bogota day + time, for sheets and speech.
+ * "2026-11-13" + "17:00" becomes "Friday the 13th at 5 PM", or with
+ * "es" (the voice language), "el viernes 13 a las 5 PM".
  * Never ISO: sheets and Vale both show this, never the raw stamps.
  */
-export function formatNaturalDateTime(day: string, time: string): string {
+export function formatNaturalDateTime(day: string, time: string, language: ValeLanguage = "en"): string {
   const parsed = parseYmd(day);
   if (parsed === null || !isCalendarDay(parsed) || !TIME_RE.test(time)) {
     return `${day} ${time}`;
   }
+  const noon = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day, 12));
+  if (language === "es") {
+    const weekday = new Intl.DateTimeFormat("es", {
+      timeZone: "America/Bogota",
+      weekday: "long",
+    }).format(noon);
+    // Una: "a la 1 PM", otherwise "a las".
+    const article = Number(time.split(":")[0]) % 12 === 1 ? "a la" : "a las";
+    return `el ${weekday} ${parsed.day} ${article} ${hour12(time)}`;
+  }
   const weekday = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Bogota",
     weekday: "long",
-  }).format(new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day, 12)));
+  }).format(noon);
   return `${weekday} the ${ordinal(parsed.day)} at ${hour12(time)}`;
 }
 

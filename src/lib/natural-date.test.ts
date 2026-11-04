@@ -295,6 +295,18 @@ describe("bogotaTime and natural sheets (trial 9.7)", () => {
     expect(formatNaturalDateTime("2026-11-02", "12:00")).toBe("Monday the 2nd at 12 PM");
   });
 
+  it("says sheet dates in Spanish with the voice language", () => {
+    expect(formatNaturalDateTime("2026-11-13", "17:00", "es")).toBe("el viernes 13 a las 5 PM");
+    expect(formatNaturalDateTime("2026-11-07", "11:00", "es")).toBe("el sábado 7 a las 11 AM");
+    expect(formatNaturalDateTime("2026-11-13", "17:00", "en")).toBe("Friday the 13th at 5 PM");
+  });
+
+  it("says a la 1 in Spanish at one o clock", () => {
+    expect(formatNaturalDateTime("2026-11-13", "13:00", "es")).toBe("el viernes 13 a la 1 PM");
+    expect(formatNaturalDateTime("2026-11-13", "13:30", "es")).toBe("el viernes 13 a la 1:30 PM");
+    expect(formatNaturalDateTime("2026-11-13", "12:00", "es")).toBe("el viernes 13 a las 12 PM");
+  });
+
   it("reads whole hours without minutes", () => {
     expect(hour12("00:00")).toBe("12 AM");
     expect(hour12("12:00")).toBe("12 PM");

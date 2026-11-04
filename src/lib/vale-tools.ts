@@ -2302,7 +2302,7 @@ export function createAppointment(
   const id = Number(result.lastInsertRowid);
   logWrite(db, "agenda_create_appointment", "appointments", id);
   const reasons = offHoursReasons(resolved.day, resolved.time);
-  const natural = formatNaturalDateTime(resolved.day, resolved.time);
+  const natural = formatNaturalDateTime(resolved.day, resolved.time, language);
   let message =
     language === "en"
       ? `Booked: ${client.row.name} ${natural} for ${service.row.name}.`
@@ -2407,7 +2407,9 @@ export function moveAppointment(
   const picked = appointmentToMove(db, client.row.id, args.day, language);
   if ("error" in picked) return { ok: false, message: picked.error };
   if (picked.length > 1) {
-    const options = picked.map((row) => formatNaturalDateTime(row.day, row.time)).join(" or ");
+    const options = picked
+      .map((row) => formatNaturalDateTime(row.day, row.time, language))
+      .join(language === "en" ? " or " : " o ");
     return {
       ok: false,
       message:
@@ -2433,7 +2435,7 @@ export function moveAppointment(
     current.id,
   );
   logWrite(db, "agenda_move_appointment", "appointments", current.id, { prev_day: current.day, prev_time: current.time });
-  const natural = formatNaturalDateTime(resolved.day, resolved.time);
+  const natural = formatNaturalDateTime(resolved.day, resolved.time, language);
   const movedMessage =
     language === "en" ? `Moved: ${current.client} ${natural}.` : `Movida: ${current.client} ${natural}.`;
   return {
@@ -2465,7 +2467,7 @@ export function cancelAppointment(
     const full = db.prepare("SELECT * FROM appointments WHERE id = ?").get(row.id) as Record<string, unknown>;
     db.prepare("DELETE FROM appointments WHERE id = ?").run(row.id);
     logWrite(db, "agenda_cancel_appointment", "appointments", row.id, { row: full });
-    const natural = formatNaturalDateTime(current.day, current.time);
+    const natural = formatNaturalDateTime(current.day, current.time, language);
     const cancelledMessage =
       language === "en" ? `Cancelled: ${current.client} ${natural}.` : `Cancelada: ${current.client} ${natural}.`;
     return {
@@ -2484,7 +2486,9 @@ export function cancelAppointment(
   const picked = appointmentToMove(db, client.row.id, args.day, language);
   if ("error" in picked) return { ok: false, message: picked.error };
   if (picked.length > 1) {
-    const options = picked.map((row) => formatNaturalDateTime(row.day, row.time)).join(" or ");
+    const options = picked
+      .map((row) => formatNaturalDateTime(row.day, row.time, language))
+      .join(language === "en" ? " or " : " o ");
     return {
       ok: false,
       message:
@@ -2498,7 +2502,7 @@ export function cancelAppointment(
   const full = db.prepare("SELECT * FROM appointments WHERE id = ?").get(current.id) as Record<string, unknown>;
   db.prepare("DELETE FROM appointments WHERE id = ?").run(current.id);
   logWrite(db, "agenda_cancel_appointment", "appointments", current.id, { row: full });
-  const natural = formatNaturalDateTime(current.day, current.time);
+  const natural = formatNaturalDateTime(current.day, current.time, language);
   const cancelledMessage =
     language === "en" ? `Cancelled: ${current.client} ${natural}.` : `Cancelada: ${current.client} ${natural}.`;
   return {

@@ -1095,6 +1095,30 @@ describe("agenda_create_reminder", () => {
   });
 });
 
+describe("agenda Spanish notices", () => {
+  it("says create, move and cancel dates in Spanish only", () => {
+    const db = freshTestDb();
+    expect(createClient(db, { name: "Eva" }, "es").ok).toBe(true);
+    const booked = createAppointment(
+      db,
+      { client_name: "Eva", service_name: "retiro", day: "2026-10-29", time: "10:00" },
+      "es",
+    );
+    expect(booked.ok).toBe(true);
+    expect(booked.message).toContain("el jueves 29 a las 10 AM");
+    expect(booked.message).not.toMatch(/Thursday|Friday|Saturday|Monday| at /);
+    const moved = moveAppointment(db, { client_name: "Eva", new_day: "2026-10-31", new_time: "11:00" }, "es");
+    expect(moved.ok).toBe(true);
+    expect(moved.message).toContain("el sábado 31 a las 11 AM");
+    expect(moved.message).not.toMatch(/Thursday|Friday|Saturday|Monday| at /);
+    const done = cancelAppointment(db, { client_name: "Eva" }, "es");
+    expect(done.ok).toBe(true);
+    expect(done.message).toContain("el sábado 31 a las 11 AM");
+    expect(done.message).not.toMatch(/Thursday|Friday|Saturday|Monday| at /);
+    db.close();
+  });
+});
+
 describe("agenda_cancel_appointment", () => {
   it("cancels at once with a notice, then undoes", () => {
     const db = freshTestDb();
