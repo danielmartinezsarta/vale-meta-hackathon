@@ -1,7 +1,6 @@
 export const runtime = "nodejs";
 
-const SEAMLESS_URL =
-  "https://danielmartinezsarta--vale-seamless-tts-web-speak.us-east.modal.run";
+/** The open-model voice lives only in the server env: zero URLs in code. */
 const DEFAULT_SPEAKER = 10;
 const MAX_SPEAKER = 199;
 const MAX_CHARS = 500;
@@ -46,6 +45,13 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: "Missing text." }, { status: 400 });
   }
   const speaker = pickSpeaker(searchParams.get("speaker"));
+  const seamlessUrl = (process.env.SEAMLESS_URL ?? "").trim();
+  if (seamlessUrl === "") {
+    return Response.json(
+      { error: "Seamless voice is not configured.", code: "E-NET" },
+      { status: 503 },
+    );
+  }
   if (overLimit(clientIp(request))) {
     return Response.json(
       {
@@ -58,7 +64,7 @@ export async function GET(request: Request): Promise<Response> {
   let upstream: Response;
   try {
     upstream = await fetch(
-      `${SEAMLESS_URL}?speaker=${speaker}&text=${encodeURIComponent(text)}`,
+      `${seamlessUrl}?speaker=${speaker}&text=${encodeURIComponent(text)}`,
     );
   } catch {
     return Response.json(

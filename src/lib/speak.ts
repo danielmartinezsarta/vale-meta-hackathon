@@ -49,7 +49,19 @@ const VOICES_WAIT_MS = 1000;
 
 export type VoiceEngine = "browser" | "seamless";
 
-let engine: VoiceEngine = "browser";
+const ENGINE_KEY = "vale-engine";
+
+/** Browser default: a saved pick wins, anything else falls back. */
+function loadEngine(): VoiceEngine {
+  try {
+    if (typeof window === "undefined") return "browser";
+    return window.localStorage.getItem(ENGINE_KEY) === "seamless" ? "seamless" : "browser";
+  } catch {
+    return "browser";
+  }
+}
+
+let engine: VoiceEngine = loadEngine();
 
 /** Daniel's runtime voice controls: voice, speed and pitch per language. Switching language loads hers. Persisted, no reload. */
 export interface VoicePrefs {
@@ -243,6 +255,11 @@ function logVoiceChoice(): void {
 /** Switch the output engine at runtime; switch back with "browser". */
 export function setVoiceEngine(next: VoiceEngine): void {
   engine = next;
+  try {
+    if (typeof window !== "undefined") window.localStorage.setItem(ENGINE_KEY, next);
+  } catch {
+    /* private mode: the pick lasts the session */
+  }
   stopSeamlessSpeech();
 }
 

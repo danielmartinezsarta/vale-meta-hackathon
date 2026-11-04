@@ -1,9 +1,14 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
+
+beforeEach(() => {
+  vi.stubEnv("SEAMLESS_URL", "https://seamless.test/speak");
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -124,5 +129,17 @@ describe("seamless-voice proxy", () => {
     );
     const unreachable = await GET(new Request("http://test/api/seamless-voice?text=Hola"));
     expect(unreachable.status).toBe(502);
+  });
+
+  it("answers 503 without calling upstream when SEAMLESS_URL is missing", async () => {
+    vi.stubEnv("SEAMLESS_URL", "");
+    const fetchMock = vi.fn(async (..._args: unknown[]) => wavResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await GET(new Request("http://test/api/seamless-voice?text=Hola"));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual(
+      expect.objectContaining({ code: "E-NET" }),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

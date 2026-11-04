@@ -1,6 +1,9 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
+import { useState } from "react";
+import { SettingsSheet } from "@/components/SettingsSheet";
+import { uiStrings } from "@/lib/vale-ui";
 import { VoiceRobot } from "@/components/VoiceRobot";
 import { PhoneFrame } from "@/components/PhoneFrame";
 import { valeVars, type HomeMode } from "@/lib/vale-theme";
@@ -94,6 +97,8 @@ export function ValeScreenShell({
 }) {
   const visible = bubbles.slice(-3);
   const vars = valeVars(mode);
+  const ui = uiStrings(language);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   return (
     <PhoneFrame background={vars["--aw-bg"]}>
     <div
@@ -149,6 +154,24 @@ export function ValeScreenShell({
           </button>
         )}
         {actions}
+        <button
+          className={`${styles.abtn} ${styles.mute}`}
+          type="button"
+          aria-label={ui.settings}
+          onClick={() => setSettingsOpen(true)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <g
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <circle cx="12" cy="12" r="3.2" />
+              <path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8" />
+            </g>
+          </svg>
+        </button>
       </div>
 
       <button
@@ -213,6 +236,10 @@ export function ValeScreenShell({
       {notice && <p role="status">{notice}</p>}
 
       {alert && <div role="alert">{alert}</div>}
+
+      {settingsOpen && (
+        <SettingsSheet language={language} onClose={() => setSettingsOpen(false)} />
+      )}
     </div>
     </PhoneFrame>
   );
