@@ -140,33 +140,70 @@ async function main(): Promise<void> {
       await context.grantPermissions(["microphone"], {
         origin: `http://localhost:${port}`,
       });
-      await context.addInitScript(() => {
-        window.localStorage.setItem("vale-theme", "dark");
-      });
+      // Strings, not closures: the runner compiles closures with helpers
+      // the browser does not have, which fails the whole init script.
+      await context.addInitScript(`window.localStorage.setItem("vale-theme", "dark");`);
       // Alert flash log: records every role=alert node with its text,
       // so a transient banner names itself instead of stopping the run blind.
-      await context.addInitScript(() => {
-        const log = (window as unknown as { __alertFlashes?: unknown[] }).__alertFlashes ?? [];
-        (window as unknown as { __alertFlashes?: unknown[] }).__alertFlashes = log;
-        const seen = new WeakSet<Node>();
-        new MutationObserver((mutations) => {
+      await context.addInitScript(`
+        window.__alertFlashes = window.__alertFlashes || [];
+        const __log = window.__alertFlashes;
+        const __seen = new WeakSet();
+        const __record = (alert) => {
+          if (__seen.has(alert)) return;
+          __seen.add(alert);
+          __log.push({ t: Date.now(), text: (alert.innerText || "").slice(0, 120) });
+        };
+        const __observer = new MutationObserver((mutations) => {
           for (const mutation of mutations) {
+            if (mutation.type === "attributes") {
+              const target = mutation.target;
+              if (target instanceof HTMLElement && target.getAttribute("role") === "alert") {
+                // Re-log on every show: one reused node would log once.
+                __seen.delete(target);
+                __record(target);
+              }
+              continue;
+            }
             for (const node of mutation.addedNodes) {
               if (!(node instanceof HTMLElement)) continue;
-              const alerts: HTMLElement[] =
-                node.getAttribute?.("role") === "alert"
+              const alerts =
+                node.getAttribute && node.getAttribute("role") === "alert"
                   ? [node]
-                  : Array.from(node.querySelectorAll?.('[role="alert"]') ?? []);
-              for (const alert of alerts) {
-                if (seen.has(alert)) continue;
-                seen.add(alert);
-                log.push({ t: Date.now(), text: (alert.innerText ?? "").slice(0, 120) });
-              }
+                  : Array.from(node.querySelectorAll ? node.querySelectorAll('[role="alert"]') : []);
+              for (const alert of alerts) __record(alert);
             }
           }
-        }).observe(document.documentElement, { childList: true, subtree: true });
-      });
+        });
+        const start = () => {
+          // The init script can run before the document exists: wait for
+          // the root instead of throwing and losing the whole flash log.
+          if (!document.documentElement) {
+            window.setTimeout(start, 50);
+            return;
+          }
+          // Attributes too: the empty session alert is one reused node
+          // being shown and hidden, not a fresh node every turn.
+          __observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ["hidden", "class", "style"],
+          });
+        };
+        start();
+      `);
       const page = await context.newPage();
+      // Measure, don't guess: every turn must fire exactly one POST, and
+      // any exception in the submit chain shows up here, not as a hang.
+      let voicePosts = 0;
+      page.on("request", (req) => {
+        if (req.method() === "POST" && req.url().includes("/api/voice")) voicePosts += 1;
+      });
+      page.on("pageerror", (err) => {
+        const stack = err instanceof Error ? err.stack ?? String(err) : String(err);
+        console.log(`[demo] pageerror: ${stack.slice(0, 400)}`);
+      });
       const realClick = async (name: string | RegExp) => {
         // A real mouse click: audio only unlocks from a gesture.
         const button = page.getByRole("button", { name });
@@ -213,7 +250,7 @@ async function main(): Promise<void> {
       })()`);
       console.log(`[demo] rects ${rects}`);
       // Same browser id the app stored, so the demo reads the same cursor
-      // the pill shows. It survives a reload, which keeps recovery exact.
+      // the pill shows.
       const clientId =
         (await page.evaluate(() => window.localStorage.getItem("vale-client"))) ?? "";
       // The route answers HTML or empty while Next compiles: retry
@@ -273,6 +310,9 @@ async function main(): Promise<void> {
         } catch {
           // Click landed before the sender was ready: the text is still
           // in the box, so click again like a user would.
+          console.log(
+            `[demo] no reply yet ${turn.turn} posts=${voicePosts} box=${JSON.stringify(await box.inputValue().catch(() => "?"))}`,
+          );
           if ((await box.inputValue()) !== "") await sendBtn.click({ force: true, timeout: 30000 });
           try {
             await seen.waitFor({ timeout: 90000, state: "attached" });
@@ -286,6 +326,14 @@ async function main(): Promise<void> {
           }
         }
         if (turn.widget) await page.waitForTimeout(1500);
+        // Shoot before quiet: display-only sheets auto-hide 3 s after
+        // they open, so waiting for speech first would miss the card.
+        const shot = SHOT_TURNS[turn.turn];
+        if (shot && !shotTaken.has(shot)) {
+          shotTaken.add(shot);
+          await page.screenshot({ path: join(shots, shot) });
+          console.log(`[demo] shot: ${shot}`);
+        }
         await quiet(page);
         // A session alert banner means the run is broken: stop loud,
         // never hang. Banners can flash mid-render, so only a banner
@@ -312,12 +360,6 @@ async function main(): Promise<void> {
             console.log(`[demo] transient empty alert node at ${turn.turn}, continuing`);
           }
         }
-        const shot = SHOT_TURNS[turn.turn];
-        if (shot && !shotTaken.has(shot)) {
-          shotTaken.add(shot);
-          await page.screenshot({ path: join(shots, shot) });
-          console.log(`[demo] shot: ${shot}`);
-        }
         // Tidy the sheet like a user would, so the next turn's card is
         // its own. Display-only sheets auto-hide; only button kinds and
         // the client card need a hand. The X names the open sheet.
@@ -327,6 +369,25 @@ async function main(): Promise<void> {
           await page.keyboard.press("Escape");
           await page.waitForTimeout(500);
         }
+        // A decision sheet has no X: the recorded user tapped a choice
+        // (quote, then payment), so the demo taps Accept the same way.
+        const priceAccept = page
+          .getByRole("dialog", { name: "Price" })
+          .getByRole("button", { name: "Accept" });
+        if ((await priceAccept.count()) > 0) await priceAccept.first().click({ timeout: 5000 });
+        // A sheet covering the send button eats the next turn's click
+        // without a sound (the text stays in the box, no POST). Prove the
+        // button is reachable; stop loud naming the cover when it is not.
+        const covering = await page.evaluate(() => {
+          const btn = document.querySelector('button[aria-label="Send message"]');
+          if (!btn) return "no-send-button";
+          const r = btn.getBoundingClientRect();
+          const el = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          if (!el || btn.contains(el)) return "ok";
+          const dlg = typeof el.closest === "function" ? el.closest('[role="dialog"]') : null;
+          return `covered-by:${dlg ? dlg.getAttribute("aria-label") : el.tagName}`;
+        });
+        if (covering !== "ok") throw new Error(`send button not reachable: ${covering}`);
       };
       // The demo types whatever turn the cursor points at, one at a time;
       // the pill's pause holds the reply, its stop and jumps move the cursor.
@@ -341,13 +402,33 @@ async function main(): Promise<void> {
         try {
           await typeTurn(run.turns[state.cursor], state.cursor);
         } catch (error) {
-          // The sender can go deaf mid-run (a lost submit posts nothing
-          // and the cursor never moves). A fresh page rewires it: same
-          // client and cursor, so the turn simply runs again, once.
-          console.log(`[demo] retry ${run.turns[state.cursor].turn} after reload: ${(error as Error).message}`);
-          await page.reload({ waitUntil: "networkidle", timeout: 60000 });
-          await startVoice();
-          await typeTurn(run.turns[state.cursor], state.cursor);
+          // No reload: a stall mid-run is an app bug until proven
+          // otherwise. Dump the sender state, then stop loud.
+          const diag = await page
+            .evaluate((posts: number) => {
+              const btns = Array.from(
+                document.querySelectorAll('button[aria-label="Send message"]'),
+              ) as HTMLButtonElement[];
+              const tbs = Array.from(
+                document.querySelectorAll('[aria-label="Type to Vale"]'),
+              ) as HTMLInputElement[];
+              const dialogs = Array.from(document.querySelectorAll('[role="dialog"]')).map((d) =>
+                (d.getAttribute("aria-label") ?? "?").slice(0, 40),
+              );
+              return JSON.stringify({
+                posts,
+                sendBtns: btns.map((e) => ({
+                  disabled: e.disabled,
+                  connected: e.isConnected,
+                })),
+                boxes: tbs.map((e) => ({ value: e.value.slice(0, 60), connected: e.isConnected })),
+                dialogs,
+                tail: (document.body.innerText ?? "").slice(-200),
+              });
+            }, voicePosts)
+            .catch(() => "diag-failed");
+          console.log(`[demo] miss-diag ${run.turns[state.cursor].turn} ${diag}`);
+          throw error;
         }
       }
       const flashes = await page

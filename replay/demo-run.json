@@ -957,10 +957,10 @@
         "title": "Photos",
         "size": "full",
         "data": {
-          "before": "/api/photos?file=pre_8.jpg",
+          "before": "/api/photos?file=seed-assets/david-before.jpg",
           "reference": "/api/photos?file=seed-assets/david-appointment-reference.jpg",
-          "expected": "/api/photos?file=preview_8.png",
-          "final": "/api/photos?file=post_8.jpg"
+          "expected": "/api/photos?file=seed-assets/david-preview.png",
+          "final": "/api/photos?file=seed-assets/david-final.jpg"
         }
       },
       "board": {
@@ -1014,10 +1014,10 @@
         "title": "Photos",
         "size": "full",
         "data": {
-          "before": "/api/photos?file=pre_8.jpg",
+          "before": "/api/photos?file=seed-assets/david-before.jpg",
           "reference": "/api/photos?file=seed-assets/david-appointment-reference.jpg",
-          "expected": "/api/photos?file=preview_8.png",
-          "final": "/api/photos?file=post_8.jpg"
+          "expected": "/api/photos?file=seed-assets/david-preview.png",
+          "final": "/api/photos?file=seed-assets/david-final.jpg"
         }
       },
       "board": {
@@ -1071,9 +1071,9 @@
         "title": "Photos",
         "size": "full",
         "data": {
-          "before": "/api/photos?file=pre_8.jpg",
+          "before": "/api/photos?file=seed-assets/david-before.jpg",
           "reference": "/api/photos?file=seed-assets/david-appointment-reference.jpg",
-          "expected": "/api/photos?file=preview_8.png",
+          "expected": "/api/photos?file=seed-assets/david-preview.png",
           "final": null
         }
       },
@@ -1128,10 +1128,10 @@
         "title": "Photos",
         "size": "full",
         "data": {
-          "before": "/api/photos?file=pre_8.jpg",
+          "before": "/api/photos?file=seed-assets/david-before.jpg",
           "reference": "/api/photos?file=seed-assets/david-appointment-reference.jpg",
-          "expected": "/api/photos?file=preview_8.png",
-          "final": "/api/photos?file=post_8.jpg"
+          "expected": "/api/photos?file=seed-assets/david-preview.png",
+          "final": "/api/photos?file=seed-assets/david-final.jpg"
         }
       },
       "board": {

@@ -270,6 +270,54 @@ describe("sheet flows", () => {
     );
   });
 
+  it("auto-hides a display-only sheet that arrives mid-speech, client card stays", { timeout: 30000 }, async () => {
+    const ws = await openConversation();
+    // The reply puts Vale in speaking: the note widget arrives mid-speech.
+    ws.serverMessage({ type: "reply", text: "Note saved for Nina." });
+    ws.serverMessage({
+      type: "widget",
+      widget: {
+        kind: "note",
+        title: "Note saved",
+        size: "half",
+        data: { text: "Likes neon colors", client: "David" },
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Note saved")).toBeTruthy();
+    });
+    await waitFor(
+      () => {
+        expect(screen.queryByText("Note saved")).toBeNull();
+      },
+      { timeout: 8000 },
+    );
+    // The client card never auto-hides, even past the auto-hide delay.
+    ws.serverMessage({
+      type: "widget",
+      widget: {
+        kind: "client_card",
+        title: "Nina",
+        size: "half",
+        data: {
+          name: "Nina",
+          birthday: null,
+          sex: null,
+          phone: null,
+          email: null,
+          visits: [],
+          visitsMore: 0,
+          healthNotes: [],
+          noteTags: [],
+        },
+      },
+    });
+    const cardSheet = await screen.findByRole("dialog", { name: "Client card" });
+    expect(within(cardSheet).getAllByText("Nina").length).toBeGreaterThan(0);
+    await new Promise((resolve) => setTimeout(resolve, 4500));
+    expect(screen.queryByRole("dialog", { name: "Client card" })).toBeTruthy();
+  });
+
   it("opens the photos sheet from a visit tap", async () => {
     const ws = await openConversation();
     ws.serverMessage({

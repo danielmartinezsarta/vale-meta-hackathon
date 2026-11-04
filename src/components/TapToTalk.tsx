@@ -390,6 +390,16 @@ export function TapToTalk({
           showGoodJob();
         }, SUMMARY_MS);
       }
+      if (next !== null && AUTO_HIDE_WIDGET_KINDS.includes(next.kind)) {
+        // Display-only sheets hide themselves even when they arrive
+        // mid-speech, like every other widget that has no buttons. The
+        // schedule runs before the speaking early return below, the same
+        // way the summary chain already does.
+        widgetTimerRef.current = window.setTimeout(() => {
+          widgetTimerRef.current = 0;
+          closeWidgetByHand();
+        }, AUTO_HIDE_MS);
+      }
       if (next === null || valeStoreRef.current.get() === "speaking") return;
       if (next.kind === "good_job") {
         // Held through goodbye: done face and care icons stay 5 s.
@@ -408,12 +418,6 @@ export function TapToTalk({
         doneTimerRef.current = 0;
         settleToListening();
       }, 1500);
-      if (AUTO_HIDE_WIDGET_KINDS.includes(next.kind)) {
-        widgetTimerRef.current = window.setTimeout(() => {
-          widgetTimerRef.current = 0;
-          closeWidgetByHand();
-        }, AUTO_HIDE_MS);
-      }
     },
     [clearDoneTimer, clearWidgetTimer, closeWidgetByHand, settleToListening, showGoodJob],
   );
