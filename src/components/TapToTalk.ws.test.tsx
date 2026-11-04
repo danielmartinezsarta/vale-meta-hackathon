@@ -293,7 +293,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
       { timeout: 8000 },
     );
     expect(screen.getByRole("alert").textContent).toContain(
-      "The connection dropped",
+      "Connection lost",
     );
     // Nothing captured, nothing posted: no socket opens for a blip.
     expect(mockStartCapture).not.toHaveBeenCalled();
@@ -330,7 +330,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
 
     ws.serverMessage({
       type: "error",
-      message: "Se perdió la conexión. Toca para intentar de nuevo.",
+      message: "Se perdió la conexión.",
       code: "E-ASR",
     });
     await waitFor(() => {

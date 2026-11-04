@@ -71,6 +71,7 @@ export function ValeScreenShell({
   onCloseWidget,
   onVote,
   sheetCallbacks,
+  onRetry,
 }: {
   frameClassName?: string;
   mode: HomeMode;
@@ -94,6 +95,7 @@ export function ValeScreenShell({
   onCloseWidget: () => void;
   onVote: (vote: "yes" | "no") => void;
   sheetCallbacks?: SheetCallbacks;
+  onRetry?: () => void;
 }) {
   const visible = bubbles.slice(-3);
   const vars = valeVars(mode);
@@ -235,7 +237,32 @@ export function ValeScreenShell({
 
       {notice && <p role="status">{notice}</p>}
 
-      {alert && <div role="alert">{alert}</div>}
+      {alert && (
+        <div role="alert" className={styles.alert}>
+          <span className={styles.alertText}>{alert}</span>
+          {onRetry && (
+            <button
+              className={styles.abtn}
+              type="button"
+              aria-label={ui.tryAgain}
+              onClick={onRetry}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <g
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M20 12a8 8 0 1 1-2.3-5.6" />
+                  <path d="M20 3v4h-4" />
+                </g>
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
 
       {settingsOpen && (
         <SettingsSheet language={language} onClose={() => setSettingsOpen(false)} />

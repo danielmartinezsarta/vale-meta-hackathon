@@ -45,24 +45,24 @@ export type VoiceErrorKind =
 
 const ERROR_TEXT: Record<VoiceErrorKind, Record<ValeLanguage, string>> = {
   setup: {
-    es: "La voz no está configurada. Intenta de nuevo más tarde.",
-    en: "Voice is not set up. Try again later.",
+    es: "La voz no está configurada.",
+    en: "Voice is not set up.",
   },
   timeout: {
-    es: "El turno de voz se agotó. Toca para intentar de nuevo.",
-    en: "The voice turn ran out. Tap to try again.",
+    es: "Se agotó el turno de voz.",
+    en: "The voice turn ran out.",
   },
   lost: {
-    es: "Se perdió la conexión. Toca para intentar de nuevo.",
-    en: "The connection dropped. Tap to try again.",
+    es: "Se perdió la conexión.",
+    en: "Connection lost.",
   },
   model: {
-    es: "Perdón, tuve un problema. Toca para intentar de nuevo.",
-    en: "Sorry, I had a problem. Tap to try again.",
+    es: "Tuve un problema.",
+    en: "Something went wrong.",
   },
   suspended: {
-    es: "El micrófono no arrancó. Toca para intentar de nuevo.",
-    en: "The microphone did not start. Tap to try again.",
+    es: "El micrófono no arrancó.",
+    en: "Microphone didn't start.",
   },
 };
 
