@@ -223,12 +223,12 @@ export function ClientsScreen({ onBack }: { onBack: () => void }) {
                 <h2 className={styles.h}>Notes</h2>
                 {detail.notes.length === 0 && <div className={styles.row}><span>No notes yet.</span></div>}
                 {detail.notes.map((note) => (
-                  <div className={styles.row} key={note.id}>
-                    <span className={styles.grow}>{note.masked ? "Private health note" : note.text}</span>
+                  <div className={styles.row} key={note.id} style={{ flexWrap: "wrap" }}>
+                    <span className={styles.grow} style={{ flex: "1 1 11rem" }}>{note.masked ? "Private health note" : note.text}</span>
                     {note.kind === "health_note" && <span className={styles.badge}>Health</span>}
                     <button
                       className={styles.danger}
-                      style={{ width: "auto", minHeight: 48, padding: "0 14px" }}
+                      style={{ width: "auto", minHeight: 48, padding: "0 14px", marginLeft: "auto" }}
                       type="button"
                       onClick={() => remove("note", note.id)}
                     >

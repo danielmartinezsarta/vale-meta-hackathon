@@ -1,6 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { useScreenMode } from "@/components/useScreenMode";
 import styles from "./ManageScreens.module.css";
 
 /**
@@ -25,8 +26,12 @@ export function ManageShell({
   notice?: string | null;
   children: ReactNode;
 }) {
+  const mode = useScreenMode();
   return (
-    <div className={styles.mg}>
+    <div
+      className={styles.mg}
+      style={{ colorScheme: mode === "night" ? "dark" : "light" } as CSSProperties}
+    >
       <div className={styles.top}>
         <button className={styles.back} type="button" aria-label="Back" onClick={onBack}>
           <svg viewBox="0 0 24 24" aria-hidden="true">
