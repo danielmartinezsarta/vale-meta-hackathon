@@ -1,8 +1,8 @@
 // @vitest-environment node
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AGENT_MODEL } from "@/lib/agent";
 import { getDb } from "@/lib/db";
 import { SAM_MODEL } from "@/lib/nails";
@@ -33,17 +33,31 @@ function useTmpPhotos(): string {
   return photoDir;
 }
 
+beforeEach(() => {
+  // The SAM line goes to the event log: keep it out of the live one.
+  vi.stubEnv("VALE_EVENTLOG_PATH", join(mkdtempSync(join(tmpdir(), "vale-events-")), "events.jsonl"));
+});
+
 afterEach(() => {
   if (savedPhotoDir === undefined) delete process.env.VALE_PHOTO_DIR;
   else process.env.VALE_PHOTO_DIR = savedPhotoDir;
   if (savedApiKey === undefined) delete process.env.META_API_KEY;
   else process.env.META_API_KEY = savedApiKey;
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   if (photoDir) {
     rmSync(photoDir, { recursive: true, force: true });
     photoDir = "";
   }
 });
+
+function eventLines(): Record<string, unknown>[] {
+  const file = process.env.VALE_EVENTLOG_PATH ?? "";
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
 
 function boxToken(index: number): string {
   const base = index * 10;
@@ -124,6 +138,33 @@ describe("POST /api/session-photo", () => {
     expect("description" in body).toBe(false);
     expect(JSON.stringify(body)).not.toContain(dir);
     expect(existsSync(join(dir, "session-photos", `pre_${sessionId}.jpg`))).toBe(true);
+  });
+
+  it("logs one SAM line with slot and session and no photo bytes", async () => {
+    useTmpPhotos();
+    stubModels(2, "unused description");
+    const sessionId = openSession();
+    const logs: string[] = [];
+    const savedLog = console.log;
+    console.log = (line: string) => void logs.push(line);
+    try {
+      const res = await POST(uploadRequest({ photo: PNG, sessionId: String(sessionId), slot: "after" }));
+      expect(res.status).toBe(200);
+    } finally {
+      console.log = savedLog;
+    }
+    const lines = eventLines();
+    const sam = lines.filter((line) => line.process === "SAM");
+    expect(sam).toHaveLength(1);
+    expect(sam[0]).toMatchObject({
+      turn: "-",
+      model: SAM_MODEL,
+      status: "ok",
+      detail: { slot: "post", session: sessionId },
+    });
+    const raw = lines.map((line) => JSON.stringify(line)).join("\n");
+    expect(raw).not.toContain("base64");
+    expect(logs.join("\n")).toContain("SAM");
   });
 
   it("maps after to post and reference to ref", async () => {

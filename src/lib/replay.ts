@@ -91,7 +91,10 @@ export function buildReplayRun(lines: string[]): ReplayRun {
     const tag = typeof row.turn === "string" ? row.turn : "";
     if (tag === "" || tag === "-") continue;
     const current = take(tag);
-    if (row.process === "TOOL") {
+    // The photo preview logs no TOOL row: its IMAGE and SAM rows carry
+    // the tool name (and the args on the IMAGE row), so replay reads the
+    // tool off those too. SAM upload rows carry no tool and stay out.
+    if (row.process === "TOOL" || ((row.process === "IMAGE" || row.process === "SAM") && typeof recordOf(row.detail).tool === "string")) {
       // The recording spreads tool args at the top level of the row.
       const detail = recordOf(row.detail);
       if (typeof detail.tool === "string") current.tool = detail.tool;

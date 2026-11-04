@@ -681,16 +681,20 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     // Slow tools narrate at once: model deltas of a tool round stay
     // buffered until the tool finishes, so the wait line cannot ride them.
     onToolStart(call.name);
-    const toolResult = await runValeToolAsync(db, call.name, parsed, language);
-    vlog({
-      turn: options.turn ?? "-",
-      process: "TOOL",
-      status: toolResult.ok ? "ok" : "error",
-      durationMs: Date.now() - toolAt,
-      detail: { tool: call.name },
-      content: toolResult.message,
-      extra: { args: parsed },
-    });
+    const toolResult = await runValeToolAsync(db, call.name, parsed, language, fetch, options.turn);
+    // The photo preview logs its own SAM and IMAGE rows (with the same
+    // args), so the generic TOOL row stays out for it.
+    if (call.name !== "photo_preview_design") {
+      vlog({
+        turn: options.turn ?? "-",
+        process: "TOOL",
+        status: toolResult.ok ? "ok" : "error",
+        durationMs: Date.now() - toolAt,
+        detail: { tool: call.name },
+        content: toolResult.message,
+        extra: { args: parsed },
+      });
+    }
     if (!toolResult.ok) {
       // A complete proposal waits for the yes; anything else retires
       // a stale one instead of confirming the wrong thing.

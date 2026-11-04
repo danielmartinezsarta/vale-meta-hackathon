@@ -1,8 +1,8 @@
 // @vitest-environment node
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { freshTestDb } from "./db";
 import { PRICING } from "./db";
 import { quotePrice } from "./quote";
@@ -1290,6 +1290,11 @@ const savedPreviewKey = process.env.META_API_KEY;
 const savedPreviewPhotoDir = process.env.VALE_PHOTO_DIR;
 let previewPhotoDir = "";
 
+beforeEach(() => {
+  // Model lines (SAM, IMAGE) go to the event log: keep them out of the live one.
+  vi.stubEnv("VALE_EVENTLOG_PATH", join(mkdtempSync(join(tmpdir(), "vale-events-")), "events.jsonl"));
+});
+
 afterEach(() => {
   if (savedPreviewKey === undefined) delete process.env.META_API_KEY;
   else process.env.META_API_KEY = savedPreviewKey;
@@ -1302,6 +1307,14 @@ afterEach(() => {
     previewPhotoDir = "";
   }
 });
+
+function eventLines(): Record<string, unknown>[] {
+  const file = process.env.VALE_EVENTLOG_PATH ?? "";
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
 
 /** Open session, before photo, and appointment reference for the preview tool. */
 function openPreviewSession(
@@ -1399,6 +1412,66 @@ describe("photo_preview_design", () => {
     const result = await runValeToolAsync(db, "photo_preview_design", {}, "en");
     expect(result.ok).toBe(false);
     db.close();
+  });
+
+  it("logs SAM and IMAGE lines with the turn tag and no TOOL row", async () => {
+    const db = freshTestDb();
+    openPreviewSession(db, "seed-assets/david-last-service.jpg");
+    stubPreviewModels(5, [5]);
+    const logs: string[] = [];
+    const savedLog = console.log;
+    console.log = (line: string) => void logs.push(line);
+    try {
+      const result = await runValeToolAsync(db, "photo_preview_design", {}, "en", fetch, "t046");
+      expect(result.ok).toBe(true);
+    } finally {
+      console.log = savedLog;
+    }
+    db.close();
+    const lines = eventLines();
+    expect(lines.filter((line) => line.process === "TOOL")).toHaveLength(0);
+    const sam = lines.filter((line) => line.process === "SAM");
+    const image = lines.filter((line) => line.process === "IMAGE");
+    expect(sam).toHaveLength(2);
+    expect(image).toHaveLength(1);
+    for (const line of [...sam, ...image]) {
+      expect(line.turn).toBe("t046");
+      expect(line.detail).toMatchObject({ tool: "photo_preview_design" });
+    }
+    expect(sam[0]).toMatchObject({ model: "sam-3.1", status: "ok" });
+    expect(typeof sam[0].durationMs).toBe("number");
+    expect(image[0]).toMatchObject({
+      model: "muse-image-1.0",
+      status: "ok",
+      content: "Here is how it would look. The preview is on screen.",
+    });
+    expect(image[0].args).toEqual({});
+    expect(typeof image[0].durationMs).toBe("number");
+    // The same rows also went to the server console.
+    expect(logs.join("\n")).toContain("IMAGE");
+    expect(logs.join("\n")).toContain("SAM");
+  });
+
+  it("carries the stop message and args on the SAM row when nails are missing", async () => {
+    const db = freshTestDb();
+    openPreviewSession(db, `data:image/png;base64,${TINY_PNG_B64}`);
+    stubPreviewModels(2, []);
+    const result = await runValeToolAsync(db, "photo_preview_design", {}, "en", fetch, "t047");
+    expect(result.ok).toBe(false);
+    db.close();
+    const lines = eventLines();
+    expect(lines.filter((line) => line.process === "TOOL")).toHaveLength(0);
+    expect(lines.filter((line) => line.process === "IMAGE")).toHaveLength(0);
+    const sam = lines.filter((line) => line.process === "SAM");
+    expect(sam).toHaveLength(1);
+    expect(sam[0]).toMatchObject({
+      turn: "t047",
+      model: "sam-3.1",
+      status: "ok",
+      content: "I need a photo with all five nails visible.",
+    });
+    expect(sam[0].detail).toMatchObject({ tool: "photo_preview_design" });
+    expect(sam[0].args).toEqual({});
   });
 
   it("keeps sync tools working through the async runner", async () => {

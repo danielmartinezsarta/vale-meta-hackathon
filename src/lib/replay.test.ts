@@ -96,6 +96,60 @@ describe("buildReplayRun", () => {
       [],
     );
   });
+
+  it("reads the tool off IMAGE and SAM rows that carry detail.tool", () => {
+    const run = buildReplayRun([
+      row({
+        turn: "replay-2",
+        process: "VOICE",
+        status: "ok",
+        turnFields: { language: "en", transcript: "show me how it will look" },
+      }),
+      row({
+        turn: "replay-2",
+        process: "SAM",
+        status: "ok",
+        detail: { tool: "photo_preview_design" },
+        content: "-",
+      }),
+      row({
+        turn: "replay-2",
+        process: "IMAGE",
+        status: "ok",
+        detail: { tool: "photo_preview_design" },
+        content: "Here is how it would look. The preview is on screen.",
+        args: {},
+      }),
+      row({
+        turn: "replay-2",
+        process: "AGENT",
+        status: "ok",
+        content: "Here is how it would look.",
+      }),
+    ]);
+    expect(run.turns).toHaveLength(1);
+    expect(run.turns[0].tool).toBe("photo_preview_design");
+  });
+
+  it("ignores SAM upload rows without a tool", () => {
+    const run = buildReplayRun([
+      row({
+        turn: "replay-3",
+        process: "VOICE",
+        status: "ok",
+        turnFields: { language: "en", transcript: "take the before photo" },
+      }),
+      row({
+        turn: "replay-3",
+        process: "SAM",
+        status: "ok",
+        detail: { slot: "pre", session: 8 },
+        content: "-",
+      }),
+    ]);
+    expect(run.turns).toHaveLength(1);
+    expect(run.turns[0].tool).toBeNull();
+  });
 });
 
 describe("parseReplayRun", () => {

@@ -1,8 +1,9 @@
 // @vitest-environment node
-import { readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SAM_MODEL } from "./nails";
 import {
   AGENT_MODEL,
   PROMPT_CACHE_KEY,
@@ -17,7 +18,11 @@ import {
 import { freshTestDb, recordTurn, recentTurns } from "./db";
 import { refreshClientBrief } from "./client-briefs";
 import { seedBirthday } from "./seed-dates";
+import { sessionPhotoPath, sessionPhotosDir } from "./session-photo";
 import { openSession } from "./vale-tools";
+
+const TINY_PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 import {
   clearPendingAction,
   setPendingAction,
@@ -321,6 +326,91 @@ describe("agent turn with tools", () => {
       if (saved === undefined) delete process.env.VALE_EVENTLOG_PATH;
       else process.env.VALE_EVENTLOG_PATH = saved;
       rmSync(file, { force: true });
+      db.close();
+    }
+  });
+
+  it("logs SAM and IMAGE instead of TOOL for the photo preview", async () => {
+    const db = freshTestDb();
+    const photoDir = mkdtempSync(join(tmpdir(), "agent-photo-preview-"));
+    const savedPhotoDir = process.env.VALE_PHOTO_DIR;
+    const savedKey = process.env.META_API_KEY;
+    process.env.VALE_PHOTO_DIR = photoDir;
+    process.env.META_API_KEY = "test-key";
+    const opened = openSession(db, { client_name: "David", service_name: "Semi-permanent manicure" });
+    expect(opened.ok).toBe(true);
+    const session = db
+      .prepare("SELECT id FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1")
+      .get() as { id: number };
+    mkdirSync(sessionPhotosDir(), { recursive: true });
+    writeFileSync(
+      sessionPhotoPath(session.id, "pre", sessionPhotosDir()),
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]),
+    );
+    const samText = Array.from(
+      { length: 5 },
+      (_, index) =>
+        `<|box;x1=${index * 10};y1=${index * 10};x2=${index * 10 + 50};y2=${index * 10 + 50};w=200;h=100|>`,
+    ).join(" ");
+    let metaCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown, init: unknown) => {
+        if (String(url).includes("images/")) {
+          return Response.json({ id: "img", data: [{ b64_json: TINY_PNG_B64 }] });
+        }
+        const body = JSON.parse(String((init as { body: string }).body ?? "{}")) as Record<string, unknown>;
+        if (body.model === SAM_MODEL) {
+          return Response.json({
+            id: "s",
+            output: [{ type: "message", content: [{ type: "output_text", text: samText }] }],
+          });
+        }
+        metaCalls += 1;
+        return metaCalls === 1
+          ? sseResponse([toolCall("resp_1", "photo_preview_design", {}, "call_1")])
+          : sseResponse([spoken("resp_2", "Listo, ya la tienes.")]);
+      }),
+    );
+    const saved = process.env.VALE_EVENTLOG_PATH;
+    const file = join(tmpdir(), `agent-events-${Date.now()}.jsonl`);
+    const seen: string[] = [];
+    const savedLog = console.log;
+    console.log = (line: string) => void seen.push(line);
+    try {
+      process.env.VALE_EVENTLOG_PATH = file;
+      const result = await runAgentTurn({
+        key: "test-key",
+        transcript: "show me how it will look",
+        language: "en",
+        db,
+        turn: "t043",
+      });
+      expect(result.toolUsed).toBe("photo_preview_design");
+      expect(seen.filter((line) => line.includes("| TOOL "))).toHaveLength(0);
+      expect(seen.filter((line) => line.includes("| IMAGE "))).toHaveLength(1);
+      expect(seen.filter((line) => line.includes("| SAM ")).length).toBeGreaterThanOrEqual(2);
+      const rows = readFileSync(file, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(rows.find((row) => row.process === "TOOL")).toBeUndefined();
+      const image = rows.find((row) => row.process === "IMAGE");
+      expect(image).toMatchObject({ turn: "t043", model: "muse-image-1.0", status: "ok" });
+      expect(image.detail).toEqual({ tool: "photo_preview_design" });
+      const sam = rows.filter((row) => row.process === "SAM");
+      expect(sam.length).toBeGreaterThanOrEqual(2);
+      expect(sam[0]).toMatchObject({ turn: "t043", model: "sam-3.1", status: "ok" });
+    } finally {
+      console.log = savedLog;
+      if (saved === undefined) delete process.env.VALE_EVENTLOG_PATH;
+      else process.env.VALE_EVENTLOG_PATH = saved;
+      if (savedPhotoDir === undefined) delete process.env.VALE_PHOTO_DIR;
+      else process.env.VALE_PHOTO_DIR = savedPhotoDir;
+      if (savedKey === undefined) delete process.env.META_API_KEY;
+      else process.env.META_API_KEY = savedKey;
+      rmSync(file, { force: true });
+      rmSync(photoDir, { recursive: true, force: true });
       db.close();
     }
   });

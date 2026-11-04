@@ -3,7 +3,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getDb } from "@/lib/db";
-import { buildNailMosaic, describeMosaic, segmentNails } from "@/lib/nails";
+import { SAM_MODEL, buildNailMosaic, describeMosaic, segmentNails } from "@/lib/nails";
+import { vlog } from "@/lib/turn-log";
 import {
   previewsDir,
   sessionPhotosDir,
@@ -71,7 +72,25 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const boxes = await segmentNails(key, dataUrl);
     sam = { nailCount: boxes.length, boxes };
+    vlog({
+      turn: "-",
+      process: "SAM",
+      model: SAM_MODEL,
+      durationMs: null,
+      status: "ok",
+      detail: { slot, session: sessionId },
+      content: null,
+    });
   } catch {
+    vlog({
+      turn: "-",
+      process: "SAM",
+      model: SAM_MODEL,
+      durationMs: null,
+      status: "error",
+      detail: { slot, session: sessionId },
+      content: null,
+    });
     return fail("E-SAM", "Nail analysis failed.", 500);
   }
   const nailsFound = sam.nailCount === 5;

@@ -13,9 +13,9 @@ import {
   refreshClientBriefInBackground,
 } from "./client-briefs";
 import { PRICING, getPublicNotes, type PublicNote, type ValeDb } from "./db";
-import { segmentNails } from "./nails";
+import { SAM_MODEL, segmentNails } from "./nails";
 import { bogotaDay, bogotaTime, formatNaturalDateTime, hour12, parseNaturalDate } from "./natural-date";
-import { runPhotoPreview, samBoxesMatch, type DesignSpec } from "./photo-preview";
+import { PREVIEW_MODEL, runPhotoPreview, samBoxesMatch, type DesignSpec } from "./photo-preview";
 import { money, quotePrice } from "./quote";
 import {
   previewCostLogPath,
@@ -23,6 +23,7 @@ import {
   sessionPhotoPath,
   sessionPhotosDir,
 } from "./session-photo";
+import { vlog } from "./turn-log";
 import type { ValeLanguage } from "./vale-language";
 
 export interface ValeToolDefinition {
@@ -1579,12 +1580,41 @@ function resolveReferencePhoto(refValue: string): { bytes: Buffer; url: string |
   }
 }
 
+/**
+ * Model lines for the photo preview: SAM after every segmentation, IMAGE
+ * after every generation. Same vlog path as every other model line, so the
+ * console and the daily recording both carry them. The IMAGE row replaces
+ * the generic TOOL row for this tool and keeps its args.
+ */
+function logPreviewModel(event: {
+  turn: string;
+  process: "SAM" | "IMAGE";
+  model: string;
+  durationMs: number | null;
+  status: "ok" | "error";
+  content: string | null;
+  args?: Record<string, unknown>;
+}): void {
+  vlog({
+    turn: event.turn,
+    process: event.process,
+    model: event.model,
+    durationMs: event.durationMs,
+    status: event.status,
+    detail: { tool: "photo_preview_design" },
+    content: event.content,
+    ...(event.args === undefined ? {} : { extra: { args: event.args } }),
+  });
+}
+
 export async function previewDesign(
   db: ValeDb,
-  _args: Record<string, unknown>,
+  args: Record<string, unknown>,
   language: ValeLanguage = "es",
   fetchImpl: typeof fetch = fetch,
+  meta: { turn?: string } = {},
 ): Promise<ToolResult> {
+  const turn = meta.turn ?? "-";
   const fail = (en: string, es: string): ToolResult => ({
     ok: false,
     message: language === "en" ? en : es,
@@ -1622,6 +1652,7 @@ export async function previewDesign(
   if (!key) return fail("Preview is not available right now.", "La vista previa no está disponible ahora.");
   const beforeMime = sniffPreviewMime(before);
   let beforeBoxes: Awaited<ReturnType<typeof segmentNails>>;
+  const beforeAt = Date.now();
   try {
     beforeBoxes = await segmentNails(
       key,
@@ -1629,11 +1660,16 @@ export async function previewDesign(
       fetchImpl,
     );
   } catch {
+    logPreviewModel({ turn, process: "SAM", model: SAM_MODEL, durationMs: Date.now() - beforeAt, status: "error", content: null, args });
     return fail("Photo preview failed.", "Falló la vista previa.");
   }
   if (beforeBoxes.length !== 5) {
-    return { ok: false, message: "I need a photo with all five nails visible." };
+    // The tool stops here: this single SAM line carries the stop message.
+    const stopped = { ok: false, message: "I need a photo with all five nails visible." };
+    logPreviewModel({ turn, process: "SAM", model: SAM_MODEL, durationMs: Date.now() - beforeAt, status: "ok", content: stopped.message, args });
+    return stopped;
   }
+  logPreviewModel({ turn, process: "SAM", model: SAM_MODEL, durationMs: Date.now() - beforeAt, status: "ok", content: null });
   const referenceMime = sniffPreviewMime(reference.bytes);
   const previewInput = {
     beforePhoto: before,
@@ -1645,37 +1681,56 @@ export async function previewDesign(
   };
   const previewOpts = { apiKey: key, fetchImpl, costLogPath: previewCostLogPath() };
   let imageCalls = 0;
+  const imageMs: number[] = [];
   let result: Awaited<ReturnType<typeof runPhotoPreview>>;
   try {
     result = await runPhotoPreview(previewInput, previewOpts);
     imageCalls += 1;
+    imageMs.push(result.elapsedMs);
   } catch {
     return fail("Photo preview failed.", "Falló la vista previa.");
   }
   const postCheck = async (): Promise<{ count: number; matched: boolean }> => {
-    const afterBoxes = await segmentNails(
-      key,
-      `data:image/png;base64,${result.image.toString("base64")}`,
-      fetchImpl,
-    );
-    return { count: afterBoxes.length, matched: samBoxesMatch(beforeBoxes, afterBoxes) };
+    const postAt = Date.now();
+    try {
+      const afterBoxes = await segmentNails(
+        key,
+        `data:image/png;base64,${result.image.toString("base64")}`,
+        fetchImpl,
+      );
+      logPreviewModel({ turn, process: "SAM", model: SAM_MODEL, durationMs: Date.now() - postAt, status: "ok", content: null });
+      return { count: afterBoxes.length, matched: samBoxesMatch(beforeBoxes, afterBoxes) };
+    } catch {
+      logPreviewModel({ turn, process: "SAM", model: SAM_MODEL, durationMs: Date.now() - postAt, status: "error", content: null, args });
+      throw new Error("post-check SAM failed");
+    }
+  };
+  const doneMessage = "Here is how it would look. The preview is on screen.";
+  const logImages = (content: string): void => {
+    for (const ms of imageMs) {
+      logPreviewModel({ turn, process: "IMAGE", model: PREVIEW_MODEL, durationMs: ms, status: "ok", content, args });
+    }
   };
   try {
     const first = await postCheck();
     if (!first.matched && imageCalls < MAX_PREVIEW_IMAGE_CALLS) {
       result = await runPhotoPreview(previewInput, previewOpts);
       imageCalls += 1;
+      imageMs.push(result.elapsedMs);
       await postCheck();
     }
   } catch {
-    return fail("Photo preview failed.", "Falló la vista previa.");
+    const failed = fail("Photo preview failed.", "Falló la vista previa.");
+    logImages(failed.message);
+    return failed;
   }
   const previewName = `preview_${open.id}.png`;
   mkdirSync(previewsDir(), { recursive: true });
   writeFileSync(join(previewsDir(), previewName), result.image);
+  logImages(doneMessage);
   return {
     ok: true,
-    message: "Here is how it would look. The preview is on screen.",
+    message: doneMessage,
     data: {
       before: `/api/photos?file=pre_${open.id}.jpg`,
       reference: reference.url,
@@ -2334,9 +2389,10 @@ export async function runValeToolAsync(
   args: Record<string, unknown>,
   language: ValeLanguage = "es",
   fetchImpl: typeof fetch = fetch,
+  turn?: string,
 ): Promise<ToolResult> {
   if (name === "photo_preview_design") {
-    return previewDesign(db, args, language, fetchImpl);
+    return previewDesign(db, args, language, fetchImpl, { turn });
   }
   if (name === "client_summary") {
     return clientSummaryAsync(db, args, language, fetchImpl);
