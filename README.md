@@ -1,6 +1,8 @@
 # Vale
 
-Vale is an intent-based interface for people whose hands are busy at work and who cannot touch a phone mid-task. We start with nail technicians: it is the domain we know first-hand, with a primary user there. The product is not limited to them.
+Vale is an intent-based interface for people whose hands are busy at work and who cannot touch a phone mid-task.
+
+We start with nail technicians: it is the domain we know first-hand, with a primary user there. The product is not limited to them.
 
 Gloves on, gel curing, acetone in the air, the client in the chair asking how much. Stopping to type means losing the thread of the session.
 
@@ -33,7 +35,9 @@ Open the printed URL and tap the microphone. Setup details: [docs/setup.md](docs
 
 ## What it does
 
-Voice first, not voice only. By voice she opens sessions with a timer, saves notes (health notes stay private), keeps the shopping list, quotes prices, manages the agenda and previews nail designs on the client photo. The management screens cover the rest: Agenda, Client files, Services, Supplies & stock, Shopping list, Payments, Goals, Preferences.
+Voice first, not voice only. By voice she opens sessions with a timer, saves notes (health notes stay private), keeps the shopping list, quotes prices, manages the agenda and previews nail designs on the client photo.
+
+The management screens cover the rest: Agenda, Client files, Services, Supplies & stock, Shopping list, Payments, Goals, Preferences.
 
 | User says | Vale does |
 |---|---|
@@ -45,7 +49,9 @@ Voice first, not voice only. By voice she opens sessions with a timer, saves not
 | “Move David to Friday” | Moves the appointment; asks first (`agenda_move_appointment`) |
 | “Show her how it would look” | Previews the reference design on the before photo (`photo_preview_design`) |
 
-With the mic muted, a typed field does the same. Language (EN | ES) and voice engine (Browser | Seamless) switch from one control; the Seamless option stays disabled until its URL and token are set. Every name, price and note on screen is invented demo data.
+With the mic muted, a typed field does the same. Language (EN | ES) and voice engine (Browser | Seamless) switch from one control; the Seamless option stays disabled until its URL and token are set.
+
+Every name, price and note on screen is invented demo data.
 
 ## Meta models
 
@@ -54,7 +60,7 @@ With the mic muted, a typed field does the same. Language (EN | ES) and voice en
 | Muse Spark 1.3 | The agent: decides and calls the business tools | Meta Model API |
 | Muse Voice Transcribe 1.0 | Live speech input with turn detection | Meta Model API |
 | Muse Image 1.0 | Design preview on the client photo | Meta Model API |
-| SAM 3.1 | Counts five nails in the before photo, re-checks the preview, asks for one more Image call on mismatch | Meta Model API |
+| SAM 3.1 | Counts five nails in the before photo, re-checks the preview, runs one more Image call on mismatch | Meta Model API |
 | Muse Glimmer 30B (open weights, on infrastructure we run) | Private client briefs: what to say and show, never health text | Modal GPU (A10G, our deploy) |
 | SeamlessM4T v2 Large (open weights, optional) | Spoken answers when configured | Modal GPU (T4, our deploy) |
 
@@ -78,7 +84,9 @@ The Meta API key stays on the server. The browser never calls `api.meta.ai`. How
 
 ## Open weights on Modal
 
-Two backends run on Modal and scale to zero when idle: Glimmer briefs (`modal/glimmer.py`) and SeamlessM4T v2 Large voice (`modal/seamless.py`). Glimmer serves Q4_K_M weights with a speculative drafter. Deploy with `modal deploy modal/glimmer.py` → see [docs/modal.md](docs/modal.md). Without them the app still runs: the browser voice speaks and the cards open without private briefs.
+Two backends run on Modal and scale to zero when idle: Glimmer briefs (`modal/glimmer.py`) and SeamlessM4T v2 Large voice (`modal/seamless.py`). Glimmer serves Q4_K_M weights with a speculative drafter.
+
+Deploy with `modal deploy modal/glimmer.py` → see [docs/modal.md](docs/modal.md). Without them the app still runs: the browser voice speaks and the cards open without private briefs.
 
 Provenance: every Glimmer call logs model, time and outcome, never the text:
 

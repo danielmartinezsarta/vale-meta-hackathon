@@ -1,6 +1,8 @@
 # How we built it
 
-Daniel directs. Hacki-chan, a project-manager agent running Muse Spark, plans the tickets and drives the lead sessions. Ticket leads run on Muse Code and call builders and, when needed, reviewers, researchers and advisors. Initiative leads (UI lead, Branding lead, Replay lead) and auditors for specific areas cut across tickets. Agents talk to each other through session messages. Each lead works on a branch off main and opens one PR against main; Daniel merges.
+Daniel directs. Hacki-chan, a project-manager agent running Muse Spark, plans the tickets and drives the lead sessions. Ticket leads run on Muse Code and call builders and, when needed, reviewers, researchers and advisors. Initiative leads (UI lead, Branding lead, Replay lead) and auditors for specific areas cut across tickets. Agents talk to each other through session messages.
+
+Each lead works on a branch off main and opens one PR against main; Daniel merges.
 
 ![Agent collaboration graph: 40 agents, 246 session messages](img/agent-graph.svg)
 

@@ -24,6 +24,8 @@ Health text crosses only into the Modal box. The Meta API key never leaves the s
 
 ## Tools
 
+25 tools reach the model; screen-only actions (`manage_*`, `service_show`) stay internal. Every write is logged with its table and row; `undo_last` reads that log and reverts the newest entry.
+
 Sessions: `session_open`, `session_close`, `session_log_supply`, `session_quote`, `session_quote_accept`. Clients: `client_create`, `client_card_show`, `client_summary`, `client_note_add`. Agenda: `agenda_create_appointment`, `agenda_show`, `agenda_move_appointment`, `agenda_cancel_appointment`, `agenda_create_reminder`. Stock and shopping: `stock_set`, `stock_add`, `shopping_show`, `shopping_add`, `shopping_remove`, `stock_show_low`. Meta: `undo_last`, `widget_show`, `tool_get_details`. Photos: `photo_preview_design`, `photo_show`.
 
 ## Private briefs
