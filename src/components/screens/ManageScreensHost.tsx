@@ -3,7 +3,12 @@
 import type { ValeLanguage } from "@/lib/vale-language";
 import { AgendaScreen } from "./AgendaScreen";
 import { ClientsScreen } from "./ClientsScreen";
+import { GoalsScreen } from "./GoalsScreen";
+import { PaymentsScreen } from "./PaymentsScreen";
+import { PreferencesScreen } from "./PreferencesScreen";
 import { ServicesScreen } from "./ServicesScreen";
+import { ShoppingScreen } from "./ShoppingScreen";
+import { SuppliesScreen } from "./SuppliesScreen";
 
 /**
  * HACK-030 host: every menu item opens its screen in the HomeScreen
@@ -27,6 +32,22 @@ export function ManageScreensHost({
       return <ClientsScreen onBack={onBack} />;
     case "Services":
       return <ServicesScreen onBack={onBack} />;
+    case "Supplies & stock":
+      return <SuppliesScreen onBack={onBack} />;
+    case "Shopping list":
+      return <ShoppingScreen onBack={onBack} />;
+    case "Payments":
+      return <PaymentsScreen onBack={onBack} />;
+    case "Goals":
+      return <GoalsScreen onBack={onBack} />;
+    case "Preferences":
+      return (
+        <PreferencesScreen
+          onBack={onBack}
+          language={language}
+          onLanguageChange={onLanguageChange ?? (() => {})}
+        />
+      );
     default:
       return null;
   }
