@@ -160,15 +160,16 @@ async function main(): Promise<void> {
         await sendBtn.click({ force: true, timeout: 30000 });
         // Match on the reply head: the tail can render across elements.
         const head = turn.reply.slice(0, 48).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        // Attached, not visible: the open sheet can cover the bubbles.
         const seen = page.getByText(new RegExp(head)).first();
         try {
-          await seen.waitFor({ timeout: 15000 });
+          await seen.waitFor({ timeout: 15000, state: "attached" });
         } catch {
           // Click landed before the sender was ready: the text is still
           // in the box, so click again like a user would.
           if ((await box.inputValue()) !== "") await sendBtn.click({ force: true, timeout: 30000 });
           try {
-            await seen.waitFor({ timeout: 90000 });
+            await seen.waitFor({ timeout: 90000, state: "attached" });
           } catch {
             await page.screenshot({ path: join(shots, `miss-${turn.turn}.png`) });
             console.log(`[demo] miss ${turn.turn} url=${page.url()} body=${((await page.evaluate(() => document.body.innerText)) as string).slice(-300)}`);
@@ -184,7 +185,10 @@ async function main(): Promise<void> {
           console.log(`[demo] shot: ${shot}`);
         }
         // Tidy the sheet like a user would, so the next turn's card is
-        // its own. Escape is the sheet's own close key; harmless at Home.
+        // its own. The X names the open sheet; Escape is its close key.
+        // Both are harmless at Home with nothing open.
+        const closer = page.getByRole("button", { name: /^Close / });
+        if ((await closer.count()) > 0) await closer.first().click({ timeout: 5000 });
         await page.keyboard.press("Escape");
         await page.waitForTimeout(500);
       }
