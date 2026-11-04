@@ -1,4 +1,4 @@
-// Relative-date helper for the demo seed (HACK-024). The demo agenda is
+// Relative-date helper for the demo seed. The demo agenda is
 // always "today", so the seed resolves day markers on the salon clock
 // (America/Bogota, same as the tools) instead of storing fixed dates.
 // The JSON markers extend on top of this helper; keep the

@@ -1,4 +1,4 @@
-// HACK-030 management screens write path. Server-side only: never import
+// Management screens write path. Server-side only: never import
 // from client code. Every save and delete here writes to the same tables as
 // the voice tools, logs to write_log, and is reversible with undoLastWrite.
 import { getBusinessSettings, getPublicNotes, type ValeDb } from "./db";

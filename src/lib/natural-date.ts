@@ -1,5 +1,5 @@
 /**
- * Natural EN date/time parsing on the America/Bogota calendar (HACK-018 req 7).
+ * Natural EN date/time parsing on the America/Bogota calendar (req 7).
  *
  * Pure: the clock is injected through the anchor, never read here. The
  * server resolves "next Friday at 5 PM" with the local date so the model

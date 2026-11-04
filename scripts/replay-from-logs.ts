@@ -1,4 +1,4 @@
-// Fold a chosen live run into the committed replay file (HACK-024):
+// Fold a chosen live run into the committed replay file:
 //   npm run replay:from-logs -- --since <ISO time> [--until <ISO time>]
 //
 // Reads data/logs/*.jsonl (voice and typed turns alike), keeps the rows in

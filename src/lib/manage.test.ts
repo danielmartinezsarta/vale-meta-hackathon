@@ -1,5 +1,5 @@
 // @vitest-environment node
-// HACK-030: every management screen writes through manage.ts to the same
+// Every management screen writes through manage.ts to the same
 // tables as the voice tools, lands in write_log, and reverses with undo.
 import { describe, expect, it } from "vitest";
 import { freshTestDb, getBusinessSettings } from "./db";

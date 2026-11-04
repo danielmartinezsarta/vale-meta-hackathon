@@ -11,7 +11,7 @@ import { ShoppingScreen } from "./ShoppingScreen";
 import { SuppliesScreen } from "./SuppliesScreen";
 
 /**
- * HACK-030 host: every menu item opens its screen in the HomeScreen
+ * Every menu item opens its screen in the HomeScreen
  * overlay. Unknown names render nothing; the menu stays.
  */
 export function ManageScreensHost({

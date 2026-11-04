@@ -1,4 +1,4 @@
-// Committed demo replay (HACK-024): the recorded run the app plays back
+// Committed demo replay: the recorded run the app plays back
 // with VALE_REPLAY=1. Client-safe: no node imports, so the player and the
 // recording script share this module. Only text and payloads are kept;
 // user audio never lands here (the unified log carries WAV paths, and the
@@ -139,7 +139,7 @@ export function buildReplayRun(lines: string[]): ReplayRun {
 export function parseReplayRun(json: string): ReplayRun {
   const parsed = JSON.parse(json) as Partial<ReplayRun>;
   if (parsed.version !== 1 || !Array.isArray(parsed.turns)) {
-    throw new Error("[replay] not a HACK-024 replay run");
+    throw new Error("[replay] not a recorded demo run");
   }
   for (const turn of parsed.turns) {
     if (typeof turn.turn !== "string" || typeof turn.transcript !== "string") {

@@ -1,4 +1,4 @@
-// HACK-004 Phase 2: nail photo -> SAM 3.1 boxes ("nail") -> Spark describes
+// Phase 2: nail photo -> SAM 3.1 boxes ("nail") -> Spark describes
 // design/finish per nail -> original photo saved with the service record.
 // Invented demo data only; no real client data.
 

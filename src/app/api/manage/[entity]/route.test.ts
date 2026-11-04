@@ -1,5 +1,5 @@
 // @vitest-environment node
-// HACK-030: the manage API serves the same rows the voice tools read and
+// The manage API serves the same rows the voice tools read and
 // writes through the same logged, undoable path.
 process.env.VALE_DB_MEMORY = "1";
 

@@ -214,7 +214,7 @@ export function formatVlog(event: VLogEvent): string {
 }
 
 /**
- * Daily JSONL recording for replay (HACK-024): every vlog event with full
+ * Daily JSONL recording for replay: every vlog event with full
  * content plus tool args and widget/sheet payloads. VALE_EVENTLOG_PATH
  * points it elsewhere; otherwise eval turns (VALE_TURNS_PATH) keep their
  * recording next to their turns file, and live turns land in data/logs/.

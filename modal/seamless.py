@@ -1,4 +1,4 @@
-"""Vale demo voice: SeamlessM4T v2 text-to-speech on a T4 (HACK-026).
+"""Vale demo voice: SeamlessM4T v2 text-to-speech on a T4.
 
 Deploy with your own Modal account:
 
