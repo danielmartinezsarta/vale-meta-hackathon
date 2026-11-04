@@ -369,16 +369,32 @@ describe("log_supply_use", () => {
     db.close();
   });
 
-  it("saves unknown supplies at once like notes", () => {
+  it("asks to confirm unknown supplies instead of inventing rows", () => {
     const db = freshTestDb();
     openAna(db);
-    const saved = logSupplyUse(db, { name: "Esmalte verde" }, "en");
-    expect(saved.ok).toBe(true);
-    expect(saved.message).toBe("Esmalte verde added to Ana's session.");
+    const asked = logSupplyUse(db, { name: "Esmalte verde" }, "en");
+    expect(asked.ok).toBe(false);
+    expect(asked.pendingCreate).toBe("Esmalte verde");
+    const count = (db.prepare("SELECT COUNT(*) AS n FROM supplies").get() as { n: number }).n;
+    expect(count).toBe(25);
+    db.close();
+  });
+
+  it("logs three crystals as one Crystals row and accumulates quantity", () => {
+    const db = freshTestDb();
+    openAna(db);
+    // The count rides in the name: the server strips it as a safety net.
+    const logged = logSupplyUse(db, { name: "three crystals" }, "en");
+    expect(logged.ok).toBe(true);
+    // An explicit quantity adds onto the same row.
+    const more = logSupplyUse(db, { name: "crystals", quantity: 2 }, "en");
+    expect(more.ok).toBe(true);
     const rows = db.prepare(
-      "SELECT s.name FROM session_supplies ss JOIN supplies s ON s.id = ss.supply_id",
-    ).all() as { name: string }[];
-    expect(rows.map((row) => row.name)).toContain("Esmalte verde");
+      "SELECT s.name, ss.qty FROM session_supplies ss JOIN supplies s ON s.id = ss.supply_id",
+    ).all() as { name: string; qty: number }[];
+    expect(rows).toEqual([{ name: "Crystals", qty: 5 }]);
+    const count = (db.prepare("SELECT COUNT(*) AS n FROM supplies").get() as { n: number }).n;
+    expect(count).toBe(25);
     db.close();
   });
 });
@@ -411,7 +427,7 @@ describe("undo_last_write", () => {
     logSupplyUse(db, { name: "Esmalte verde", confirm_create: true });
     undoLastWrite(db);
     const supplies = db.prepare("SELECT COUNT(*) AS n FROM supplies").get() as { n: number };
-    expect(supplies.n).toBe(23);
+    expect(supplies.n).toBe(25);
     closeSession(db, { products_used: ["Algodon"] });
     undoLastWrite(db);
     const session = db.prepare("SELECT ended_at FROM sessions ORDER BY id DESC LIMIT 1").get() as {
@@ -478,7 +494,7 @@ describe("session_quote", () => {
     expect(badSupply.ok).toBe(false);
     expect(badSupply.message).toContain("No encuentro");
     const both = db.prepare("SELECT COUNT(*) AS n FROM supplies").get() as { n: number };
-    expect(both.n).toBe(23);
+    expect(both.n).toBe(25);
     db.close();
   });
 

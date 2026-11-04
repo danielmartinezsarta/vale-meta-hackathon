@@ -18,9 +18,9 @@ import {
 import { localDay } from "./vale-tools";
 
 describe("seeded database", () => {
-  it("seeds 4 clients, 6 services and 23 supplies", () => {
+  it("seeds 4 clients, 6 services and 25 supplies", () => {
     const db = freshTestDb();
-    expect(getCounts(db)).toEqual({ clients: 4, services: 6, supplies: 23 });
+    expect(getCounts(db)).toEqual({ clients: 4, services: 6, supplies: 25 });
     db.close();
   });
 
@@ -42,7 +42,7 @@ describe("seeded database", () => {
       visits: (db.prepare("SELECT COUNT(*) AS n FROM visits").get() as { n: number }).n,
     };
     seedDatabase(db);
-    expect(getCounts(db)).toEqual({ clients: 4, services: 6, supplies: 23 });
+    expect(getCounts(db)).toEqual({ clients: 4, services: 6, supplies: 25 });
     expect((db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number }).n).toBe(
       before.appointments,
     );
