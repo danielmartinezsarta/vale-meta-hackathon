@@ -91,15 +91,19 @@ describe("capture stall watchdog (lead round p1)", () => {
     vi.useFakeTimers();
     await tapToTalk();
     expect(mockStartCapture).toHaveBeenCalledTimes(1);
-    // Three silent minutes: a heartbeat every 2 s proves aliveness.
+    // Three silent minutes: a heartbeat every 2 s proves aliveness. Sync
+    // advances cost no real event-loop rounds, so parallel load cannot
+    // starve the 5 s real-time budget; one async flush settles renders.
     for (let elapsed = 0; elapsed < 180000; elapsed += 2000) {
       driver?.onHeartbeat?.();
-      await vi.advanceTimersByTimeAsync(2000);
+      vi.advanceTimersByTime(2000);
     }
+    await vi.advanceTimersByTimeAsync(0);
     expect(mockStartCapture).toHaveBeenCalledTimes(1);
     sessionAlive();
     // Then the processor dies: one restart, still no alert.
-    await vi.advanceTimersByTimeAsync(6500);
+    vi.advanceTimersByTime(6500);
+    await vi.advanceTimersByTimeAsync(0);
     expect(mockStartCapture).toHaveBeenCalledTimes(2);
     sessionAlive();
   });
@@ -114,7 +118,8 @@ describe("capture stall watchdog (lead round p1)", () => {
       const voiced = new Int16Array(960).fill(4000);
       driver?.onSpeechStart();
       for (let i = 0; i < 8; i += 1) driver?.onFrame(voiced);
-      await vi.advanceTimersByTimeAsync(6500);
+      vi.advanceTimersByTime(6500);
+      await vi.advanceTimersByTimeAsync(0);
       const ends = FakeVoiceSocket.instances[0]
         .sent.filter((item): item is string => typeof item === "string")
         .filter((raw) => raw.includes("endStream")).length;
