@@ -1,7 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsSheet } from "./SettingsSheet";
-import { setVoiceEngine, voiceEngine } from "@/lib/speak";
+import {
+  setSeamlessAvailable,
+  setVoiceEngine,
+  voiceEngine,
+} from "@/lib/speak";
+import type { ValeLanguage } from "@/lib/vale-language";
 
 function stubStatus(seamless: boolean) {
   vi.stubGlobal(
@@ -12,6 +17,7 @@ function stubStatus(seamless: boolean) {
 
 afterEach(() => {
   cleanup();
+  setSeamlessAvailable(true);
   setVoiceEngine("browser");
   window.localStorage.removeItem("vale-engine");
   vi.unstubAllGlobals();
@@ -62,5 +68,39 @@ describe("voice selector in Settings", () => {
     });
     expect((seamless as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByText("Seamless voice is not configured.")).toBeTruthy();
+  });
+
+  it.each([
+    {
+      language: "en",
+      hint: "To enable Seamless TTS, set SEAMLESS_URL and SEAMLESS_TOKEN in .env.",
+    },
+    {
+      language: "es",
+      hint: "Para activar Seamless TTS, configura SEAMLESS_URL y SEAMLESS_TOKEN en .env.",
+    },
+  ] as const)(
+    "shows the enable hint in $language when unconfigured",
+    async ({ language, hint }: { language: ValeLanguage; hint: string }) => {
+      stubStatus(false);
+      render(<SettingsSheet language={language} onClose={() => {}} />);
+
+      expect(await screen.findByText(hint)).toBeTruthy();
+    },
+  );
+
+  it("forces a stale saved Seamless pick back to browser when unconfigured", async () => {
+    stubStatus(false);
+    setVoiceEngine("seamless");
+    expect(window.localStorage.getItem("vale-engine")).toBe("seamless");
+    render(<SettingsSheet language="en" onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(voiceEngine()).toBe("browser");
+    });
+    expect(window.localStorage.getItem("vale-engine")).toBe("browser");
+    expect(
+      (screen.getByRole("radio", { name: "Browser" }) as HTMLInputElement).checked,
+    ).toBe(true);
   });
 });

@@ -106,7 +106,12 @@ describe("interruption (fake-device fallback)", () => {
 
     speakAudibleRef.current = false;
     liveSocket().serverMessage({ type: "done" });
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
   });
 

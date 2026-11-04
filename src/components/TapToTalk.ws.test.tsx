@@ -156,7 +156,12 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     ws.serverMessage({ type: "done" });
 
     // Whole turn over the socket: the POST fallback never fired.
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 
   it("sends the selector language when the socket opens, EN by default", async () => {
@@ -267,7 +272,12 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     expect(FakeWs.instances.every((ws) => ws.url.includes("/voice"))).toBe(
       true,
     );
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -297,7 +307,12 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     );
     // Nothing captured, nothing posted: no socket opens for a blip.
     expect(mockStartCapture).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
     expect(FakeWs.instances).toHaveLength(1);
   });
 

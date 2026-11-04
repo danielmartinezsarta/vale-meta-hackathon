@@ -3,8 +3,15 @@
 import { useEffect, useState } from "react";
 import { ManageField, ManageShell } from "./ManageShell";
 import { manageGet, managePost } from "./manageApi";
-import { setVoiceEngine, voiceEngine, type VoiceEngine } from "@/lib/speak";
+import {
+  setSeamlessAvailable,
+  setVoiceEngine,
+  voiceEngine,
+  type VoiceEngine,
+} from "@/lib/speak";
+import { uiStrings } from "@/lib/vale-ui";
 import type { ValeLanguage } from "@/lib/vale-language";
+import styles from "./ManageScreens.module.css";
 
 /**
  * Preferences: profile name (the seed stays "demo" until edited),
@@ -20,6 +27,7 @@ export function PreferencesScreen({
   language: ValeLanguage;
   onLanguageChange: (next: ValeLanguage) => void;
 }) {
+  const ui = uiStrings(language);
   const [name, setName] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
@@ -39,7 +47,14 @@ export function PreferencesScreen({
       .then((data: unknown) => {
         if (!live) return;
         if (data !== null && typeof data === "object" && "seamless" in data) {
-          setSeamless((data as { seamless: unknown }).seamless === true);
+          const available =
+            (data as { seamless: unknown }).seamless === true;
+          setSeamless(available);
+          setSeamlessAvailable(available);
+          if (!available) {
+            setVoiceEngine("browser");
+            setEngine("browser");
+          }
         }
       })
       .catch(() => {
@@ -82,10 +97,10 @@ export function PreferencesScreen({
           </label>
         </fieldset>
         <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend>Voice</legend>
+          <legend>{ui.voiceEngine}</legend>
           <label>
             <input type="radio" name="prefs-voice-engine" value="browser" checked={engine === "browser"} onChange={() => pick("browser")} />{" "}
-            Browser
+            {ui.browserVoice}
           </label>{" "}
           <label>
             <input
@@ -96,9 +111,10 @@ export function PreferencesScreen({
               disabled={!seamless}
               onChange={() => pick("seamless")}
             />{" "}
-            Seamless (open model)
+            {ui.seamlessVoice}
           </label>
-          {!seamless && <p>Seamless voice is not configured.</p>}
+          {!seamless && <p>{ui.seamlessUnavailable}</p>}
+          {!seamless && <p className={styles.sub}>{ui.seamlessEnableHint}</p>}
         </fieldset>
       </div>
     </ManageShell>

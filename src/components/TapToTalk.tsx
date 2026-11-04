@@ -17,8 +17,10 @@ import { parseSseStream } from "@/lib/sse";
 import { isCloseSheetIntent } from "@/lib/wake";
 import {
   drainSpeechEvents,
+  isSeamlessAvailable,
   isSpeaking,
   onSpeechSettled,
+  setSeamlessAvailable,
   setVoiceEngine,
   speak,
   primeSpokenAudio,
@@ -2089,10 +2091,38 @@ export function TapToTalk({
 
   const toggleEngine = useCallback(() => {
     const next: VoiceEngine = engine === "seamless" ? "browser" : "seamless";
+    if (next === "seamless" && !isSeamlessAvailable()) {
+      setVoiceEngine("browser");
+      setEngine("browser");
+      return;
+    }
     setVoiceEngine(next);
     stopSpeaking("engine-switch");
     setEngine(next);
   }, [engine]);
+  // Server-driven Seamless availability, same answer the sheets read: an
+  // unconfigured server forces the browser voice, and the toggle below
+  // never leaves browser while Seamless is unavailable.
+  useEffect(() => {
+    let live = true;
+    fetch("/api/status")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: unknown) => {
+        if (!live) return;
+        if (data !== null && typeof data === "object" && "seamless" in data) {
+          const available =
+            (data as { seamless: unknown }).seamless === true;
+          setSeamlessAvailable(available);
+          if (!available) setEngine("browser");
+        }
+      })
+      .catch(() => {
+        /* unreachable server: Seamless keeps its default */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
   // Seamless active at load: wake the container once; the browser voice
   // covers every line until it answers, so Vale never goes mute.
   useEffect(() => {

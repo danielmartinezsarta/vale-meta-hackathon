@@ -170,7 +170,12 @@ describe("silence never banners (vad-continue removed)", () => {
     await waitFor(() => {
       expect(screen.getByText("Listening")).toBeTruthy();
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
     expect(vadBanner()).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
 
@@ -181,7 +186,12 @@ describe("silence never banners (vad-continue removed)", () => {
     await waitFor(() => {
       expect(screen.getByText("Listening")).toBeTruthy();
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {

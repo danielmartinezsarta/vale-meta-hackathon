@@ -93,7 +93,12 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
     expect(screen.getAllByText("Vale:")).toHaveLength(2);
     expect(screen.getByText("first reply from Vale")).toBeTruthy();
     expect(screen.getByText("second reply from Vale")).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
 
     expect(screen.queryByText("first")).toBeNull();
 

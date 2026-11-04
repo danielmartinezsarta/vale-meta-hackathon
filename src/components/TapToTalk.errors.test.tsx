@@ -73,7 +73,12 @@ describe("plain-language errors (fake-device fallback)", () => {
     expect(alert.textContent).toMatch(/configurada/i);
     expect(alert.textContent).not.toMatch(/at .*:[0-9]+/);
     expect(screen.queryByText("You:")).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 
   it("keeps the transcript bubble on model error (test 25)", async () => {
@@ -100,7 +105,12 @@ describe("plain-language errors (fake-device fallback)", () => {
     expect(alert.textContent).toMatch(/tuve un problema/i);
     expect(alert.textContent).not.toMatch(/E-MODEL/);
     expect(screen.getByText("book a refill")).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 
   it("voices the five-nails tool failure as her reply, not an alert", async () => {
@@ -125,7 +135,12 @@ describe("plain-language errors (fake-device fallback)", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     // Success path: the session stays live instead of ending with an alert.
     expect(screen.getByRole("button", { name: "Put Vale to sleep" })).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 
   it("retries the session from the error alert icon without reloading", async () => {
@@ -155,7 +170,12 @@ describe("plain-language errors (fake-device fallback)", () => {
       expect(mockStartCapture).toHaveBeenCalledTimes(2);
     });
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 
   it("hides the service code when the connection drops (E-NET)", async () => {
@@ -176,7 +196,12 @@ describe("plain-language errors (fake-device fallback)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/connection lost/i);
     expect(alert.textContent).not.toMatch(/E-NET/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 
   it("shows the meter while live and no code on the not-configured error", async () => {
@@ -197,6 +222,11 @@ describe("plain-language errors (fake-device fallback)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/configurada/i);
     expect(alert.textContent).not.toMatch(/E-NET/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 });

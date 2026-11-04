@@ -81,7 +81,12 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
 
     expect(mockStartCapture).toHaveBeenCalledTimes(1);
     expect(stopMock).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
     expect(screen.getAllByText("You:")).toHaveLength(1);
     expect(screen.getAllByText("Vale:")).toHaveLength(2);
 

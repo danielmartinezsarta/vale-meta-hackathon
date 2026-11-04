@@ -88,7 +88,12 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
 
     expect(screen.getAllByText("You:")).toHaveLength(1);
     expect(screen.getAllByText("Vale:")).toHaveLength(2);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
     expect(getUserMedia).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
