@@ -12,7 +12,8 @@
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 22px;
-  padding: 8px 12px;
+  padding: 8px 10px;
+  max-width: 290px;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   box-shadow: 0 6px 20px rgba(10, 18, 48, 0.35);
@@ -67,14 +68,15 @@
   display: flex;
   align-items: center;
   gap: 0;
+  flex: none;
 }
 
 .buttons button {
   background: none;
   border: 0;
   color: #fff;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -92,8 +94,8 @@
 }
 
 .buttons svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .shut .optional {

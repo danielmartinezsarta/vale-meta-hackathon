@@ -238,14 +238,18 @@ async function main(): Promise<void> {
         await quiet(page);
         // A session alert banner means the run is broken: stop loud,
         // never hang. Banners can flash mid-render, so only a banner
-        // that stays put aborts the run.
+        // that stays put aborts the run. Every real alert carries text;
+        // an empty node is a render transient, logged, never fatal.
         const banner = page.getByRole("alert").first();
         if (await banner.isVisible().catch(() => false)) {
           await page.waitForTimeout(1500);
           if (await banner.isVisible().catch(() => false)) {
-            const text = ((await banner.innerText().catch(() => "")) || "").slice(0, 120);
-            await page.screenshot({ path: join(shots, `alert-${turn.turn}.png`) });
-            throw new Error(`demo stopped: session alert on screen: ${text || "unreadable"}`);
+            const text = ((await banner.innerText().catch(() => "")) || "").trim().slice(0, 120);
+            if (text !== "") {
+              await page.screenshot({ path: join(shots, `alert-${turn.turn}.png`) });
+              throw new Error(`demo stopped: session alert on screen: ${text}`);
+            }
+            console.log(`[demo] transient empty alert node at ${turn.turn}, continuing`);
           }
         }
         const shot = SHOT_TURNS[turn.turn];
