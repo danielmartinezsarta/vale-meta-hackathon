@@ -23,6 +23,8 @@
     <img src="https://img.shields.io/badge/License-Apache--2.0-E6329B" alt="License Apache-2.0" />
     <img src="https://img.shields.io/badge/Voice_first-18B8E0" alt="Voice first" />
     <img src="https://img.shields.io/badge/EN_ES-18B8E0" alt="EN ES" />
+    <br />
+    <a href="https://www.youtube.com/watch?v=eoWEdRfhTug"><img src="https://img.shields.io/badge/YouTube-Watch_the_demo-E6329B?logo=youtube&logoColor=white" alt="Watch the demo" /></a>
   </p>
 </div>
 
@@ -30,7 +32,7 @@ We start with nail technicians: it is the domain we know first-hand, with a prim
 
 Gloves on, gel curing, acetone in the air, the client in the chair asking how much. Stopping to type means losing the thread of the session.
 
-Video: `VIDEO_URL` (3-minute demo, the link goes in before the freeze). The video follows the recorded run: agenda, client card, quote, photos and shopping.
+Video: [Watch the demo](https://www.youtube.com/watch?v=eoWEdRfhTug) (3 minutes). It follows the recorded run: agenda, client card, quote, photos and shopping.
 
 ## For judges
 
