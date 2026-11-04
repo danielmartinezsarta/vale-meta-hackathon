@@ -145,6 +145,10 @@ describe("sessions", () => {
         fixed_share: number;
         final_price: number;
       } | null;
+      base_price_usd: number;
+      std_minutes: number;
+      suggested_price_usd: number;
+      earned_usd: number;
       paid_amount_usd: number;
     };
     expect(data.extras).toHaveLength(2);
@@ -154,20 +158,28 @@ describe("sessions", () => {
     // Gel removal recipe (8.82) plus the two logged extras (4 + 4.50).
     expect(data.breakdown?.supplies_cost).toBeCloseTo(17.32, 5);
     expect(data.paid_amount_usd).toBe(25);
-    // The sheet adds up: service plus extras equal the quoted subtotal.
+    // The suggested is the standard-minutes base plus flat extras, exact,
+    // and the earned line is the suggested minus the fast real session.
+    expect(data.std_minutes).toBe(30);
+    expect(data.suggested_price_usd).toBeCloseTo(data.base_price_usd + 4 + 4.5, 5);
+    expect(data.earned_usd).toBeGreaterThan(0);
+    // The sheet adds up: service plus extras equal the suggested.
     const summary = buildWidget("close_session", {}, data, db);
     const summaryData = summary?.data as {
       service: { price: number };
       extras: { amount: number }[];
+      suggested: number;
+      earned: number;
+      stdMinutes: number;
     };
-    const subtotal =
-      (data.breakdown?.supplies_cost ?? 0) +
-      (data.breakdown?.time_cost ?? 0) +
-      (data.breakdown?.fixed_share ?? 0);
+    expect(summaryData.service.price).toBe(data.base_price_usd);
     expect(
       summaryData.service.price +
         summaryData.extras.reduce((sum, extra) => sum + extra.amount, 0),
-    ).toBeCloseTo(subtotal, 5);
+    ).toBeCloseTo(summaryData.suggested, 5);
+    expect(summaryData.suggested).toBe(data.suggested_price_usd);
+    expect(summaryData.earned).toBeCloseTo(data.earned_usd, 5);
+    expect(summaryData.stdMinutes).toBe(30);
     db.close();
   });
 
@@ -626,12 +638,12 @@ describe("session_quote", () => {
     db.close();
   });
 
-  it("uses the open session minutes for its own service", () => {
+  it("always prices the standard duration, even mid-session", () => {
     const db = freshTestDb();
     openSession(db, { client_name: "Ana", service_name: "Gel removal" });
     const quoted = runValeTool(db, "session_quote", { service_name: "retiro" });
     expect(quoted.ok).toBe(true);
-    expect((quoted.data as { minutes: number }).minutes).toBe(1);
+    expect((quoted.data as { minutes: number }).minutes).toBe(30);
     const other = runValeTool(db, "session_quote", { service_name: "semipermanente" });
     expect((other.data as { minutes: number }).minutes).toBe(60);
     db.close();
@@ -649,17 +661,24 @@ describe("session_quote", () => {
     db.close();
   });
 
-  it("prices the extras logged in the open session", () => {
+  it("prices the suggested as base plus flat extras, exact", () => {
     const db = freshTestDb();
     openSession(db, { client_name: "Ana", service_name: "Gel removal" });
     const before = quoteSession(db, {}, "en");
     const base = (before.data as { final_price_usd: number }).final_price_usd;
+    expect((before.data as { base_price_usd: number }).base_price_usd).toBe(base);
+    expect((before.data as { extras: unknown[] }).extras).toEqual([]);
     logSupplyUse(db, { name: "Top coat" }, "en");
     const after = quoteSession(db, {}, "en");
-    expect((after.data as { supplies_cost: number }).supplies_cost).toBeGreaterThan(
-      (before.data as { supplies_cost: number }).supplies_cost,
-    );
-    expect((after.data as { final_price_usd: number }).final_price_usd).toBeGreaterThanOrEqual(base);
+    const afterData = after.data as {
+      final_price_usd: number;
+      base_price_usd: number;
+      extras: { name: string; qty: number; amount: number }[];
+    };
+    expect(afterData.base_price_usd).toBe(base);
+    expect(afterData.extras).toHaveLength(1);
+    expect(afterData.extras[0].name).toBe("Top coat");
+    expect(afterData.final_price_usd).toBeCloseTo(base + afterData.extras[0].amount, 5);
     db.close();
   });
 

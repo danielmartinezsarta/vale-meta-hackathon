@@ -5,6 +5,7 @@ import {
   formatMinutes,
   formatVisit,
   initials,
+  usdExact,
   usdWhole,
   widgetTitle,
   WIDGET_SIZE,
@@ -279,6 +280,8 @@ describe("buildWidget (typed payloads per kind)", () => {
   it("formats money, days, visits, minutes, and initials design-style", () => {
     expect(usdWhole(35)).toBe("$35");
     expect(usdWhole(2000)).toBe("$2,000");
+    expect(usdExact(35)).toBe("$35");
+    expect(usdExact(4.5)).toBe("$4.50");
     expect(formatDay("2026-11-27")).toBe("Friday, November 27");
     expect(formatVisit("2026-10-12")).toBe("Oct 12, 2026");
     expect(formatMinutes(72)).toBe("1h 12m");
