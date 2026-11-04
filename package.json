@@ -6,19 +6,24 @@
   "license": "Apache-2.0",
   "scripts": {
     "dev": "next dev",
+    "prestart": "next build",
+    "start": "trap 'kill $SRV_PID 2>/dev/null' INT TERM; P=\"${PORT:-${VOICE_PORT:-3000}}\"; tsx --env-file=.env server.ts & SRV_PID=$!; SRV_PID=\"$SRV_PID\" P=\"$P\" node -e 'const {WebSocket}=require(\"ws\");const port=process.env.P,pid=Number(process.env.SRV_PID),end=Date.now()+45000;(function tick(){try{process.kill(pid,0);}catch(e){console.error(\"npm start: server exited before /voice came up (see [voice-server] error above).\");process.exit(1);}if(Date.now()>end){console.error(\"npm start: /voice did not accept a WebSocket on :\"+port+\" within 45 s.\");process.exit(1);}const ws=new WebSocket(\"ws://localhost:\"+port+\"/voice\");ws.on(\"open\",function(){ws.close();process.exit(0);});ws.on(\"error\",function(){setTimeout(tick,500);});})();' || { RC=$?; kill $SRV_PID 2>/dev/null; wait $SRV_PID 2>/dev/null; exit $RC; }; echo \"Vale is live at http://localhost:$P (voice on /voice)\"; wait $SRV_PID",
     "build": "next build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
     "test:audio": "vitest run asr route capture agent",
-    "db:seed": "node scripts/seed.mjs"
+    "db:seed": "node scripts/seed.mjs",
+    "db:reset": "node scripts/db-reset.mjs && npx tsx scripts/precompute-briefs.ts",
+    "replay:record": "tsx scripts/record-replay.ts",
+    "replay:from-logs": "tsx scripts/replay-from-logs.ts"
   },
   "dependencies": {
     "@types/ws": "^8.18.2",
-    "@vercel/functions": "^3.10.4",
     "next": "^16.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "sharp": "^0.35.5",
     "ws": "^8.22.0"
   },
   "devDependencies": {

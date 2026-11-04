@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
+import type { CaptureCallbacks } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
   startCapture: vi.fn(),
@@ -14,36 +16,33 @@ function stubGetUserMedia() {
   vi.stubGlobal("navigator", {
     mediaDevices: { getUserMedia: async () => stream },
   });
-  // No real sockets in tests: Node's WebSocket would dial localhost:3000,
-  // so hide it and force the buffered-POST fallback path under test.
-  vi.stubGlobal("WebSocket", undefined);
+  stubVoiceSocket();
 }
 
-function sseBody(transcript: string, reply: string): { getReader: () => {
-  read: () => Promise<{ done: boolean; value?: Uint8Array }>;
-  releaseLock: () => void;
-} } {
-  const encoder = new TextEncoder();
-  const raw =
-    `event: interim\ndata: {"transcript":"${transcript.slice(0, 5)}"}\n\n` +
-    `event: final\ndata: {"transcript":"${transcript}","audioProcessedMs":800}\n\n` +
-    `event: reply\ndata: {"text":${JSON.stringify(reply)}}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = encoder.encode(raw);
-  const first = bytes.slice(0, 13);
-  const rest = bytes.slice(13);
-  let step = 0;
-  return {
-    getReader: () => ({
-      read: async () => {
-        step += 1;
-        if (step === 1) return { done: false, value: first };
-        if (step === 2) return { done: false, value: rest };
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
+function burst(callbacks: CaptureCallbacks) {
+  const frame = new Int16Array(960).fill(4000);
+  callbacks.onFrame(frame);
+  callbacks.onSpeechStart();
+  for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
+  callbacks.onSpeechEnd();
+}
+
+function answerTurn(transcript: string, reply: string) {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({
+    type: "transcript",
+    transcript: transcript.slice(0, 5),
+    final: false,
+  });
+  ws.serverMessage({ type: "transcript", transcript, final: true });
+  ws.serverMessage({ type: "reply", text: reply });
+  ws.serverMessage({ type: "done" });
+}
+
+function endStreamCount() {
+  return FakeVoiceSocket.instances[0]
+    .sentStrings()
+    .filter((raw) => raw.includes("endStream")).length;
 }
 
 afterEach(() => {
@@ -56,58 +55,51 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
   it("speaking twice yields two transcript bubbles and two replies slots", async () => {
     stubGetUserMedia();
 
-    // Three bursts: two turns plus a third whose fetch hangs.
+    const seen: CaptureCallbacks[] = [];
     mockStartCapture.mockImplementation((_stream, callbacks) => {
-      const frame = new Int16Array(960).fill(4000);
-      let fired = 0;
-      const fireNext = () => {
-        if (fired >= 3) return;
-        fired += 1;
-        callbacks.onFrame(frame);
-        callbacks.onSpeechStart();
-        for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
-        callbacks.onSpeechEnd();
-        window.setTimeout(fireNext, 10);
-      };
-      window.setTimeout(fireNext, 0);
-      return { stop: () => {}, state: () => "running" };
+      seen.push(callbacks);
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
-    const turns: [string, string][] = [
-      ["first final", "first reply from Vale"],
-      ["second final", "second reply from Vale"],
-    ];
-    const fetchMock = vi.fn((..._args: unknown[]) => {
-      const call = fetchMock.mock.calls.length;
-      if (call > 2) return new Promise(() => {}); // third turn hangs: session waits
-      const [transcript, reply] = turns[call - 1];
-      return Promise.resolve({
-        ok: true,
-        body: sseBody(transcript, reply),
-      });
-    });
+    const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
+    await waitFor(() => {
+      expect(seen.length).toBe(1);
+    });
 
+    burst(seen[0]);
+    await waitFor(() => {
+      expect(endStreamCount()).toBeGreaterThanOrEqual(1);
+    });
+    answerTurn("first final", "first reply from Vale");
     await waitFor(() => {
       expect(screen.getByText("first final")).toBeTruthy();
     });
+
+    burst(seen[0]);
+    await waitFor(() => {
+      expect(endStreamCount()).toBeGreaterThanOrEqual(2);
+    });
+    answerTurn("second final", "second reply from Vale");
     await waitFor(() => {
       expect(screen.getByText("second final")).toBeTruthy();
     });
 
-    expect(screen.getAllByText("You:")).toHaveLength(2);
+    // The awake screen shows the last 3 bubbles: Vale's first reply plus
+    // the whole second turn.
+    expect(screen.getAllByText("You:")).toHaveLength(1);
     expect(screen.getAllByText("Vale:")).toHaveLength(2);
     expect(screen.getByText("first reply from Vale")).toBeTruthy();
     expect(screen.getByText("second reply from Vale")).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
 
     expect(screen.queryByText("first")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
   });
 });

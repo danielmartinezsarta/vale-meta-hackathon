@@ -7,18 +7,48 @@
     "schedule": "lun-vie",
     "work_hours_per_day": 8,
     "fixed_costs": [
-      { "label": "renta del local", "amount_usd": 800 },
-      { "label": "luz y agua", "amount_usd": 150 },
-      { "label": "internet y teléfono", "amount_usd": 80 },
-      { "label": "seguro", "amount_usd": 70 }
+      { "label": "studio rent", "amount_usd": 800 },
+      { "label": "utilities", "amount_usd": 150 },
+      { "label": "internet and phone", "amount_usd": 80 },
+      { "label": "insurance", "amount_usd": 70 }
     ]
   },
   "clients": [
-    "Ana Beltran",
-    "Maria Solis",
-    "Carmen Ruiz",
-    "Lucia Fernandez",
-    "Rosa Delgado"
+    { "name": "David", "sex": "male", "phone": "+1-555-0101", "email": "david@example.com", "birthday_in_days": 5, "birthday_year": 1990 },
+    { "name": "Sofia", "es": "Sofía", "sex": "female", "phone": "+1-555-0102", "email": "sofia@example.com", "birthday": "1993-08-24" },
+    { "name": "Paola", "sex": "female", "phone": "+1-555-0103", "email": "paola@example.com", "birthday": "1988-12-02" },
+    { "name": "Ana", "sex": "female", "phone": "+1-555-0104", "email": "ana@example.com", "birthday": "1996-05-30" }
+  ],
+  "demo_notes": [
+    { "client": "David", "kind": "health_note", "private": true, "text": "Test allergy (demo only): reacts to latex gloves." },
+    { "client": "David", "kind": "note", "text": "Prefers dark matte designs" },
+    { "client": "David", "kind": "note", "text": "Hockey fan, ask about the Rangers" }
+  ],
+  "demo_appointments": [
+    { "client": "David", "service": "Semi-permanent manicure", "day": "today", "time": "15:00", "reference_photo": "seed-assets/david-appointment-reference.jpg" },
+    { "client": "Sofia", "service": "Spa pedicure", "day": "today", "time": "17:00" },
+    { "client": "Paola", "service": "Gel refill", "day": "today", "time": "19:00" },
+    { "client": "Ana", "service": "Gel removal", "day": "tomorrow", "time": "16:00" }
+  ],
+  "demo_reminders": [
+    { "text": "Buy acetone, foil wraps and cotton pads", "kind": "shopping", "day": "today", "items": ["Acetone", "Foil wraps", "Cotton pads"] },
+    { "text": "Call the cleaning company to confirm the service", "kind": "call", "day": "today" }
+  ],
+  "demo_visits": [
+    { "client": "David", "service": "Semi-permanent manicure", "days_ago": 63, "photo": "demo-visit-david-63", "note": "Short square, deep burgundy." },
+    { "client": "David", "service": "Semi-permanent manicure", "days_ago": 42, "photo": "demo-visit-david-42", "note": "Oval shape, dark matte with tiny moon details." },
+    { "client": "David", "service": "Semi-permanent manicure", "days_ago": 21, "photo": "seed-assets/david-last-service.jpg", "note": "Matte dark gray base with white HO HO HO lettering and small snowflake details, matte finish." },
+    { "client": "Sofia", "service": "Spa pedicure", "days_ago": 14, "photo": "demo-visit-sofia-01", "note": "Spa pedicure (demo photo marker)." },
+    { "client": "Paola", "service": "Gel refill", "days_ago": 9, "photo": "demo-visit-paola-01", "note": "Gel refill (demo photo marker)." },
+    { "client": "Ana", "service": "Gel removal", "days_ago": 5, "photo": "demo-visit-ana-01", "note": "Gel removal (demo photo marker)." }
+  ],
+  "demo_past_sessions": [
+    { "client": "Ana", "service": "Gel refill", "days_ago": 1, "start": "10:00", "minutes": 75, "margin_earned": 22.4 },
+    { "client": "Sofia", "service": "Spa pedicure", "days_ago": 2, "start": "16:00", "minutes": 60, "margin_earned": 18.1 },
+    { "client": "Paola", "service": "Semi-permanent manicure", "days_ago": 3, "start": "11:00", "minutes": 60, "margin_earned": 19.6 },
+    { "client": "Ana", "service": "Gel removal", "days_ago": 4, "start": "12:00", "minutes": 30, "margin_earned": 9.8 },
+    { "client": "Ana", "service": "Semi-permanent manicure", "days_ago": 6, "start": "15:00", "minutes": 60, "margin_earned": 19.2 },
+    { "client": "Sofia", "service": "Gel refill", "days_ago": 8, "start": "17:00", "minutes": 75, "margin_earned": 23.5 }
   ],
   "services": [
     {
@@ -128,7 +158,7 @@
     { "name": "Primer", "es": "Primer", "aliases": ["praimer", "adherente"], "content_per_product": 9, "unit": "ml", "stock": 10, "min": 3, "price_per_product_usd": 15 },
     { "name": "Base coat", "es": "Base", "aliases": ["base coat"], "content_per_product": 15, "unit": "ml", "stock": 15, "min": 5, "price_per_product_usd": 20 },
     { "name": "Color gel", "es": "Gel de color", "aliases": ["esmalte en gel"], "content_per_product": 15, "unit": "ml", "stock": 60, "min": 15, "price_per_product_usd": 15 },
-    { "name": "Top coat", "es": "Sellador", "aliases": ["top coat", "top", "sellador"], "content_per_product": 15, "unit": "ml", "stock": 15, "min": 5, "price_per_product_usd": 20 },
+    { "name": "Top coat", "es": "Sellador", "aliases": ["top coat", "top", "sellador"], "content_per_product": 15, "unit": "ml", "stock": 5, "min": 5, "price_per_product_usd": 20 },
     { "name": "Cuticle oil", "es": "Aceite de cutícula", "aliases": ["aceite"], "content_per_product": 10, "unit": "ml", "stock": 15, "min": 5, "price_per_product_usd": 9 },
     { "name": "Disposable gloves", "es": "Guantes desechables", "aliases": ["guantes"], "content_per_product": 100, "unit": "pair", "stock": 50, "min": 10, "price_per_product_usd": 15 },
     { "name": "Nail forms", "es": "Formas esculturales", "aliases": ["moldes"], "content_per_product": 100, "unit": "pcs", "stock": 100, "min": 20, "price_per_product_usd": 35 },
@@ -143,6 +173,8 @@
     { "name": "Regular nail polish", "es": "Esmalte tradicional", "aliases": ["esmalte normal", "tradicional"], "content_per_product": 15, "unit": "ml", "stock": 60, "min": 15, "price_per_product_usd": 12 },
     { "name": "Acetone", "es": "Acetona", "aliases": ["acetona", "acetona pura"], "content_per_product": 250, "unit": "ml", "stock": 500, "min": 100, "price_per_product_usd": 15 },
     { "name": "Foil wraps", "es": "Envolturas de aluminio", "aliases": ["foils", "aluminio"], "content_per_product": 100, "unit": "pcs", "stock": 100, "min": 20, "price_per_product_usd": 45 },
-    { "name": "Cotton pads", "es": "Pads de algodón", "aliases": ["algodon"], "content_per_product": 100, "unit": "pcs", "stock": 300, "min": 60, "price_per_product_usd": 20 }
+    { "name": "Cotton pads", "es": "Pads de algodón", "aliases": ["algodon"], "content_per_product": 100, "unit": "pcs", "stock": 300, "min": 60, "price_per_product_usd": 20 },
+    { "name": "Gold foil", "es": "Lámina dorada", "aliases": ["gold foil", "lamina dorada"], "content_per_product": 1, "unit": "pcs", "stock": 50, "min": 10, "price_per_product_usd": 4 },
+    { "name": "Crystals", "es": "Cristales", "aliases": ["crystals", "cristal"], "content_per_product": 1, "unit": "pcs", "stock": 300, "min": 50, "price_per_product_usd": 1.5 }
   ]
 }

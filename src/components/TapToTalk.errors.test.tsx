@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 import type { CaptureCallbacks } from "@/lib/capture";
 
@@ -25,38 +26,25 @@ function setupDevice() {
         ({ getTracks: () => [] }) as unknown as MediaStream,
     },
   });
-  // No real sockets in tests: Node's WebSocket would dial localhost:3000,
-  // so hide it and force the buffered-POST fallback path under test.
-  vi.stubGlobal("WebSocket", undefined);
+  stubVoiceSocket();
   const seen: CaptureCallbacks[] = [];
   mockStartCapture.mockImplementation((_stream, callbacks) => {
     seen.push(callbacks);
-    return { stop: () => {}, state: () => "running" };
+    return { stop: () => {}, state: () => "running", engine: () => "script" as const };
   });
   return seen;
 }
 
-function errorSse(message: string, code?: string): { getReader: () => {
-  read: () => Promise<{ done: boolean; value?: Uint8Array }>;
-  releaseLock: () => void;
-} } {
-  const raw =
-    'event: final\ndata: {"transcript":"book a refill","audioProcessedMs":800}\n\n' +
-    `event: error\ndata: ${JSON.stringify({ message, code })}\n\n`;
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
+function noAudioPost() {
+  const fetchMock = vi.fn(
+    async () => new Response("no post", { status: 500 }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function liveSocket() {
+  return FakeVoiceSocket.instances[0];
 }
 
 afterEach(() => {
@@ -68,109 +56,117 @@ afterEach(() => {
 describe("plain-language errors (fake-device fallback)", () => {
   it("shows the not-configured message when the key is missing (test 22)", async () => {
     const seen = setupDevice();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: false,
-        status: 503,
-        json: async () => ({
-          error: "La voz no está configurada. Intenta de nuevo más tarde.",
-        }),
-      })) as unknown as typeof fetch,
-    );
+    const fetchMock = noAudioPost();
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
     burst(seen[0]);
+    liveSocket().serverMessage({
+      type: "error",
+      message: "La voz no está configurada. Intenta de nuevo más tarde.",
+      code: "E-NET",
+    });
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/configurada/i);
     expect(alert.textContent).not.toMatch(/at .*:[0-9]+/);
     expect(screen.queryByText("You:")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Tap to talk" }),
-    ).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("keeps the transcript bubble on model error (test 25)", async () => {
     const seen = setupDevice();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        body: errorSse(
-          "Perdón, tuve un problema. Toca para intentar de nuevo.",
-          "E-MODEL",
-        ),
-      })) as unknown as typeof fetch,
-    );
+    const fetchMock = noAudioPost();
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
     burst(seen[0]);
+    liveSocket().serverMessage({
+      type: "transcript",
+      transcript: "book a refill",
+      final: true,
+    });
+    liveSocket().serverMessage({
+      type: "error",
+      message: "Perdón, tuve un problema. Toca para intentar de nuevo.",
+      code: "E-MODEL",
+    });
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/tuve un problema/i);
     expect(alert.textContent).not.toMatch(/E-MODEL/);
     expect(screen.getByText("book a refill")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Tap to talk" }),
-    ).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("voices the five-nails tool failure as her reply, not an alert", async () => {
+    const seen = setupDevice();
+    const fetchMock = noAudioPost();
+    const message = "I need a photo with all five nails visible.";
+
+    render(<TapToTalk autoStart />);
+    await waitFor(() => {
+      expect(seen.length).toBeGreaterThan(0);
+    });
+    burst(seen[0]);
+    liveSocket().serverMessage({
+      type: "transcript",
+      transcript: "check my nails",
+      final: true,
+    });
+    liveSocket().serverMessage({ type: "reply", text: message });
+    liveSocket().serverMessage({ type: "done" });
+
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    // Success path: the session stays live instead of ending with an alert.
+    expect(screen.getByRole("button", { name: "Put Vale to sleep" })).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("hides the service code when the connection drops (E-NET)", async () => {
     const seen = setupDevice();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        throw new Error("network down");
-      }) as unknown as typeof fetch,
-    );
+    const fetchMock = noAudioPost();
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
     burst(seen[0]);
+    liveSocket().serverMessage({
+      type: "error",
+      message: "The connection dropped. Tap to try again.",
+      code: "E-NET",
+    });
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/connection dropped/i);
     expect(alert.textContent).not.toMatch(/E-NET/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("shows the meter while live and no code on the not-configured error", async () => {
     const seen = setupDevice();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: false,
-        status: 503,
-        json: async () => ({
-          error: "La voz no está configurada. Intenta de nuevo más tarde.",
-          code: "E-NET",
-        }),
-      })) as unknown as typeof fetch,
-    );
+    const fetchMock = noAudioPost();
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
-    expect(
-      screen.getByRole("meter", { name: "Microphone level" }),
-    ).toBeTruthy();
     burst(seen[0]);
+    liveSocket().serverMessage({
+      type: "error",
+      message: "La voz no está configurada. Intenta de nuevo más tarde.",
+      code: "E-NET",
+    });
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/configurada/i);
     expect(alert.textContent).not.toMatch(/E-NET/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

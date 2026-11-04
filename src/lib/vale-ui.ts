@@ -1,4 +1,5 @@
 import type { ValeLanguage } from "./vale-language";
+import type { ValeState } from "./vale-state";
 
 /**
  * Interface dictionary: every chrome string on screen, keyed once.
@@ -25,19 +26,20 @@ export interface UiStrings {
   shoppingList: string;
   emptyList: string;
   micBlockedLead: string;
+  micBlockedIPhone: string;
+  micBlockedChrome: string;
   micError: string;
+  settings: string;
+  voiceEngine: string;
+  browserVoice: string;
+  seamlessVoice: string;
+  seamlessUnavailable: string;
   cardFor: (name: string) => string;
   valeState: (state: ValeStateName) => string;
 }
 
-/** The six Vale states the indicator can show. */
-export type ValeStateName =
-  | "idle"
-  | "attentive"
-  | "hearing"
-  | "thinking"
-  | "speaking"
-  | "error";
+/** The six Vale states the robot can show: the single state union. */
+export type ValeStateName = ValeState;
 
 const EN: UiStrings = {
   tapToTalk: "Tap to talk",
@@ -60,16 +62,25 @@ const EN: UiStrings = {
   emptyList: "The list is empty.",
   micBlockedLead:
     "Your microphone is blocked, so I can't hear you. To turn it back on:",
+  micBlockedIPhone:
+    "iPhone (Safari): open Settings > Safari > Microphone and choose Allow, then reload.",
+  micBlockedChrome:
+    "Chrome: tap the lock (or tune) icon left of the address bar, choose Microphone > Allow, then reload.",
   micError:
-    "Something went wrong with the microphone. Check that one is connected and tap again.",
+    "Something went wrong with the microphone. Check that one is connected and reload.",
+  settings: "Settings",
+  voiceEngine: "Voice",
+  browserVoice: "Browser",
+  seamlessVoice: "Seamless (open model)",
+  seamlessUnavailable: "Seamless voice is not configured.",
   cardFor: (name: string) => `${name}'s card`,
   valeState: (state: ValeStateName) =>
     ({
       idle: "Idle",
-      attentive: "Listening",
-      hearing: "Hearing you",
+      listening: "Listening",
       thinking: "Thinking",
       speaking: "Speaking",
+      done: "Done",
       error: "Something is wrong",
     })[state],
 };
@@ -95,16 +106,25 @@ const ES: UiStrings = {
   emptyList: "La lista está vacía.",
   micBlockedLead:
     "Tu micrófono está bloqueado, así que no puedo oírte. Para reactivarlo:",
+  micBlockedIPhone:
+    "iPhone (Safari): abre Ajustes > Safari > Micrófono y elige Permitir, luego recarga.",
+  micBlockedChrome:
+    "Chrome: toca el candado (o el icono de ajuste) junto a la barra de direcciones, elige Micrófono > Permitir, luego recarga.",
   micError:
-    "Algo falló con el micrófono. Revisa que haya uno conectado y toca de nuevo.",
+    "Algo falló con el micrófono. Revisa que haya uno conectado y recarga.",
+  settings: "Ajustes",
+  voiceEngine: "Voz",
+  browserVoice: "Navegador",
+  seamlessVoice: "Seamless (modelo abierto)",
+  seamlessUnavailable: "La voz Seamless no está configurada.",
   cardFor: (name: string) => `Ficha de ${name}`,
   valeState: (state: ValeStateName) =>
     ({
       idle: "Inactiva",
-      attentive: "Escuchando",
-      hearing: "Te oigo",
+      listening: "Escuchando",
       thinking: "Pensando",
       speaking: "Hablando",
+      done: "Listo",
       error: "Algo falla",
     })[state],
 };

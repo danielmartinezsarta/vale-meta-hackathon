@@ -2,39 +2,25 @@
 
 import type { Widget } from "@/lib/widget";
 
-/** Screen card for one tool result: plain text until the 018 design lands. */
+/** Touch fallback for proposals with no widget of their own. */
 export function WidgetCard({
   widget,
   language,
   onVote,
 }: {
-  widget: Widget;
+  widget: Extract<Widget, { kind: "confirm" }>;
   language: "en" | "es";
   onVote: (vote: "yes" | "no") => void;
 }) {
-  if (widget.kind === "confirm") {
-    return (
-      <div role="group" aria-label={widget.title}>
-        <p>{widget.title}</p>
-        <button type="button" onClick={() => onVote("yes")}>
-          {language === "es" ? "Sí" : "Yes"}
-        </button>{" "}
-        <button type="button" onClick={() => onVote("no")}>
-          {language === "es" ? "No" : "No"}
-        </button>
-      </div>
-    );
-  }
   return (
-    <div>
+    <div role="group" aria-label={widget.title}>
       <p>{widget.title}</p>
-      {widget.lines.length > 0 && (
-        <ul>
-          {widget.lines.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      )}
+      <button type="button" onClick={() => onVote("yes")}>
+        {language === "es" ? "Sí" : "Yes"}
+      </button>{" "}
+      <button type="button" onClick={() => onVote("no")}>
+        {language === "es" ? "No" : "No"}
+      </button>
     </div>
   );
 }

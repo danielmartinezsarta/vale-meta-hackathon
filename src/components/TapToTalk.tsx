@@ -1,63 +1,74 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { startCapture, unlockAudioContext } from "@/lib/capture";
+import {
+  ensureCaptureReady,
+  startCapture,
+  unlockAudioContext,
+} from "@/lib/capture";
 import type {
   CaptureCallbacks,
   CaptureHandle,
   UtteranceStats,
 } from "@/lib/capture";
-import { LevelMeter } from "@/components/LevelMeter";
-import { ValeBoard } from "@/components/ValeBoard";
 import type { Board } from "@/lib/board";
+import { hasVisibleContent, type Turn } from "@/lib/turn-view";
 import { parseSseStream } from "@/lib/sse";
-import { namesVale } from "@/lib/wake";
+import { isCloseSheetIntent } from "@/lib/wake";
 import {
+  drainSpeechEvents,
   isSpeaking,
+  onSpeechSettled,
   setVoiceEngine,
   speak,
+  primeSpokenAudio,
   speechSettled,
   stopSpeaking,
   voiceEngine,
+  warmupSeamless,
   type VoiceEngine,
   finishStream,
   speakStream,
 } from "@/lib/speak";
-import { createValeState, type ValeState } from "@/lib/vale-state";
-import { turnErrorText, type ValeLanguage } from "@/lib/vale-language";
+import {
+  createValeState,
+  settledSpeechState,
+  type ValeState,
+} from "@/lib/vale-state";
+import {
+  turnErrorText,
+  type ValeLanguage,
+} from "@/lib/vale-language";
+import { useValeLanguage } from "@/components/useValeLanguage";
 import { uiStrings } from "@/lib/vale-ui";
-import type { Widget } from "@/lib/widget";
-import { VoiceControls } from "@/components/VoiceControls";
-import { WidgetCard } from "@/components/WidgetCard";
+import type { PhotosData, Widget } from "@/lib/widget";
+import { loadPhotosData as loadPhotosDataFromDb } from "@/components/photos-data";
+import {
+  AUTO_HIDE_MS,
+  GOODBYE_MS,
+  SUMMARY_MS,
+  widgetTitle,
+} from "@/lib/widget";
+import { AwakeScreen, type AwakeBubble } from "@/components/AwakeScreen";
+import { SessionScreen } from "@/components/SessionScreen";
+import { useScreenMode } from "@/components/useScreenMode";
+import styles from "./ValeScreens.module.css";
 
 type Status = "idle" | "requesting" | "live" | "blocked" | "error";
 
-interface Turn {
-  id: number;
-  interim: string;
-  final: string | null;
-  reply: string | null;
-  /** Discarded by the wake gate: shown dimmed, never as dialogue. */
-  ignored?: boolean;
+/**
+ * Silence window before an empty turn churns: two straight silent windows
+ * raise the "I didn't hear you" banner. Tunable without redeploying the
+ * default, and shortenable for tests.
+ */
+function quietWindowMs(): number {
+  return Math.max(1, Number(process.env.NEXT_PUBLIC_QUIET_WINDOW_MS) || 8000);
 }
-
-const NO_SPEECH_TIMEOUT_MS = 8000;
 
 function isPermissionDenied(error: unknown): boolean {
   return (
     error instanceof DOMException &&
     (error.name === "NotAllowedError" || error.name === "SecurityError")
-  );
-}
-
-function hasVisibleContent(turn: {
-  interim: string;
-  final: string | null;
-  reply: string | null;
-}): boolean {
-  return (
-    (turn.final ?? turn.interim).trim() !== "" ||
-    (turn.reply?.trim() ?? "") !== ""
   );
 }
 
@@ -72,84 +83,41 @@ const SPEECH_HARD_CAP_MS = 60000;
 /** 960 samples at the 24 kHz capture rate (capture.ts). */
 const FRAME_MS = 40;
 
-/** Persisted screen language: the selector survives reloads, EN default. */
-const LANGUAGE_KEY = "vale-language";
-
-function storedLanguage(): ValeLanguage {
-  try {
-    return window.localStorage.getItem(LANGUAGE_KEY) === "es" ? "es" : "en";
-  } catch {
-    return "en";
-  }
-}
-
-function SpeakerIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden="true"
-    >
-      <path d="M2 6v4h3l4 3V3L5 6H2z" fill="currentColor" stroke="none" />
-      <path d="M11 5.5a3.5 3.5 0 010 5" />
-    </svg>
-  );
-}
-
 function countVoiced(frame: Int16Array): boolean {
   let energy = 0;
   for (let i = 0; i < frame.length; i++) energy += Math.abs(frame[i]);
   return frame.length > 0 && energy / frame.length > VOICE_ENERGY_THRESHOLD;
 }
 
-export function TapToTalk() {
+export function TapToTalk({
+  autoStart = false,
+  onSleep,
+}: {
+  autoStart?: boolean;
+  onSleep?: () => void;
+} = {}) {
   const [status, setStatus] = useState<Status>("idle");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  // Codes drive routing (E-VAD banner vs alert) but never render: the user
-  // only reads the friendly message, never a raw code.
-  const [, setNoticeCode] = useState<string | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
-  const [, setAlertCode] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
   const [board, setBoard] = useState<Board | null>(null);
   const [widget, setWidget] = useState<Widget | null>(null);
   const castVoteRef = useRef<(vote: "yes" | "no") => void>(() => {});
   const [engine, setEngine] = useState<VoiceEngine>(() => voiceEngine());
-  // Screen selector: persisted choice, EN default. It drives listening
-  // (ASR language), prompt output, voice and UI; there is no auto-detection.
-  const [language, setLanguage] = useState<ValeLanguage>(() =>
-    typeof window === "undefined" ? "en" : storedLanguage(),
-  );
+  // Screen language, single source: storage, synced live. It drives
+  // listening (ASR language), prompt output, voice and UI.
+  const [language, setLanguage] = useValeLanguage();
   // Turn handlers close over the session; the ref keeps the live language.
   const languageRef = useRef<ValeLanguage>(language);
-  const switchLanguage = useCallback((next: ValeLanguage) => {
-    setLanguage(next);
-    // The ref is the wire truth, not the session listener: switching while
-    // idle (no live socket, no listener yet) must still stick for the next
-    // connection's first frame.
-    languageRef.current = next;
-    try {
-      window.localStorage.setItem(LANGUAGE_KEY, next);
-    } catch {
-      /* private mode: the session still switches for this visit */
-    }
-    stopSpeaking("language-switch");
-    // The session listener forwards this on the live socket at once (the
-    // next Meta dial pins ASR to it and the next reply speaks it, with no
-    // manual reconnect); an idle session adopts it from the ref instead.
-    try {
-      window.dispatchEvent(
-        new CustomEvent<ValeLanguage>("vale-language", { detail: next }),
-      );
-    } catch {
-      /* the next turn carries the language frame instead */
-    }
-  }, []);
+  const switchLanguage = useCallback(
+    (next: ValeLanguage) => {
+      setLanguage(next);
+      languageRef.current = next;
+      stopSpeaking("language-switch");
+    },
+    [setLanguage],
+  );
   const ui = uiStrings(language);
   // Stable per-browser id so slots, pending actions and chain lanes survive
   // retaps even behind one shared IP; generated once, then reused.
@@ -175,9 +143,13 @@ export function TapToTalk() {
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);
   const turnIdRef = useRef(0);
+  /** Shared turn tag counter (t001…): the server logs what the client tags. */
+  const turnTagRef = useRef(1);
   const controllersRef = useRef(new Set<AbortController>());
   const socketsRef = useRef(new Set<WebSocket>());
   const quietTimerRef = useRef(0);
+  const dropTimerRef = useRef(0);
+  const convReconnectTimerRef = useRef(0);
   const watchdogRef = useRef(0);
   const visibilityHandlerRef = useRef<(() => void) | null>(null);
   const languageHandlerRef = useRef<((event: Event) => void) | null>(null);
@@ -186,18 +158,40 @@ export function TapToTalk() {
   const repliesRef = useRef(new Map<number, string>());
   const finalReceivedRef = useRef(new Set<number>());
   const settledTurnsRef = useRef(new Set<number>());
-  // Silent streak: the banner shows only on repeated silence.
-  const silentStreakRef = useRef(0);
   // Strict turns: capture muted while she speaks, resumed ~300 ms after.
   const mutedRef = useRef(false);
   const resumeTimerRef = useRef(0);
   const speechWatchRef = useRef(0);
   const muteStartRef = useRef(0);
+  // Her voice really sounded this reply: the real-end notice anchors it.
+  const voicedRef = useRef(false);
+  // Real-end subscription for this mic session; released with the watch.
+  const settleReleaseRef = useRef<(() => void) | null>(null);
   // Per-turn ear evidence, frozen at endStream and sent with it.
   const turnPeakRef = useRef(0);
   const turnMutedMsRef = useRef(0);
   const turnLostRef = useRef(0);
   const turnSrcRef = useRef(0);
+  const turnRebuildsRef = useRef(0);
+  const turnEngineRef = useRef<"worklet" | "script" | null>(null);
+  const trackRateRef = useRef<number | null>(null);
+  // Widget open at endStream: the sheet-loss measurement (point 10).
+  const widgetRef = useRef<Widget | null>(null);
+  useEffect(() => {
+    widgetRef.current = widget;
+  }, [widget]);
+  // Final upload result waiting behind the confirm sheet for Accept. The
+  // result shows the final user photo; the mosaic URL stays server-side.
+  const finalPendingRef = useRef<{ photoUrl: string | null; description: string | null } | null>(null);
+  // Client-side mirror of the server attention window: the tap, her replies
+  // and heard names restart it, exactly the events the server notes. It only
+  // ever keeps a phrase on the wire; the server gate owns every discard.
+  const boardRef = useRef<Board | null>(null);
+  useEffect(() => {
+    boardRef.current = board;
+  }, [board]);
+  /** Remainder of a dismissed phrase drains here until the pause; never transcribed. */
+  const droppedRef = useRef(false);
   // Single source of truth for what Vale is doing; the indicator mirrors it.
   const valeStoreRef = useRef(createValeState());
   const [valeUiState, setValeUiState] = useState<ValeState>("idle");
@@ -205,15 +199,259 @@ export function TapToTalk() {
     const stop = valeStoreRef.current.subscribe(setValeUiState);
     return stop;
   }, []);
+  // Mute Vale toggle: her voice never starts while muted; the reply text
+  // still grows in its bubble.
+  const [muted, setMuted] = useState(false);
+  // Mic mute: capture fully stopped, never ignored. The typed field shows
+  // only while muted; unmuting hides it and listening can resume.
+  const [micMuted, setMicMuted] = useState(false);
+  const micMutedRef = useRef(false);
+  const [typedText, setTypedText] = useState("");
+  const sendTypedRef = useRef<(text: string) => void>(() => {});
+  const mutedOutRef = useRef(false);
+  const doneTimerRef = useRef(0);
+  const clearDoneTimer = useCallback(() => {
+    window.clearTimeout(doneTimerRef.current);
+    doneTimerRef.current = 0;
+  }, []);
+  useEffect(() => clearDoneTimer, [clearDoneTimer]);
+  // A turn that ends without audible speech falls back to listening: muted
+  // replies, short replies already settled, widgetless turns.
+  const settleToListening = useCallback(() => {
+    const state = valeStoreRef.current.get();
+    if (
+      (state === "thinking" || state === "done") &&
+      !isSpeaking() &&
+      sessionRef.current
+    ) {
+      valeStoreRef.current.set("listening");
+    }
+  }, []);
+  // Sheet timers: booked/notes hide after 3 s, the summary hands a 5 s
+  // good job to a 5 s goodbye. Cleared on every widget change or close.
+  const widgetTimerRef = useRef(0);
+  const clearWidgetTimer = useCallback(() => {
+    window.clearTimeout(widgetTimerRef.current);
+    widgetTimerRef.current = 0;
+  }, []);
+
+  /** Local sheet (camera, photos, final chain): no tool ran, no timers. */
+  const openWidget = useCallback((widget: Widget) => {
+    setWidget(widget);
+  }, []);
+
+  /** Real slot data for the photos sheet; missing files stay null. */
+  const loadPhotosData = (sessionId: number): Promise<PhotosData> =>
+    loadPhotosDataFromDb(sessionId);
+
+  /** Photos sheet with the stored slots, real where present. */
+  const openPhotosSheet = (sessionId: number): void => {
+    void loadPhotosData(sessionId).then((data) => {
+      openWidget({
+        kind: "photos",
+        title: widgetTitle("photos"),
+        size: "full",
+        data,
+      });
+    });
+  };
+
+  interface SessionPhotoUpload {
+    ok: boolean;
+    photoUrl: string;
+    mosaicUrl?: string;
+    description?: string | null;
+  }
+
+  /** Uploads the picked file, then shows the stored photo. */
+  const uploadSessionPhoto = async (file: File, kind: "before" | "final", sessionId: number): Promise<void> => {
+    const form = new FormData();
+    form.set("photo", file);
+    form.set("sessionId", String(sessionId));
+    form.set("slot", kind === "before" ? "before" : "after");
+    let body: SessionPhotoUpload | null = null;
+    try {
+      const res = await fetch("/api/session-photo", { method: "POST", body: form });
+      body = (await res.json()) as SessionPhotoUpload;
+      if (!res.ok || body === null || body.ok !== true) throw new Error("upload failed");
+    } catch {
+      setNotice("Photo upload failed.");
+      return;
+    }
+    if (kind === "before") {
+      const rest = await loadPhotosData(sessionId);
+      openWidget({
+        kind: "photos",
+        title: widgetTitle("photos"),
+        size: "full",
+        data: { ...rest, before: body.photoUrl },
+      });
+    } else {
+      finalPendingRef.current = {
+        photoUrl: typeof body.photoUrl === "string" ? body.photoUrl : null,
+        description: typeof body.description === "string" ? body.description : null,
+      };
+      openWidget({
+        kind: "final_photo_confirm",
+        title: widgetTitle("final_photo_confirm"),
+        size: "full",
+        data: { photo: body.photoUrl },
+      });
+    }
+  };
+
+  /** Camera on phones (coarse pointer), file picker on desktop. */
+  const openPhotoPicker = (kind: "before" | "final", sessionId: number): void => {
+    try {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      // iOS Safari ignores clicks on detached inputs: the picker must
+      // live in the document (invisibly) or nothing opens at all.
+      input.style.position = "fixed";
+      input.style.top = "0";
+      input.style.left = "0";
+      input.style.opacity = "0";
+      input.style.pointerEvents = "none";
+      try {
+        if (window.matchMedia("(pointer: coarse)").matches) input.setAttribute("capture", "camera");
+      } catch {
+        /* file picker without a camera hint */
+      }
+      const cleanup = (): void => {
+        try {
+          input.remove();
+        } catch {
+          /* already gone */
+        }
+      };
+      input.onchange = () => {
+        const file = input.files?.[0];
+        cleanup();
+        if (file) void uploadSessionPhoto(file, kind, sessionId);
+      };
+      try {
+        input.addEventListener("cancel", cleanup);
+      } catch {
+        /* older engines without a cancel event leak one hidden input */
+      }
+      document.body.appendChild(input);
+      input.click();
+    } catch {
+      /* no picker without a document */
+    }
+  };
+
+  /** Timed hides report back so the server restarts the window. */
+  /** The server keeps per-turn sheet stats off this; logging never breaks a turn. */
+  const notifySheetClosed = useCallback(() => {
+    try {
+      const socket = convSocketRef.current;
+      if (
+        socket &&
+        typeof WebSocket !== "undefined" &&
+        socket.readyState === WebSocket.OPEN
+      ) {
+        socket.send(JSON.stringify({ type: "sheet-closed" }));
+      }
+    } catch {
+      /* the next turn's stats still describe the screen */
+    }
+  }, []);
+
+  /** The goodbye screen after the summary, timer-held like every sheet. */
+  const showGoodJob = useCallback(() => {
+    clearDoneTimer();
+    valeStoreRef.current.set("done");
+    setWidget({ kind: "good_job", title: widgetTitle("good_job"), size: "full", data: {} });
+    widgetTimerRef.current = window.setTimeout(() => {
+      widgetTimerRef.current = 0;
+      setWidget(null);
+      notifySheetClosed();
+      settleToListening();
+    }, GOODBYE_MS);
+  }, [clearDoneTimer, notifySheetClosed, settleToListening]);
+
+  const closeWidgetByHand = useCallback(() => {
+    if (widgetRef.current === null) return;
+    const closingSummary = widgetRef.current.kind === "session_summary";
+    clearWidgetTimer();
+    if (closingSummary) {
+      // The summary X skips the wait and goes straight to goodbye.
+      showGoodJob();
+    } else {
+      setWidget(null);
+    }
+    notifySheetClosed();
+  }, [clearWidgetTimer, showGoodJob, notifySheetClosed]);
+
+  /** A working tool shows done, then falls back ~1.5 s later; speech wins. */
+  const handleWidget = useCallback(
+    (incoming: unknown) => {
+      if (incoming !== null && !(incoming && typeof incoming === "object"))
+        return;
+      clearWidgetTimer();
+      // buildWidget always stamps size: the single guarantor lives in lib.
+      const next = (incoming ?? null) as Widget | null;
+      setWidget(next);
+      if (next !== null && next.kind === "session_summary") {
+        // The summary always arrives mid-speech, so its chain schedules
+        // before the speaking early return below: it never depends on it.
+        widgetTimerRef.current = window.setTimeout(() => {
+          widgetTimerRef.current = 0;
+          showGoodJob();
+        }, SUMMARY_MS);
+      }
+      if (next === null || valeStoreRef.current.get() === "speaking") return;
+      if (next.kind === "good_job") {
+        // Held through goodbye: done face and care icons stay 5 s.
+        clearDoneTimer();
+        valeStoreRef.current.set("done");
+        widgetTimerRef.current = window.setTimeout(() => {
+          widgetTimerRef.current = 0;
+          closeWidgetByHand();
+          settleToListening();
+        }, GOODBYE_MS);
+        return;
+      }
+      clearDoneTimer();
+      valeStoreRef.current.set("done");
+      doneTimerRef.current = window.setTimeout(() => {
+        doneTimerRef.current = 0;
+        settleToListening();
+      }, 1500);
+      if (next.kind === "booked" || next.kind === "note" || next.kind === "health_note") {
+        widgetTimerRef.current = window.setTimeout(() => {
+          widgetTimerRef.current = 0;
+          closeWidgetByHand();
+        }, AUTO_HIDE_MS);
+      }
+    },
+    [clearDoneTimer, clearWidgetTimer, closeWidgetByHand, settleToListening, showGoodJob],
+  );
+  const toggleMute = useCallback(() => {
+    if (mutedOutRef.current) {
+      mutedOutRef.current = false;
+      setMuted(false);
+    } else {
+      mutedOutRef.current = true;
+      setMuted(true);
+      stopSpeaking("mute");
+    }
+  }, []);
+  // `sleep` (zzz) is defined after stopSession, which it calls.
 
   const clearSpeechWatch = useCallback(() => {
     window.clearInterval(speechWatchRef.current);
     window.clearTimeout(resumeTimerRef.current);
+    settleReleaseRef.current?.();
+    settleReleaseRef.current = null;
     mutedRef.current = false;
   }, []);
 
   const clearCaptureWatch = useCallback(() => {
     window.clearTimeout(quietTimerRef.current);
+    window.clearTimeout(convReconnectTimerRef.current);
     window.clearInterval(watchdogRef.current);
     if (visibilityHandlerRef.current) {
       document.removeEventListener(
@@ -229,6 +467,9 @@ export function TapToTalk() {
   }, []);
 
   const stopSession = useCallback(() => {
+    clearDoneTimer();
+    clearWidgetTimer();
+    window.clearTimeout(dropTimerRef.current);
     sessionRef.current = false;
     stopSpeaking("tap");
     clearCaptureWatch();
@@ -262,8 +503,143 @@ export function TapToTalk() {
     sessionEndRef.current?.();
     sessionEndRef.current = null;
     setStatus("idle");
-  }, [clearCaptureWatch, clearSpeechWatch]);
+  }, [
+    clearCaptureWatch,
+    clearSpeechWatch,
+    clearDoneTimer,
+    clearWidgetTimer,
+  ]);
 
+  /** zzz: stop the session and return to the home screen. */
+  const sleep = useCallback(() => {
+    stopSession();
+    onSleep?.();
+  }, [stopSession, onSleep]);
+
+  // Mic mute touches only the stream's tracks: disabled feeds pure
+  // silence, so no audio leaves the device, samples keep flowing, and the
+  // session (socket, turns, widgets) keeps running untouched.
+  const setMicTracksEnabled = useCallback((enabled: boolean) => {
+    try {
+      streamRef.current?.getAudioTracks().forEach((track) => {
+        track.enabled = enabled;
+      });
+    } catch {
+      /* stream already gone */
+    }
+  }, []);
+
+  // Muting never ends the session — not even while idle — so a typed turn
+  // always has a live sender; unmuting is instant.
+  const toggleMicMute = useCallback(() => {
+    const next = !micMuted;
+    micMutedRef.current = next;
+    setMicMuted(next);
+    setMicTracksEnabled(!next);
+  }, [micMuted, setMicTracksEnabled]);
+
+  // Typed turn: Enter or the send button sends, the field clears and keeps
+  // focus so the keyboard stays open, and the reply path is the same JSON
+  // turn a vote rides (typed:true skips ASR and wake).
+  const typedInputRef = useRef<HTMLInputElement>(null);
+  const submitTyped = useCallback(() => {
+    const text = typedText.trim();
+    if (text === "") return;
+    setTypedText("");
+    sendTypedRef.current(text);
+    try {
+      typedInputRef.current?.focus();
+    } catch {
+      /* keyboard continuity is best effort */
+    }
+  }, [typedText]);
+
+  // Input chip, only while the mic is muted: card surface with the subtle
+  // border, 46px tall like the round buttons, in the bottom flow below the
+  // timer so it can never cover it. The send button rides inside on the
+  // right, dimmed while the field is empty; Enter sends too.
+  const typedField = (
+    <form
+      className={styles.typed}
+      onSubmit={(event) => {
+        event.preventDefault();
+        submitTyped();
+      }}
+    >
+      <input
+        ref={typedInputRef}
+        className={styles.typedin}
+        type="text"
+        aria-label="Type to Vale"
+        placeholder="Type to Vale…"
+        value={typedText}
+        onChange={(event) => setTypedText(event.target.value)}
+      />
+      <button
+        className={styles.typedgo}
+        type="submit"
+        aria-label="Send message"
+        disabled={typedText.trim() === ""}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <g
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M22 2 11 13" />
+            <path d="M22 2 15 22 11 13 2 9 22 2" />
+          </g>
+        </svg>
+      </button>
+    </form>
+  );
+
+  // Sheet buttons: price answers close; Final uploads then confirms, whose
+  // Accept opens the result with the final user photo. Visits and the
+  // photo button load the real stored photos first.
+  const sheetCallbacks = {
+    onAccept: () => {
+      if (widgetRef.current?.kind === "final_photo_confirm") {
+        const pending = finalPendingRef.current;
+        finalPendingRef.current = null;
+        openWidget({
+          kind: "final_result",
+          title: widgetTitle("final_result"),
+          size: "full",
+          data: { photo: pending?.photoUrl ?? null, description: pending?.description ?? null },
+        });
+      } else {
+        closeWidgetByHand();
+      }
+    },
+    onReject: () => {
+      closeWidgetByHand();
+    },
+    onChoose: (choice: "before" | "final") => {
+      const sessionId = board?.session?.id;
+      closeWidgetByHand();
+      if (sessionId === undefined) {
+        setNotice("No open session for the photo.");
+        return;
+      }
+      openPhotoPicker(choice, sessionId);
+    },
+    onVisit: () => {
+      const sessionId = board?.session?.id;
+      if (sessionId === undefined) return;
+      openPhotosSheet(sessionId);
+    },
+    onPhotos: () => {
+      const sessionId = board?.session?.id;
+      if (sessionId === undefined) return;
+      openPhotosSheet(sessionId);
+    },
+  };
+
+  // The X on a sheet Vale opened: close locally and restart her window.
   useEffect(() => stopSession, [stopSession]);
 
   const patchTurn = useCallback((id: number, patch: Partial<Turn>) => {
@@ -282,6 +658,8 @@ export function TapToTalk() {
 
   const endSessionWithAlert = useCallback(
     (message: string, code: string | null = null) => {
+      clearDoneTimer();
+      clearWidgetTimer();
       sessionRef.current = false;
       clearCaptureWatch();
       controllersRef.current.forEach((controller) => {
@@ -313,20 +691,27 @@ export function TapToTalk() {
       socketsRef.current.clear();
       convSocketRef.current = null;
       setAlert(message);
-      setAlertCode(code);
       setStatus("idle");
       valeStoreRef.current.set("error");
       sessionEndRef.current?.();
       sessionEndRef.current = null;
       clearSpeechWatch();
     },
-    [clearCaptureWatch, clearSpeechWatch],
+    [
+      clearCaptureWatch,
+      clearSpeechWatch,
+      clearDoneTimer,
+      clearWidgetTimer,
+    ],
   );
 
   const runSession = useCallback(
     async (stream: MediaStream): Promise<void> => {
       sessionRef.current = true;
-      valeStoreRef.current.set("attentive");
+      // The tap no longer opens the window (the server ignores the wake
+      // frame for attention): the mirror restarts only on her replies and
+      // heard names, exactly the events the server notes.
+      valeStoreRef.current.set("listening");
       // One capture for the whole session; VAD events delimit turns.
       let resolveSession: (() => void) | null = null;
       const ended = new Promise<void>((resolve) => {
@@ -350,9 +735,49 @@ export function TapToTalk() {
       // owed (audible speech or the estimate window), capture stays muted;
       // when she settles, flush stale frames, wait ~300 ms, re-listen.
       // The window stays open throughout: a yes still lands on the session.
+      // One unmute path: the estimate watch and the real-end notice share it.
+      const resumeMicFromSpeech = () => {
+        mutedRef.current = false;
+        turnMutedMsRef.current += Date.now() - muteStartRef.current;
+        // Fresh stamp for the next mute: the cap measures this voice.
+        muteStartRef.current = 0;
+        pending.length = 0;
+        window.clearTimeout(resumeTimerRef.current);
+        resumeTimerRef.current = window.setTimeout(() => {
+          if (!sessionRef.current) return;
+          captureRef.current?.setPaused?.(false);
+          // A turn posted while she settled already claimed the state.
+          if (valeStoreRef.current.get() === "speaking") {
+            valeStoreRef.current.set("listening");
+          }
+        }, SPEECH_RESUME_DELAY_MS);
+      };
       window.clearInterval(speechWatchRef.current);
       speechWatchRef.current = window.setInterval(() => {
         if (!sessionRef.current) return;
+        // Speech-path telemetry rides the open socket to the server log,
+        // one small row per sentence end: the field test reads it live.
+        for (const speechEvent of drainSpeechEvents()) {
+          try {
+            if (
+              convOpen &&
+              convSocket &&
+              typeof WebSocket !== "undefined" &&
+              convSocket.readyState === WebSocket.OPEN
+            ) {
+              convSocket.send(
+                JSON.stringify({
+                  type: "client-state",
+                  state: {
+                    speech: `${speechEvent.kind} ${speechEvent.detail}`.trim(),
+                  },
+                }),
+              );
+            }
+          } catch {
+            /* diagnostics never break the turn */
+          }
+        }
         if (!speechSettled()) {
           // She owns the air: the store says so even when the frame guard
           // muted first (set is idempotent, no extra render past the first).
@@ -360,6 +785,7 @@ export function TapToTalk() {
           if (!mutedRef.current) {
             mutedRef.current = true;
             muteStartRef.current = Date.now();
+            endReleasedTurn();
             captureRef.current?.setPaused?.(true);
             window.clearTimeout(resumeTimerRef.current);
           } else if (
@@ -372,29 +798,96 @@ export function TapToTalk() {
           return;
         }
         if (mutedRef.current) {
-          mutedRef.current = false;
-          turnMutedMsRef.current += Date.now() - muteStartRef.current;
-          // Fresh stamp for the next mute: the cap measures this voice.
-          muteStartRef.current = 0;
-          pending.length = 0;
-          window.clearTimeout(resumeTimerRef.current);
-          resumeTimerRef.current = window.setTimeout(() => {
-            if (!sessionRef.current) return;
-            captureRef.current?.setPaused?.(false);
-            // A turn posted while she settled already claimed the state.
-            if (valeStoreRef.current.get() === "speaking") {
-              valeStoreRef.current.set("attentive");
-            }
-          }, SPEECH_RESUME_DELAY_MS);
+          resumeMicFromSpeech();
+        } else {
+          // Her voice settled with the mic open: speaking and done fall
+          // back to listening, so a done that landed mid-speech no longer
+          // sticks. Thinking (a turn in flight) is untouched.
+          valeStoreRef.current.set(
+            settledSpeechState(valeStoreRef.current.get()),
+          );
         }
       }, 250);
-      // One conversation socket when /voice is up, else one bridge socket
-      // per turn; frames stay buffered for replay or POST fallback.
+      // Her real last word reopens everything at once: the face, the mic
+      // (through the shared resume), the window mirror, and the server
+      // anchor. Muted replies never voiced, so they anchor nothing.
+      settleReleaseRef.current?.();
+      settleReleaseRef.current = onSpeechSettled(() => {
+        if (!sessionRef.current || mutedOutRef.current) return;
+        if (valeStoreRef.current.get() === "speaking") {
+          valeStoreRef.current.set("listening");
+        }
+        if (!voicedRef.current) return;
+        voicedRef.current = false;
+        if (mutedRef.current) resumeMicFromSpeech();
+        try {
+          if (
+            convOpen &&
+            convSocket &&
+            typeof WebSocket !== "undefined" &&
+            convSocket.readyState === WebSocket.OPEN
+          ) {
+            convSocket.send(JSON.stringify({ type: "spoken" }));
+          }
+        } catch {
+          /* the reply-time anchor stands */
+        }
+      });
+      // One conversation socket, always: /voice must open within 2 s of
+      // the tap or the session never starts capturing. It reconnects with
+      // backoff on a drop and replays the live turn; there is no per-turn
+      // socket and no POST.
       let convSocket: WebSocket | null = null;
       let convOpen = false;
       let pendingConvTurn: number | null = null;
+      let convAttempt = 0;
+      // The bridge echoes the turn tag on final/reply/done: route by it.
+      const parseBridgeTurn = (raw: unknown): string | null => {
+        try {
+          const text =
+            typeof raw === "string"
+              ? raw
+              : new TextDecoder().decode(raw as ArrayBuffer);
+          const turn = (JSON.parse(text) as { turn?: unknown }).turn;
+          return typeof turn === "string" && /^t\d{1,6}$/.test(turn)
+            ? turn
+            : null;
+        } catch {
+          return null;
+        }
+      };
+      // Route bridge messages by the echoed turn tag; untagged frames go to
+      // the ended turn or the live one. A done never touches the segment
+      // being captured: dropping it here keeps a cut fragment from
+      // deleting the live turn.
+      const routeBridgeMessage = (raw: unknown): number | null => {
+        const tagged = parseBridgeTurn(raw);
+        if (tagged !== null) {
+          for (const [id, transport] of transports) {
+            if (transport.tag === tagged) return id;
+          }
+          return null;
+        }
+        const id = pendingConvTurn ?? currentId;
+        if (id === currentId && !transports.get(id)?.ended) {
+          let type: unknown;
+          try {
+            const text =
+              typeof raw === "string"
+                ? raw
+                : new TextDecoder().decode(raw as ArrayBuffer);
+            type = (JSON.parse(text) as { type?: unknown }).type;
+          } catch {
+            type = undefined;
+          }
+          if (type === "done") return null;
+        }
+        return id;
+      };
       interface TurnTransport {
         socket: WebSocket | null;
+        /** Shared turn tag (t001…) assigned at birth, sent with every close. */
+        tag: string;
         /** This turn's audio rode the shared conversation socket. */
         conv: boolean;
         frames: Int16Array[];
@@ -407,10 +900,21 @@ export function TapToTalk() {
         failed: boolean;
         /** The single buffered-POST retry already ran for this turn. */
         postRetried: boolean;
+        /** POST abort handle: a spoken sheet close stops it mid-stream. */
+        controller?: AbortController | null;
+        /** A sheet close already claimed this turn: never dismiss twice. */
+        dismissed?: boolean;
         /** Audio as it stood when speech ended (no inter-turn tail). */
         endFrames: Int16Array[] | null;
         /** Frames with real voice (energy above the VAD threshold). */
         voiced: number;
+        /** Voiced flags of the last 10 frames: release needs 8 of 10. */
+        recent: boolean[];
+        /**
+         * 8 of the last 10 frames carried voice: the buffered frames rode
+         * a socket. Before that nothing leaves the device, not even a blip.
+         */
+        released: boolean;
         /** Frozen endStream payload: the same stats on every (re)send. */
         endPayload: string | null;
       }
@@ -438,6 +942,7 @@ export function TapToTalk() {
         socket.binaryType = "arraybuffer";
         socket.onopen = () => {
           convOpen = true;
+          convAttempt = 0;
           try {
             socket.send(
               JSON.stringify({
@@ -448,12 +953,45 @@ export function TapToTalk() {
             socket.send(JSON.stringify({ type: "client", client: clientId }));
             socket.send(JSON.stringify({ type: "wake" }));
           } catch {
-            /* the close handler falls back to per-turn sockets */
+            /* the close handler reschedules the reconnect */
+          }
+          flushConv();
+        };
+        // The shared socket replays the live turn on reconnect: buffered
+        // frames ride again, then the frozen endStream when speech ended.
+        const flushConv = () => {
+          const live = transports.get(currentId);
+          if (
+            !live ||
+            live.settled ||
+            live.failed ||
+            !convSocket ||
+            convSocket.readyState !== WebSocket.OPEN
+          ) {
+            return;
+          }
+          try {
+            for (const frame of live.frames) {
+              sendFrameBytes(convSocket, frame);
+            }
+            live.conv = true;
+            if (live.ended || live.endQueued) {
+              live.endQueued = false;
+              convSocket.send(
+                live.endPayload ??
+                  JSON.stringify({ type: "endStream", turn: live.tag }),
+              );
+              pendingConvTurn = currentId;
+            }
+          } catch {
+            /* the close handler reschedules the reconnect */
           }
         };
         socket.onmessage = (event: MessageEvent) => {
-          const id = pendingConvTurn ?? currentId;
-          if (!transports.has(id)) return;
+          // Session-scoped frames (board, widgets) land before the first
+          // turn opens; handleBridgeMessage routes what needs no turn.
+          const id = routeBridgeMessage(event.data);
+          if (id === null) return;
           handleBridgeMessage(id, event.data);
           try {
             const raw =
@@ -474,36 +1012,52 @@ export function TapToTalk() {
           socketsRef.current.delete(socket);
         };
         socket.onerror = () => {
-          // The close event follows; in-flight turns fall back below.
+          // The close event follows with the reconnect decision.
         };
         socket.onclose = () => {
           dropConv();
+          scheduleConvReconnect();
         };
       };
+      // A drop never ends the session: back off and redial while she is
+      // live; the open replay above resends what the turn buffered.
+      const scheduleConvReconnect = () => {
+        if (!sessionRef.current) return;
+        const delay = Math.min(500 * 2 ** convAttempt, 4000);
+        convAttempt += 1;
+        window.clearTimeout(convReconnectTimerRef.current);
+        convReconnectTimerRef.current = window.setTimeout(() => {
+          if (!sessionRef.current) return;
+          openConvSocket();
+        }, delay);
+      };
+      // /voice must answer within 2 s of the tap: without it nothing is
+      // captured and the session ends with a visible error, never a POST.
+      const convReady = (timeoutMs: number): Promise<boolean> =>
+        new Promise((resolve) => {
+          const end = Date.now() + timeoutMs;
+          const tick = () => {
+            if (convOpen) {
+              resolve(true);
+              return;
+            }
+            if (!sessionRef.current || Date.now() >= end) {
+              resolve(false);
+              return;
+            }
+            window.setTimeout(tick, 50);
+          };
+          tick();
+        });
 
       const showNotice = (message: string, code: string | null = null) => {
         setNotice(message);
-        setNoticeCode(code);
-      };
-
-      const handleVadCandidate = (id: number) => {
-        const voiced = transports.get(id)?.voiced ?? 0;
-        if (voiced > 0) {
-          silentStreakRef.current = 0;
-          return;
-        }
-        silentStreakRef.current += 1;
-        if (silentStreakRef.current >= 2) {
-          showNotice(
-            turnErrorText("vad-continue", languageRef.current),
-            "E-VAD",
-          );
-        }
       };
 
       const armQuiet = () => {
         window.clearTimeout(quietTimerRef.current);
-        quietTimerRef.current = window.setTimeout(() => {
+        quietTimerRef.current = window.setTimeout(
+          () => {
           if (!sessionRef.current) return;
           // Muted while she speaks, the VAD is frozen: churning the turn
           // here would drop an in-flight reply bubble, so wait her out.
@@ -511,24 +1065,29 @@ export function TapToTalk() {
             armQuiet();
             return;
           }
-          handleVadCandidate(currentId);
           // An empty turn never deletes a bubble: prune only contentless
           // rows, so history survives silence and only the trailing
           // empty row churns.
           pruneIfEmpty(currentId);
           openTurn();
-        }, NO_SPEECH_TIMEOUT_MS);
+          },
+          quietWindowMs(),
+        );
       };
 
       const openTurn = (arm = true) => {
         const id = turnIdRef.current++;
         currentId = id;
+        const tag = `t${String(turnTagRef.current++).padStart(3, "0")}`;
         posted = false;
+        droppedRef.current = false;
         pending.length = 0;
         turnPeakRef.current = 0;
         turnMutedMsRef.current = 0;
+        turnRebuildsRef.current = 0;
         transports.set(id, {
           socket: null,
+          tag,
           conv: false,
           frames: [],
           opened: false,
@@ -540,6 +1099,8 @@ export function TapToTalk() {
           postRetried: false,
           endFrames: null,
           voiced: 0,
+          recent: [],
+          released: false,
           endPayload: null,
         });
         setTurns((prev) => [
@@ -549,6 +1110,68 @@ export function TapToTalk() {
         if (arm) armQuiet();
       };
 
+      // Spoken sheet close with a sheet open: the card goes away with no
+      // model call and no spoken reply. The user bubble stays; the server
+      // logs the discard (gate cierre) and only sends ignored+done.
+      // A close that arrived mid-utterance drops the remainder so it never
+      // rides after the dismiss. A close in the final leaves the turn
+      // complete: posted, and the pause opens fresh.
+      const dismissSheetTurn = (id: number, text: string, final: boolean) => {
+        if (widgetRef.current === null) return;
+        const transport = transports.get(id);
+        if (transport?.dismissed) return;
+        if (transport) transport.dismissed = true;
+        clearWidgetTimer();
+        setWidget(null);
+        posted = true;
+        if (!final) droppedRef.current = true;
+        const payload = JSON.stringify({
+          type: "dismiss",
+          transcript: text,
+          turn: transport?.tag ?? null,
+        });
+        try {
+          if (
+            convOpen &&
+            convSocket &&
+            typeof WebSocket !== "undefined" &&
+            convSocket.readyState === WebSocket.OPEN
+          ) {
+            convSocket.send(payload);
+            return;
+          }
+        } catch {
+          /* the reconnect replay covers a dead socket */
+        }
+        try {
+          transport?.controller?.abort();
+        } catch {
+          /* already settled */
+        }
+      };
+
+      const maybeDismissSheet = (id: number, text: string, final: boolean) => {
+        if (!sessionRef.current) return;
+        if (id !== currentId || text.trim() === "") return;
+        if (widgetRef.current === null || !isCloseSheetIntent(text)) return;
+        dismissSheetTurn(id, text, final);
+      };
+
+      // No client-side cut: an unaddressed phrase rides to the server and
+      // the gate owns the verdict. Cutting here desyncs from the server and
+      // orphans the frames already streamed.
+
+      // One invariant for every stall: a released segment ends only by the
+      // VAD, always with an explicit endStream. Pausing capture, rebuilding
+      // the graph, or restarting after a stall closes the released turn
+      // first; nothing else ever clears a segment or ends it silently.
+      const endReleasedTurn = () => {
+        const transport = transports.get(currentId);
+        if (!transport || !transport.released || transport.failed) return;
+        if (transport.settled || transport.ended) return;
+        posted = true;
+        endTurnTransport(currentId);
+      };
       // A failed turn ends the session so the user can tap to retry.
       const failTurn = (id: number, message: string, code: string | null = null) => {
         // A failed turn may still show what was heard: only a contentless
@@ -564,15 +1187,7 @@ export function TapToTalk() {
       };
 
       const handleBridgeMessage = (id: number, raw: unknown) => {
-        const transport = transports.get(id);
-        // Late socket frames after the POST retry are stale; ignore them.
-        if (
-          !transport ||
-          transport.settled ||
-          transport.failed ||
-          !sessionRef.current
-        )
-          return;
+        if (!sessionRef.current) return;
         let message: {
           type?: string;
           transcript?: unknown;
@@ -589,6 +1204,32 @@ export function TapToTalk() {
         } catch {
           return;
         }
+        // Session-scoped frames need no turn: the connect-time board and
+        // widgets must land even before the first turn opens.
+        if (message.type === "board") {
+          const board = (message as { board?: unknown }).board;
+          if (board && typeof board === "object") {
+            setBoard(board as Board);
+          }
+          return;
+        }
+        if (message.type === "widget") {
+          handleWidget((message as { widget?: unknown }).widget);
+          return;
+        }
+        if (message.type === "notice") {
+          if (typeof message.message !== "string") return;
+          if (typeof message.code === "string" && message.code === "E-VAD") return;
+          showNotice(
+            message.message,
+            typeof message.code === "string" ? message.code : null,
+          );
+          return;
+        }
+        const transport = transports.get(id);
+        // Settled turns ignore late frames; a done for a settled turn is
+        // the only frame that may still touch it (it already did).
+        if (!transport || transport.settled || transport.failed) return;
         switch (message.type) {
           case "transcript":
             if (typeof message.transcript !== "string") return;
@@ -598,11 +1239,12 @@ export function TapToTalk() {
               // prunes contentless rows, and a row with interim text stays
               // as heard instead of blanking.
               if (message.transcript.trim() !== "") {
-                silentStreakRef.current = 0;
                 patchTurn(id, { final: message.transcript, interim: "" });
+                maybeDismissSheet(id, message.transcript, true);
               }
             } else {
               patchTurn(id, { interim: message.transcript });
+              maybeDismissSheet(id, message.transcript, false);
             }
             break;
           case "reply-delta":
@@ -612,46 +1254,25 @@ export function TapToTalk() {
               const next = `${repliesRef.current.get(id) ?? ""}${message.text}`;
               repliesRef.current.set(id, next);
               patchTurn(id, { reply: next });
-              valeStoreRef.current.set("speaking");
-              speakStream(message.text, languageRef.current);
+              // Muted: the text still grows, but her voice never starts.
+              if (!mutedOutRef.current) {
+                valeStoreRef.current.set("speaking");
+                voicedRef.current = true;
+                speakStream(message.text, languageRef.current);
+              }
             }
             break;
           case "reply":
             if (typeof message.text !== "string") return;
             // Deltas already voiced this turn: only flush the tail.
-            if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
-            else speak(message.text, languageRef.current);
+            if (!mutedOutRef.current) {
+              if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
+              else speak(message.text, languageRef.current);
+              voicedRef.current = true;
+              valeStoreRef.current.set("speaking");
+            }
             repliesRef.current.set(id, message.text);
             patchTurn(id, { reply: message.text });
-            valeStoreRef.current.set("speaking");
-            break;
-          case "board": {
-            const board = (message as { board?: unknown }).board;
-            if (board && typeof board === "object") {
-              setBoard(board as Board);
-            }
-            break;
-          }
-          case "widget": {
-            const incoming = (message as { widget?: unknown }).widget;
-            if (
-              incoming === null ||
-              (incoming && typeof incoming === "object")
-            ) {
-              setWidget((incoming ?? null) as Widget | null);
-            }
-            break;
-          }
-          case "notice":
-            if (typeof message.message !== "string") return;
-            if (typeof message.code === "string" && message.code === "E-VAD") {
-              handleVadCandidate(id);
-              break;
-            }
-            showNotice(
-              message.message,
-              typeof message.code === "string" ? message.code : null,
-            );
             break;
           case "error": {
             if (typeof message.message !== "string") return;
@@ -690,8 +1311,13 @@ export function TapToTalk() {
                 }
               }
             }
+            // Settled turns never reconnect: drop the buffered frames so a
+            // long session never grows past the live turn (GC pressure was
+            // raising main-thread load and lostBlocks over minutes).
+            transports.delete(id);
             settledTurnsRef.current.add(id);
             pruneIfEmpty(id);
+            settleToListening();
             // Fresh silence window, unless a newer turn is already collecting.
             if (id === currentId) armQuiet();
             break;
@@ -700,7 +1326,9 @@ export function TapToTalk() {
         }
       };
 
-      // One bridge socket per turn; replays buffered frames on (re)open.
+      // Dead after the one-transport cut: no caller dials per-turn sockets.
+      // Kept only until the demo deletes it; the reconnect replay above
+      // owns every resend.
       const openTurnSocket = (id: number) => {
         const transport = transports.get(id);
         if (!transport || transport.socket || typeof WebSocket === "undefined") {
@@ -746,7 +1374,8 @@ export function TapToTalk() {
             transport.endQueued = false;
             try {
               socket.send(
-                transport.endPayload ?? JSON.stringify({ type: "endStream" }),
+                transport.endPayload ??
+                  JSON.stringify({ type: "endStream", turn: transport.tag }),
               );
             } catch {
               /* the close handler decides: reconnect or fail */
@@ -821,23 +1450,72 @@ export function TapToTalk() {
         };
       };
 
-      // Speech end: conversation socket first, then the turn socket, then POST.
+      // 300 ms of voice passed the gate: the buffered frames may ride. The
+      // The hold released: the buffered frames ride the shared socket now,
+      // or wait for its reconnect. Nothing else ever carries audio.
+      const releaseTurn = () => {
+        const transport = transports.get(currentId);
+        if (!transport || transport.released || transport.failed) return;
+        transport.released = true;
+        if (
+          convOpen &&
+          convSocket &&
+          typeof WebSocket !== "undefined" &&
+          convSocket.readyState === WebSocket.OPEN
+        ) {
+          try {
+            for (const frame of transport.frames) {
+              sendFrameBytes(convSocket, frame);
+            }
+            transport.conv = true;
+          } catch {
+            /* the close handler reschedules the reconnect */
+          }
+        }
+        // Otherwise the open replay flushes transport.frames on reconnect.
+      };
+
+      // Speech end: the shared socket carries endStream, or the reconnect
+      // replay does. Nothing else ever closes a turn.
       const endTurnTransport = (id: number) => {
+        // The log keeps what she was doing when speech ended; thinking
+        // starts after, so the evidence is not always "thinking".
+        const stateBeforeEnd = valeStoreRef.current.get();
         valeStoreRef.current.set("thinking");
         const transport = transports.get(id);
         // Freeze what the client saw: the same evidence on every (re)send.
         const endPayload = JSON.stringify({
           type: "endStream",
+          turn: transport?.tag ?? null,
           peakLevel: turnPeakRef.current,
           voicedMs: (transport?.voiced ?? 0) * FRAME_MS,
           mutedMs: snapMutedMs(),
-          valeState: valeStoreRef.current.get(),
+          // The live screen language rides every turn, so a switch that
+          // raced the socket handshake still lands from the first speech.
+          language: languageRef.current,
+          // Occlusion evidence: a covered tab gets throttled and the audio
+          // reaches the model slower than realtime.
+          visible:
+            typeof document !== "undefined" ? document.visibilityState : null,
+          actualRate: trackRateRef.current,
+          ctxState: captureRef.current?.state() ?? null,
+          valeState: stateBeforeEnd,
           lostBlocks: turnLostRef.current,
           srcBlocks: turnSrcRef.current,
+          rebuilds: turnRebuildsRef.current,
+          engine: turnEngineRef.current,
+          sheetOpen: widgetRef.current !== null,
         });
         if (transport) transport.endPayload = endPayload;
+        // The turn is over: the reconnect replay must send endStream too.
+        if (transport) {
+          transport.ended = true;
+          // Freeze the retry audio here; gap frames belong to the next turn.
+          transport.endFrames = transport.frames.slice();
+        }
         if (
-          transport?.conv &&
+          transport &&
+          !transport.failed &&
           convSocket &&
           convSocket.readyState === WebSocket.OPEN
         ) {
@@ -846,60 +1524,11 @@ export function TapToTalk() {
             pendingConvTurn = id;
             return;
           } catch {
-            /* fall through to the turn socket or POST */
+            /* the close handler reschedules the reconnect */
           }
         }
-        const socket = transport?.socket ?? null;
-        // The turn is over: any (re)open must send endStream after replay.
-        if (transport) {
-          transport.ended = true;
-          // Freeze the retry audio here; gap frames belong to the next turn.
-          transport.endFrames = transport.frames.slice();
-        }
-        if (
-          socket &&
-          transport &&
-          !transport.failed &&
-          socket.readyState === WebSocket.OPEN
-        ) {
-          try {
-            socket.send(
-              transport.endPayload ?? JSON.stringify({ type: "endStream" }),
-            );
-          } catch {
-            transport.failed = true;
-            postTurn(id, pending.splice(0));
-          }
-          return;
-        }
-        if (
-          socket &&
-          transport &&
-          !transport.failed &&
-          socket.readyState === WebSocket.CONNECTING
-        ) {
-          // Still dialing: queue the end, POST only if it never connects.
-          transport.endQueued = true;
-          window.setTimeout(() => {
-            const current = transports.get(id);
-            if (
-              current &&
-              !current.settled &&
-              !current.failed &&
-              socket.readyState !== WebSocket.OPEN
-            ) {
-              current.failed = true;
-              try {
-                socket.close();
-              } catch {
-                /* already closed */
-              }
-              postTurn(id, pending.splice(0));
-            }
-          }, 5000);
-          return;
-        }
-        postTurn(id, pending.splice(0));
+        // Shared socket down: queue the end for the reconnect replay.
+        if (transport && !transport.failed) transport.endQueued = true;
       };
 
       const subscribePostTurn = (
@@ -932,15 +1561,18 @@ export function TapToTalk() {
               return;
             }
             await parseSseStream(response.body, {
-              onInterim: (transcript) => patchTurn(id, { interim: transcript }),
+              onInterim: (transcript) => {
+                patchTurn(id, { interim: transcript });
+                maybeDismissSheet(id, transcript, false);
+              },
               onFinal: (transcript) => {
                 // The turn ends at `done`; reply/notice/error follow on this stream.
                 // An empty final never wipes a shown interim: the done path
                 // prunes contentless rows instead.
                 finalReceivedRef.current.add(id);
                 if (transcript.trim() !== "") {
-                  silentStreakRef.current = 0;
                   patchTurn(id, { final: transcript, interim: "" });
+                  maybeDismissSheet(id, transcript, true);
                 }
               },
               onErrorEvent: (message, code) => {
@@ -952,28 +1584,39 @@ export function TapToTalk() {
                 const next = `${repliesRef.current.get(id) ?? ""}${text}`;
                 repliesRef.current.set(id, next);
                 patchTurn(id, { reply: next });
-                speakStream(text, languageRef.current);
+                if (!mutedOutRef.current) {
+                  voicedRef.current = true;
+                  speakStream(text, languageRef.current);
+                }
               },
               onReply: (text) => {
                 // Deltas already voiced this turn: only flush the tail.
-                if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
-                else speak(text, languageRef.current);
+                if (!mutedOutRef.current) {
+                  if ((repliesRef.current.get(id) ?? "") !== "") finishStream();
+                  else speak(text, languageRef.current);
+                  voicedRef.current = true;
+                }
                 repliesRef.current.set(id, text);
                 patchTurn(id, { reply: text });
               },
-              onBoard: (next) => setBoard(next),
-              onWidget: (next) => setWidget(next),
-              onIgnored: () => patchTurn(id, { ignored: true }),
+              onBoard: (next) => {
+                setBoard(next);
+              },
+              onWidget: (next) => handleWidget(next),
+              onIgnored: () => {
+              patchTurn(id, { ignored: true });
+            },
               onNotice: (message, code) => {
-                // E-VAD notices pass the silence gate; anything else shows directly.
-                if (code === "E-VAD") handleVadCandidate(id);
-                else showNotice(message, code ?? null);
+                // Dropped and silent turns never banner; anything else shows.
+                if (code !== "E-VAD") showNotice(message, code ?? null);
               },
               onDone: () => {
                 controllersRef.current.delete(controller);
                 if (!sessionRef.current) return;
+                transports.delete(id);
                 settledTurnsRef.current.add(id);
                 pruneIfEmpty(id);
+                settleToListening();
                 // Fresh silence window, unless a newer turn is already collecting.
                 if (id === currentId) armQuiet();
               },
@@ -1003,12 +1646,13 @@ export function TapToTalk() {
         });
         const controller = new AbortController();
         controllersRef.current.add(controller);
+        const transport = transports.get(id);
+        if (transport) transport.controller = controller;
         setNotice(null);
-        setNoticeCode(null);
         subscribePostTurn(
           id,
           fetch(
-            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}&turn=${transport?.tag ?? ""}`,
             {
               method: "POST",
               headers: { "content-type": "audio/l16" },
@@ -1020,11 +1664,39 @@ export function TapToTalk() {
         );
       };
 
-      // Touch on a confirm card: rides the open socket like any control, or
-      // a JSON turn when no socket is open. Either way it equals a spoken vote.
+      // Typed turn while the mic is muted: the same JSON turn shape as a
+      // vote, with typed:true so the server skips ASR and the wake gate.
+      // No session needed: typing is always addressed to Vale.
+      const sendTyped = (text: string) => {
+        openTurn();
+        const id = currentId;
+        const controller = new AbortController();
+        controllersRef.current.add(controller);
+        setNotice(null);
+        subscribePostTurn(
+          id,
+          fetch(
+            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ transcript: text, typed: true }),
+              signal: controller.signal,
+            },
+          ),
+          controller,
+        );
+      };
+
+      // Touch on a confirm card: rides the shared socket like any control.
+      // With the socket down the tap waits for the reconnect, like speech.
       const castVote = (vote: "yes" | "no") => {
         if (!sessionRef.current) return;
-        const payload = JSON.stringify({ type: "vote", vote });
+        const payload = JSON.stringify({
+          type: "vote",
+          vote,
+          turn: transports.get(currentId)?.tag ?? null,
+        });
         try {
           if (
             convOpen &&
@@ -1035,36 +1707,12 @@ export function TapToTalk() {
             convSocket.send(payload);
             return;
           }
-          const socket = transports.get(currentId)?.socket;
-          if (
-            socket &&
-            typeof WebSocket !== "undefined" &&
-            socket.readyState === WebSocket.OPEN
-          ) {
-            socket.send(payload);
-            return;
-          }
         } catch {
-          /* fall through to the JSON turn */
+          /* the reconnect replay covers a dead socket */
         }
-        openTurn();
-        const id = currentId;
-        const controller = new AbortController();
-        controllersRef.current.add(controller);
-        setNotice(null);
-        setNoticeCode(null);
-        subscribePostTurn(
-          id,
-          fetch(
-            `/api/voice?language=${languageRef.current}&client=${encodeURIComponent(clientId)}`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ transcript: vote }),
-              signal: controller.signal,
-            },
-          ),
-          controller,
+        showNotice(
+          turnErrorText("lost", languageRef.current),
+          "E-NET",
         );
       };
 
@@ -1072,7 +1720,7 @@ export function TapToTalk() {
       // phrases keep pauses under this; longer silence splits the turn.
       const endSilenceMs = Math.max(
         1,
-        Number(process.env.NEXT_PUBLIC_VAD_END_SILENCE_MS) || 800,
+        Number(process.env.NEXT_PUBLIC_VAD_END_SILENCE_MS) || 1000,
       );
       // Stall watchdog: the processor feeds a heartbeat on every audio
       // block, speech or silence, so a quiet mic still proves it is alive.
@@ -1085,6 +1733,8 @@ export function TapToTalk() {
       const snapshotState = (capture: string): Record<string, unknown> => ({
         capture,
         audio: captureRef.current?.state() ?? "unknown",
+        engine: captureRef.current?.engine() ?? turnEngineRef.current,
+        language: languageRef.current,
         visible:
           typeof document !== "undefined" ? document.visibilityState : "?",
         speaking: isSpeaking(),
@@ -1110,15 +1760,6 @@ export function TapToTalk() {
             convSocket.readyState === WebSocket.OPEN
           ) {
             convSocket.send(payload);
-            return;
-          }
-          const socket = transports.get(currentId)?.socket;
-          if (
-            socket &&
-            typeof WebSocket !== "undefined" &&
-            socket.readyState === WebSocket.OPEN
-          ) {
-            socket.send(payload);
           }
         } catch {
           /* diagnostics never break the turn */
@@ -1135,11 +1776,18 @@ export function TapToTalk() {
         }
         sendClientState(event);
       };
-      const beginCapture = () => {
+      const beginCapture = async () => {
         try {
           captureRef.current?.stop();
         } catch {
           /* already stopped */
+        }
+        // Settle the tap-warmed worklet module before attaching: session
+        // start must not coin-flip between engines on the module race.
+        try {
+          await ensureCaptureReady();
+        } catch {
+          /* startCapture below keeps the ScriptProcessor fallback */
         }
         captureRef.current = startCapture(stream, captureCallbacks, {
           threshold: 200,
@@ -1148,15 +1796,25 @@ export function TapToTalk() {
         lastBeatAt = Date.now();
       };
       const captureCallbacks: CaptureCallbacks = {
+          onEngine: (engine) => {
+            turnEngineRef.current = engine;
+            logClientState(`engine-${engine}`);
+          },
+          onClockRebuild: () => {
+            turnRebuildsRef.current += 1;
+          },
           onHeartbeat: () => {
             lastBeatAt = Date.now();
           },
           onFrame: (frame) => {
             if (!sessionRef.current) return;
+            // A cut phrase drains here until the pause: no frames, no meter.
+            if (droppedRef.current) return;
             // Strict turns: while she speaks, nothing is captured. The
             // capture pause usually drops these first; this guards the gap
             // before the next watch tick lands.
             if (!speechSettled()) {
+              endReleasedTurn();
               captureRef.current?.setPaused?.(true);
               mutedRef.current = true;
               // The watch reads this for the 60 s backstop: stamp it on
@@ -1167,12 +1825,26 @@ export function TapToTalk() {
               return;
             }
             framesOut += 1;
-            pending.push(frame.slice());
-            // Stream each frame live and keep it buffered for replay or POST fallback.
+            // Buffer every frame for the reconnect replay; nothing rides
+            // until the hold released the turn, so a blip never leaves the
+            // device and no socket opens for it.
             const transport = transports.get(currentId);
             if (transport && !transport.failed) {
-              if (countVoiced(frame)) transport.voiced += 1;
+              const voicedNow = countVoiced(frame);
+              if (voicedNow) transport.voiced += 1;
+              // Sliding hold: 8 of the last 10 frames above the VAD line.
+              // Cumulative counts let room noise through; the window does not.
+              transport.recent.push(voicedNow);
+              if (transport.recent.length > 10) transport.recent.shift();
               transport.frames.push(frame.slice());
+              if (!transport.released) {
+                const loud = transport.recent.filter(Boolean).length;
+                if (loud >= 8) {
+                  releaseTurn();
+                } else {
+                  return;
+                }
+              }
               if (
                 convOpen &&
                 convSocket &&
@@ -1182,16 +1854,7 @@ export function TapToTalk() {
                   sendFrameBytes(convSocket, frame);
                   transport.conv = true;
                 } catch {
-                  /* endTurnTransport falls back to POST */
-                }
-                return;
-              }
-              const socket = transport.socket;
-              if (socket && socket.readyState === WebSocket.OPEN) {
-                try {
-                  sendFrameBytes(socket, frame);
-                } catch {
-                  /* the close handler decides: reconnect or fail */
+                  /* the close handler reschedules the reconnect */
                 }
               }
             }
@@ -1201,15 +1864,21 @@ export function TapToTalk() {
             // Strict turns: speech only starts while she is silent (capture
             // runs muted otherwise), so there is nothing to interrupt and
             // her text stays put.
-            valeStoreRef.current.set("hearing");
+            valeStoreRef.current.set("listening");
             window.clearTimeout(quietTimerRef.current);
             // A new utterance after a posted turn opens the next turn on the same capture.
-            if (posted) openTurn(false);
-            // Without a conversation socket, open one per turn so the
-            // ~0.9 s handshake hides inside the utterance.
-            if (!convOpen) openTurnSocket(currentId);
+            // After a cut the remainder is still draining: wait for the pause.
+            if (posted && !droppedRef.current) openTurn(false);
+            // The turn socket opens at the 300 ms release, not here: a blip
+            // never leaves the device, so it must not open anything either.
           },
           onSpeechEnd: (utterance?: UtteranceStats) => {
+            // The pause after a cut: the remainder drained, open fresh.
+            if (droppedRef.current && sessionRef.current) {
+              openTurn(false);
+              armQuiet();
+              return;
+            }
             if (!sessionRef.current || posted) return;
             posted = true;
             // Delivery accounting for this utterance (blocks lost under
@@ -1222,17 +1891,13 @@ export function TapToTalk() {
             // (the server only stamps attention on executed turns and replies).
             const transport = transports.get(currentId);
             if ((transport?.voiced ?? 0) * FRAME_MS < MIN_VOICED_MS) {
-              if (transport) {
-                transport.failed = true;
-                const socket = transport.socket;
-                if (socket) {
-                  try {
-                    socket.close();
-                  } catch {
-                    /* already closed */
-                  }
-                }
-              }
+              // Somebody spoke but nothing posted: say so, then listen.
+              valeStoreRef.current.set("error");
+              window.clearTimeout(dropTimerRef.current);
+              dropTimerRef.current = window.setTimeout(() => {
+                if (sessionRef.current) valeStoreRef.current.set("listening");
+              }, 2000);
+              if (transport) transport.failed = true;
               removeTurn(currentId);
               openTurn(false);
               return;
@@ -1257,17 +1922,38 @@ export function TapToTalk() {
               null,
             );
           },
+          // The detector is about to reset: close the released segment
+          // with endStream first, or its ending rides nowhere.
+          onInterrupt: () => {
+            if (!sessionRef.current) return;
+            endReleasedTurn();
+          },
         // Threshold 200 with 1 s pre-roll; the end silence comes from
-        // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
+        // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 1000 ms).
         };
         castVoteRef.current = castVote;
-      beginCapture();
+        sendTypedRef.current = sendTyped;
+        // /voice first: without it nothing is captured and the session ends
+        // here with a visible error, never a POST.
+        openConvSocket();
+        if (!(await convReady(2000))) {
+          endSessionWithAlert(
+            turnErrorText("lost", languageRef.current),
+            "E-NET",
+          );
+          return;
+        }
+        await beginCapture();
       // A stall resumes alone: no audio blocks for STALL_MS restarts
       // capture on the same stream instead of ending the session. The mic
       // stream itself dead is the only honest alert left.
       watchdogRef.current = window.setInterval(() => {
-        if (!sessionRef.current) return;
-        if (Date.now() - lastBeatAt < STALL_MS) return;
+        void (async () => {
+          if (!sessionRef.current) return;
+          // Her voice owns the session: the context is suspended on
+          // purpose, so rebuilding here would yank her audio mid-reply.
+          if (mutedRef.current) return;
+          if (Date.now() - lastBeatAt < STALL_MS) return;
         const tracks =
           typeof stream.getTracks === "function" ? stream.getTracks() : [];
         const micLive =
@@ -1282,13 +1968,15 @@ export function TapToTalk() {
         }
         logClientState("stall-restart");
         try {
-          beginCapture();
+          endReleasedTurn();
+          await beginCapture();
         } catch {
           endSessionWithAlert(
             turnErrorText("suspended", languageRef.current),
             null,
           );
         }
+        })();
       }, 2000);
       // Hidden tabs stop the processor on some platforms: log the state on
       // every change and re-check on return; the watchdog restarts a stall.
@@ -1314,12 +2002,11 @@ export function TapToTalk() {
             convSocket.send(JSON.stringify({ type: "language", language: next }));
           }
         } catch {
-          /* the next turn carries the language frame instead */
+          /* the next endStream carries the fresh language instead */
         }
       };
       languageHandlerRef.current = onLanguage;
       window.addEventListener("vale-language", onLanguage);
-      openConvSocket();
       openTurn();
       await ended;
       clearCaptureWatch();
@@ -1330,7 +2017,10 @@ export function TapToTalk() {
       pruneIfEmpty,
       endSessionWithAlert,
       clearCaptureWatch,
+      clearWidgetTimer,
       clientId,
+      handleWidget,
+      settleToListening,
     ],
   );
 
@@ -1338,25 +2028,24 @@ export function TapToTalk() {
     if (status === "requesting") return;
     // In-gesture audio unlock: resume() after the getUserMedia await below
     // no longer counts as a gesture on iOS and the mic delivers zeros.
+    // The same gesture primes both speech paths, or iOS Safari stays
+    // muted for the later out-of-gesture speak()/play() calls.
     try {
       unlockAudioContext();
+      primeSpokenAudio();
     } catch {
       /* startCapture throws the clear error when unsupported */
     }
     if (status === "live" || status === "error") {
       stopSession();
       setAlert(null);
-      setAlertCode(null);
       setNotice(null);
-      setNoticeCode(null);
       setLevel(0);
       setBoard(null);
       return;
     }
     setAlert(null);
-    setAlertCode(null);
     setNotice(null);
-    setNoticeCode(null);
     setLevel(0);
     setStatus("requesting");
     try {
@@ -1367,12 +2056,36 @@ export function TapToTalk() {
         },
       });
       streamRef.current = stream;
+      // Muted before the session exists: start with the tracks already
+      // disabled so the session opens deaf. Read the ref: state may have
+      // changed while getUserMedia was in flight.
+      if (micMutedRef.current) {
+        setMicTracksEnabled(false);
+      }
+      // Mic rate evidence: a rate surprise (headset, dock) reads here.
+      try {
+        const rate = stream.getAudioTracks()[0]?.getSettings?.()?.sampleRate;
+        trackRateRef.current =
+          typeof rate === "number" && Number.isFinite(rate) ? rate : null;
+      } catch {
+        trackRateRef.current = null;
+      }
       setStatus("live");
       void runSession(stream);
     } catch (error) {
       setStatus(isPermissionDenied(error) ? "blocked" : "error");
     }
-  }, [status, stopSession, runSession]);
+  }, [status, stopSession, runSession, setMicTracksEnabled]);
+
+  // "Wake Vale" is the browser's mic gesture: the home screen mounts this
+  // already awake, so the tap that woke her starts the session at once.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (autoStart && !autoStartedRef.current && status === "idle") {
+      autoStartedRef.current = true;
+      void handleTap();
+    }
+  }, [autoStart, status, handleTap]);
 
   const toggleEngine = useCallback(() => {
     const next: VoiceEngine = engine === "seamless" ? "browser" : "seamless";
@@ -1380,140 +2093,87 @@ export function TapToTalk() {
     stopSpeaking("engine-switch");
     setEngine(next);
   }, [engine]);
+  // Seamless active at load: wake the container once; the browser voice
+  // covers every line until it answers, so Vale never goes mute.
+  useEffect(() => {
+    warmupSeamless();
+  }, []);
+
+  const mode = useScreenMode();
+
+  // Dialogue bubbles for the awake screen: the user line grows in its own
+  // bubble, Vale's reply grows with the deltas; the screen shows the last 3.
+  // Ignored turns never reach the screens (not even as a label).
+  const bubbles: AwakeBubble[] = [];
+  for (const turn of turns) {
+    if (turn.ignored) continue;
+    const text = turn.final ?? turn.interim;
+    if (text.trim() !== "") {
+      const live = turn.final == null && (turn.interim?.trim() ?? "") !== "";
+      bubbles.push({ id: `turn-${turn.id}-user`, text, from: "user" as const, ...(live ? { live: true as const } : {}) });
+    }
+    if (turn.reply?.trim()) {
+      bubbles.push({ id: `turn-${turn.id}-vale`, text: turn.reply, from: "vale" });
+    }
+  }
+
+  // Startup mic errors used to render in the debug view: with it gone the
+  // real screens carry them, or a denied mic fails silently.
+  const startupAlert =
+    status === "blocked"
+      ? `${ui.micBlockedLead} ${ui.micBlockedIPhone} ${ui.micBlockedChrome}`
+      : status === "error"
+        ? ui.micError
+        : null;
+  const shownAlert = alert ?? startupAlert;
+
+  const session = board?.session ?? null;
+  if (session) {
+    return (
+      <SessionScreen
+        mode={mode}
+        robotState={valeUiState}
+        level={valeUiState === "listening" ? level : undefined}
+        bubbles={bubbles}
+        widget={widget}
+        language={language}
+        session={session}
+        muted={muted}
+        micMuted={micMuted}
+        typedField={typedField}
+        notice={notice}
+        alert={shownAlert}
+        onToggleMute={toggleMute}
+        onToggleMicMute={toggleMicMute}
+        onSleep={sleep}
+        onOpenWidget={openWidget}
+        onCloseWidget={closeWidgetByHand}
+        onVote={(vote) => castVoteRef.current(vote)}
+        sheetCallbacks={sheetCallbacks}
+      />
+    );
+  }
 
   return (
-    <section>
-      <button
-        type="button"
-        onClick={handleTap}
-        disabled={status === "requesting"}
-      >
-        {status === "live"
-          ? ui.stop
-          : status === "requesting"
-            ? ui.waiting
-            : ui.tapToTalk}
-      </button>{" "}
-      <button
-        type="button"
-        onClick={toggleEngine}
-        aria-pressed={engine === "seamless"}
-        aria-label={
-          engine === "seamless"
-            ? "Use browser voice"
-            : "Use Seamless voice"
-        }
-        title={
-          engine === "seamless"
-            ? "Use browser voice"
-            : "Use Seamless voice"
-        }
-      >
-        <SpeakerIcon /> Voice: {engine === "seamless" ? "Seamless" : "browser"}
-      </button>{" "}
-      <fieldset>
-        <legend>{ui.language}</legend>{" "}
-        <label>
-          <input
-            type="radio"
-            aria-label="English"
-            name="vale-language"
-            value="en"
-            checked={language === "en"}
-            onChange={() => switchLanguage("en")}
-          />{" "}
-          EN
-        </label>{" "}
-        <label>
-          <input
-            type="radio"
-            aria-label="Español"
-            name="vale-language"
-            value="es"
-            checked={language === "es"}
-            onChange={() => switchLanguage("es")}
-          />{" "}
-          ES
-        </label>
-      </fieldset>{" "}
-      <VoiceControls language={language} />
-
-      {status === "live" && <LevelMeter level={level} />}
-
-      {status === "live" && <p role="status">{ui.valeState(valeUiState)}</p>}
-
-      {status === "live" &&
-        turns.every((turn) => !hasVisibleContent(turn)) &&
-        !notice && (
-          <p>{ui.listenHint}</p>
-        )}
-
-      <ol aria-label="Conversation turns">
-        {turns.filter(hasVisibleContent).map((turn) => (
-          <li
-            key={turn.id}
-            style={turn.ignored ? { opacity: 0.6 } : undefined}
-          >
-            {turn.ignored ? (
-              <p>
-                {turn.final ?? turn.interim}{" "}
-                <small>
-                  {ui.ignoredTag}
-                </small>
-              </p>
-            ) : (
-              <>
-                {(turn.final ?? turn.interim) !== "" && (
-                  <p>
-                    <strong>You:</strong> {turn.final ?? turn.interim}
-                  </p>
-                )}
-                {turn.reply && (
-                  <p>
-                    <strong>Vale:</strong> {turn.reply}
-                  </p>
-                )}
-              </>
-            )}
-          </li>
-        ))}
-      </ol>
-
-      <ValeBoard board={board} language={language} />
-
-      {widget && (
-        <WidgetCard
-          widget={widget}
-          language={language}
-          onVote={(vote) => castVoteRef.current(vote)}
-        />
-      )}
-
-      {notice && <p role="status">{notice}</p>}
-
-      {alert && <div role="alert">{alert}</div>}
-
-      {status === "blocked" && (
-        <div role="alert">
-          <p>{ui.micBlockedLead}</p>
-          <ul>
-            <li>
-              iPhone (Safari): open Settings &gt; Safari &gt; Microphone and
-              choose Allow, then come back and tap again.
-            </li>
-            <li>
-              Chrome: tap the lock (or tune) icon left of the address bar,
-              choose Microphone &gt; Allow, then tap again.
-            </li>
-          </ul>
-        </div>
-      )}
-
-      {status === "error" && !alert && (
-        <div role="alert">
-          <p>{ui.micError}</p>
-        </div>
-      )}
-    </section>
+    <AwakeScreen
+      mode={mode}
+      robotState={valeUiState}
+      level={valeUiState === "listening" ? level : undefined}
+      bubbles={bubbles}
+      widget={widget}
+      language={language}
+      muted={muted}
+      micMuted={micMuted}
+      typedField={typedField}
+      notice={notice}
+      alert={shownAlert}
+      onToggleMute={toggleMute}
+      onToggleMicMute={toggleMicMute}
+      onSleep={sleep}
+      onCloseWidget={closeWidgetByHand}
+      onVote={(vote) => castVoteRef.current(vote)}
+      sheetCallbacks={sheetCallbacks}
+    />
   );
 }
+

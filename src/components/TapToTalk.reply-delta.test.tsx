@@ -62,7 +62,7 @@ function stubSessionOnce() {
         onSpeechEnd: callbacks.onSpeechEnd,
       };
     }
-    return { stop: () => {}, state: () => "running" };
+    return { stop: () => {}, state: () => "running", engine: () => "script" as const };
   });
 }
 
@@ -86,17 +86,16 @@ describe("reply streaming (transient output fix)", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("no post", { status: 500 })));
     stubSessionOnce();
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
-    await waitFor(() => {
-      expect(driver).not.toBeNull();
-    });
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
     // The conversation socket is up before speech: no per-turn socket.
     FakeWs.instances[0].open();
     const ws = FakeWs.instances[0];
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
     driver!.onFrame(speechFrame());
     driver!.onSpeechStart();
     for (let i = 0; i < 8; i += 1) driver!.onFrame(speechFrame());

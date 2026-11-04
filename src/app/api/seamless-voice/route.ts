@@ -1,8 +1,9 @@
 export const runtime = "nodejs";
 
-const SEAMLESS_URL =
-  "https://danielmartinezsarta--vale-seamless-tts-web-speak.us-east.modal.run";
-const DEFAULT_SPEAKER = 10;
+/** The open-model voice lives only in the server env: zero URLs in code. */
+const DEFAULT_SPEAKER = 17;
+/** Seconds of synthesis above which the container is assumed cold-started. */
+const COLD_START_SECONDS = 10;
 const MAX_SPEAKER = 199;
 const MAX_CHARS = 500;
 const LIMIT_PER_MINUTE = 30;
@@ -36,7 +37,7 @@ function pickSpeaker(param: string | null): number {
   return Math.min(MAX_SPEAKER, Math.max(0, parsed));
 }
 
-// Same-origin proxy for the Seamless voice demo (speaker 10 by default):
+// Same-origin proxy for the Seamless voice demo (speaker 17 by default):
 // the demo has no CORS open for the preview domain, and the key (if ever
 // needed) stays server-side.
 export async function GET(request: Request): Promise<Response> {
@@ -46,6 +47,13 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: "Missing text." }, { status: 400 });
   }
   const speaker = pickSpeaker(searchParams.get("speaker"));
+  const seamlessUrl = (process.env.SEAMLESS_URL ?? "").trim();
+  if (seamlessUrl === "") {
+    return Response.json(
+      { error: "Seamless voice is not configured.", code: "E-NET" },
+      { status: 503 },
+    );
+  }
   if (overLimit(clientIp(request))) {
     return Response.json(
       {
@@ -55,10 +63,11 @@ export async function GET(request: Request): Promise<Response> {
       { status: 429 },
     );
   }
+  const startedAt = Date.now();
   let upstream: Response;
   try {
     upstream = await fetch(
-      `${SEAMLESS_URL}?speaker=${speaker}&text=${encodeURIComponent(text)}`,
+      `${seamlessUrl}?speaker=${speaker}&text=${encodeURIComponent(text)}`,
     );
   } catch {
     return Response.json(
@@ -79,5 +88,14 @@ export async function GET(request: Request): Promise<Response> {
   });
   const synthesis = upstream.headers.get("X-Synthesis-Seconds");
   if (synthesis) headers.set("X-Synthesis-Seconds", synthesis);
+  const synthesisSecs = synthesis === null ? NaN : Number(synthesis);
+  const warmth = !Number.isFinite(synthesisSecs)
+    ? "unknown"
+    : synthesisSecs > COLD_START_SECONDS
+      ? "cold"
+      : "warm";
+  console.log(
+    `[seamless-voice] engine=seamless speaker=${speaker} synthesisS=${synthesis ?? "?"} ${warmth} totalMs=${Date.now() - startedAt}`,
+  );
   return new Response(audio, { headers });
 }

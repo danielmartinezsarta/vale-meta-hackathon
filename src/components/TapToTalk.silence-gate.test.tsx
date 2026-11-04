@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -27,7 +28,7 @@ function stubSessionOnce() {
         onSpeechEnd: callbacks.onSpeechEnd,
       };
     }
-    return { stop: () => {}, state: () => "running" };
+    return { stop: () => {}, state: () => "running", engine: () => "script" as const };
   });
 }
 
@@ -39,47 +40,41 @@ function silentFrame(): Int16Array {
   return new Int16Array(960).fill(0);
 }
 
-function sseVadNotice() {
-  const raw =
-    `event: notice\ndata: {"message":"I didn't hear you. Speak, I'm listening.","code":"E-VAD"}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
+// The server no longer sends E-VAD notices; feeding one proves the client
+// ignores it instead of showing a banner.
+function answerIgnoredNotice() {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({
+    type: "notice",
+    message: "I didn't hear you. Speak, I'm listening.",
+    code: "E-VAD",
+  });
+  ws.serverMessage({ type: "done" });
 }
 
-function sseReply(text: string) {
-  const raw =
-    `event: reply\ndata: {"text":${JSON.stringify(text)}}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
+function answerReply(text: string) {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({ type: "reply", text });
+  ws.serverMessage({ type: "done" });
 }
 
-const LISTENING_HINT = "Your microphone is on. Go ahead, I'm listening.";
+function answerIgnoredTurn(transcript: string) {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({ type: "transcript", transcript, final: true });
+  ws.serverMessage({ type: "ignored" });
+  ws.serverMessage({ type: "done" });
+}
+
+async function waitForEndStream(count: number) {
+  await waitFor(() => {
+    const ends = FakeVoiceSocket.instances[0]
+      .sentStrings()
+      .filter((raw) => raw.includes("endStream")).length;
+    expect(ends).toBeGreaterThanOrEqual(count);
+  });
+}
+
+const LISTENING_HINT = "Listening";
 const VAD_BANNER_TEXT = "didn't hear you";
 
 function vadBanner(): HTMLElement | null {
@@ -96,27 +91,52 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("silence-aware E-VAD banner (fix 3)", () => {
+describe("silence never banners (vad-continue removed)", () => {
+  it("a discarded turn never seeds the silence banner", async () => {
+    vi.stubEnv("NEXT_PUBLIC_QUIET_WINDOW_MS", "100");
+    try {
+      vi.stubGlobal("navigator", {
+        mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
+      });
+      stubVoiceSocket();
+      const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
+      vi.stubGlobal("fetch", fetchMock);
+      stubSessionOnce();
+
+      render(<TapToTalk autoStart />);
+      await waitFor(() => {
+        expect(driver).not.toBeNull();
+      });
+
+      // One silent window: the streak sits at 1.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      // A heard-but-discarded turn: voice frames in, server ignores it.
+      driver!.onFrame(voiceFrame());
+      driver!.onSpeechStart();
+      for (let i = 0; i < 8; i += 1) driver!.onFrame(voiceFrame());
+      driver!.onSpeechEnd();
+      await waitForEndStream(1);
+      answerIgnoredTurn("background chat here");
+      // Let the done event re-arm the window before measuring it.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      // One more silent window: the discard reset the streak, so no banner.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(vadBanner()).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it("drops silent blips locally: no post, no banner, session alive", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
-    // No real sockets in tests: Node's WebSocket would dial localhost:3000,
-    // so hide it and force the buffered-POST fallback path under test.
-    vi.stubGlobal("WebSocket", undefined);
-    // First posted turn gets a reply, later ones the E-VAD notice.
-    const bodies = [sseReply("Done."), sseVadNotice(), sseVadNotice()];
-    const fetchMock = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        body: bodies[Math.min(fetchMock.mock.calls.length, 2)],
-      }),
-    );
+    stubVoiceSocket();
+    const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
     stubSessionOnce();
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(driver).not.toBeNull();
     });
@@ -134,38 +154,38 @@ describe("silence-aware E-VAD banner (fix 3)", () => {
       driver!.onSpeechEnd();
     };
 
-    // A voiced turn posts and answers as usual.
+    // A voiced turn rides the socket and answers as usual.
     speak(voiceFrame());
+    await waitForEndStream(1);
+    answerReply("Done.");
+    // Settled back to listening with the reply bubble standing.
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-    await waitFor(() => {
-      expect(screen.getByText(LISTENING_HINT)).toBeTruthy();
+      expect(screen.getByText("Listening")).toBeTruthy();
     });
     expect(vadBanner()).toBeNull();
 
-    // Silent blips never leave the device: no post, no banner, no alert.
+    // Silent blips never leave the device: no socket traffic, no banner.
     blip();
     blip();
     await waitFor(() => {
-      expect(screen.getByText(LISTENING_HINT)).toBeTruthy();
+      expect(screen.getByText("Listening")).toBeTruthy();
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(vadBanner()).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
 
-    // The next voiced turn still posts on a fresh turn.
+    // The next voiced turn still rides on a fresh turn.
     speak(voiceFrame());
+    await waitForEndStream(2);
+    answerIgnoredNotice();
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("Listening")).toBeTruthy();
     });
-    await waitFor(() => {
-      expect(screen.getByText(LISTENING_HINT)).toBeTruthy();
-    });
+    expect(fetchMock).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
   });
 });

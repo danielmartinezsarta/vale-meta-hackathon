@@ -22,10 +22,10 @@ describe("interface dictionary", () => {
   it("names every Vale state in both languages with no empties", () => {
     const states = [
       "idle",
-      "attentive",
-      "hearing",
+      "listening",
       "thinking",
       "speaking",
+      "done",
       "error",
     ] as const;
     for (const language of ["en", "es"] as const) {
@@ -34,7 +34,8 @@ describe("interface dictionary", () => {
         expect(ui.valeState(state).trim(), `${language}.${state}`).not.toBe("");
       }
     }
-    expect(uiStrings("en").valeState("attentive")).toBe("Listening");
+    expect(uiStrings("en").valeState("listening")).toBe("Listening");
+    expect(uiStrings("en").valeState("done")).toBe("Done");
     expect(uiStrings("es").valeState("speaking")).toBe("Hablando");
   });
 });

@@ -7,6 +7,30 @@ export type ValeLanguage = "es" | "en";
 
 export const DEFAULT_LANGUAGE: ValeLanguage = "en";
 
+/** Persisted screen language: the menu selector survives reloads, EN default. */
+const LANGUAGE_KEY = "vale-language";
+
+export function storedLanguage(): ValeLanguage {
+  try {
+    return window.localStorage.getItem(LANGUAGE_KEY) === "es" ? "es" : "en";
+  } catch {
+    return "en";
+  }
+}
+
+export function storeLanguage(next: ValeLanguage): void {
+  try {
+    window.localStorage.setItem(LANGUAGE_KEY, next);
+  } catch {
+    /* private mode: the session still switches for this visit */
+  }
+  try {
+    window.dispatchEvent(new CustomEvent<ValeLanguage>("vale-language", { detail: next }));
+  } catch {
+    /* the next turn carries the language frame instead */
+  }
+}
+
 /** Unknown or missing values fall back to English; the set stays closed. */
 export function parseLanguage(value: unknown): ValeLanguage {
   return value === "es" ? "es" : "en";
@@ -17,9 +41,7 @@ export type VoiceErrorKind =
   | "timeout"
   | "lost"
   | "model"
-  | "suspended"
-  | "vad-tap"
-  | "vad-continue";
+  | "suspended";
 
 const ERROR_TEXT: Record<VoiceErrorKind, Record<ValeLanguage, string>> = {
   setup: {
@@ -41,14 +63,6 @@ const ERROR_TEXT: Record<VoiceErrorKind, Record<ValeLanguage, string>> = {
   suspended: {
     es: "El micrófono no arrancó. Toca para intentar de nuevo.",
     en: "The microphone did not start. Tap to try again.",
-  },
-  "vad-tap": {
-    es: "No te escuché. Toca y habla.",
-    en: "I didn't hear you. Tap and speak.",
-  },
-  "vad-continue": {
-    es: "No te escuché. Habla y te escucho.",
-    en: "I didn't hear you. Speak, I'm listening.",
   },
 };
 

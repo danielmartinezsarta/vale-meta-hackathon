@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
+import type { CaptureCallbacks } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
   startCapture: vi.fn(),
@@ -9,28 +11,25 @@ vi.mock("@/lib/capture", () => ({
 
 const mockStartCapture = vi.mocked(startCapture);
 
-function sseTurn(final: string, reply: string): { getReader: () => {
-  read: () => Promise<{ done: boolean; value?: Uint8Array }>;
-  releaseLock: () => void;
-} } {
-  const raw =
-    `event: final\ndata: {"transcript":${JSON.stringify(final)},"audioProcessedMs":800}\n\n` +
-    `event: reply\ndata: {"text":${JSON.stringify(reply)}}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
+function burst(callbacks: CaptureCallbacks) {
+  const frame = new Int16Array(960).fill(4000);
+  callbacks.onFrame(frame);
+  callbacks.onSpeechStart();
+  for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
+  callbacks.onSpeechEnd();
+}
+
+function answerTurn(final: string, reply: string) {
+  const ws = FakeVoiceSocket.instances[0];
+  ws.serverMessage({ type: "transcript", transcript: final, final: true });
+  ws.serverMessage({ type: "reply", text: reply });
+  ws.serverMessage({ type: "done" });
+}
+
+function endStreamCount() {
+  return FakeVoiceSocket.instances[0]
+    .sentStrings()
+    .filter((raw) => raw.includes("endStream")).length;
 }
 
 afterEach(() => {
@@ -45,25 +44,12 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia },
     });
-    // No real sockets in tests: Node's WebSocket would dial localhost:3000,
-    // so hide it and force the buffered-POST fallback path under test.
-    vi.stubGlobal("WebSocket", undefined);
+    stubVoiceSocket();
 
-    // Six bursts: five turns plus a sixth whose fetch hangs.
+    const seen: CaptureCallbacks[] = [];
     mockStartCapture.mockImplementation((_stream, callbacks) => {
-      const frame = new Int16Array(960).fill(4000);
-      let fired = 0;
-      const fireNext = () => {
-        if (fired >= 6) return;
-        fired += 1;
-        callbacks.onFrame(frame);
-        callbacks.onSpeechStart();
-        for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
-        callbacks.onSpeechEnd();
-        window.setTimeout(fireNext, 10);
-      };
-      window.setTimeout(fireNext, 0);
-      return { stop: () => {}, state: () => "running" };
+      seen.push(callbacks);
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
     const script: [string, string][] = [
@@ -73,21 +59,23 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
       ["perfect", "You are booked in."],
       ["thanks bye", "See you soon."],
     ];
-    const fetchMock = vi.fn(() => {
-      const call = fetchMock.mock.calls.length;
-      if (call > script.length) {
-        return new Promise(() => {}); // sixth turn waits: session stays open
-      }
-      const [final, reply] = script[call - 1];
-      return Promise.resolve({ ok: true, body: sseTurn(final, reply) });
-    });
+    const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     expect(getUserMedia).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(seen.length).toBe(1);
+    });
 
+    let n = 0;
     for (const [final, reply] of script) {
+      burst(seen[0]);
+      n += 1;
+      await waitFor(() => {
+        expect(endStreamCount()).toBeGreaterThanOrEqual(n);
+      });
+      answerTurn(final, reply);
       await waitFor(() => {
         expect(screen.getByText(final)).toBeTruthy();
       });
@@ -95,17 +83,17 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
         expect(screen.getByText(reply)).toBeTruthy();
       });
     }
+    // Sixth burst with no answer: the session stays open, nothing posted.
+    burst(seen[0]);
 
-    expect(screen.getAllByText("You:")).toHaveLength(5);
-    expect(screen.getAllByText("Vale:")).toHaveLength(5);
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(6);
-    });
+    expect(screen.getAllByText("You:")).toHaveLength(1);
+    expect(screen.getAllByText("Vale:")).toHaveLength(2);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(getUserMedia).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
   });
 });

@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -27,7 +28,7 @@ function stubSession() {
       onSpeechEnd: callbacks.onSpeechEnd,
       onHeartbeat: callbacks.onHeartbeat,
     };
-    return { stop: () => {}, state: () => "running" };
+    return { stop: () => {}, state: () => "running", engine: () => "script" as const };
   });
 }
 
@@ -43,15 +44,13 @@ async function tapToTalk() {
   vi.stubGlobal("navigator", {
     mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
   });
-  // No real sockets in tests: hide WebSocket to force the POST path.
-  vi.stubGlobal("WebSocket", undefined);
+  stubVoiceSocket();
   vi.stubGlobal(
     "fetch",
     vi.fn(() => new Promise(() => {})),
   );
   stubSession();
-  render(<TapToTalk />);
-  fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+  render(<TapToTalk autoStart />);
   // Flush the async getUserMedia continuation: advance(0) alone does not
   // commit the live render once the session owns more than one interval,
   // so run past the first session tick (no turn effects at this silence).
@@ -60,7 +59,7 @@ async function tapToTalk() {
 
 function sessionAlive() {
   expect(
-    screen.getByRole("button", { name: "Stop" }),
+    screen.getByRole("button", { name: "Put Vale to sleep" }),
   ).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
 }
@@ -103,6 +102,28 @@ describe("capture stall watchdog (lead round p1)", () => {
     await vi.advanceTimersByTimeAsync(6500);
     expect(mockStartCapture).toHaveBeenCalledTimes(2);
     sessionAlive();
+  });
+
+  it("a stall closes the released segment with endStream before restarting", async () => {
+    vi.useFakeTimers();
+    try {
+      await tapToTalk();
+      expect(mockStartCapture).toHaveBeenCalledTimes(1);
+      // A released segment is in flight when the processor dies: the
+      // restart must not strand it without its endStream.
+      const voiced = new Int16Array(960).fill(4000);
+      driver?.onSpeechStart();
+      for (let i = 0; i < 8; i += 1) driver?.onFrame(voiced);
+      await vi.advanceTimersByTimeAsync(6500);
+      const ends = FakeVoiceSocket.instances[0]
+        .sent.filter((item): item is string => typeof item === "string")
+        .filter((raw) => raw.includes("endStream")).length;
+      expect(ends).toBe(1);
+      expect(mockStartCapture).toHaveBeenCalledTimes(2);
+      sessionAlive();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a hidden tab logs capture state and the session survives", async () => {

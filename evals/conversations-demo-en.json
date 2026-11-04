@@ -1,0 +1,22 @@
+{
+ "conversations": [
+  {
+   "id": "D1",
+   "goal": "demo script in English with David: agenda, card, session, supply, quote accept, booking, notes, undo, close, goal",
+   "turns": [
+    "Hi Vale, what do we have today?",
+    "David is here, what do I have on him?",
+    "Open a session with David",
+    "I used gold foil",
+    "How much do I charge?",
+    "yes",
+    "Book him for next Friday at 5 PM",
+    "Vale, add a note for David: he likes neon colors",
+    "Vale, add a note for David: he is allergic to monomer",
+    "undo that",
+    "Close the session",
+    "How am I doing with this month's goal?"
+   ]
+  }
+ ]
+}

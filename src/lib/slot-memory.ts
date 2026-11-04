@@ -55,7 +55,7 @@ export function updateSlotsFromTool(
 ): void {
   if (!ok) return;
   switch (toolName) {
-    case "open_session": {
+    case "session_open": {
       const client = clean(args.client_name);
       const service = clean(args.service_name);
       if (client !== undefined || service !== undefined) {
@@ -63,24 +63,25 @@ export function updateSlotsFromTool(
       }
       return;
     }
-    case "create_client": {
+    case "client_create": {
       const client = clean(args.name);
       if (client !== undefined) merge(key, { client });
       return;
     }
-    case "find_client": {
+    case "client_card_show":
+    case "client_summary": {
       const named =
-        clean((data as { name?: unknown } | undefined)?.name) ??
+        clean((data as { card?: { name?: unknown } } | undefined)?.card?.name) ??
         clean(args.name);
       if (named !== undefined) merge(key, { client: named });
       return;
     }
-    case "add_note": {
+    case "client_note_add": {
       const client = clean(args.client_name);
       if (client !== undefined) merge(key, { client });
       return;
     }
-    case "close_session":
+    case "session_close":
       clearSlots(key);
       return;
     default:

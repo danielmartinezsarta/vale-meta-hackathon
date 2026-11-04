@@ -1,13 +1,17 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import {
+  canonicalizeWakeWord,
   checkWake,
+  isBareNameCall,
+  isCloseSheetIntent,
   isGreetingOnly,
   isUndoIntent,
   languageMismatch,
   namesVale,
   requestClientId,
   sanitizeClientId,
+  shouldCutPhrase,
   wakeWords,
 } from "./wake";
 
@@ -15,21 +19,24 @@ describe("wake word gate", () => {
   it("names Vale with case, accents and punctuation around it", () => {
     expect(namesVale("vale, abre una sesión")).toBe(true);
     expect(namesVale("¿Vale?")).toBe(true);
-    expect(namesVale("Sì, vale")).toBe(true);
+    expect(namesVale("Sì, vale")).toBe(false);
     expect(namesVale("hola")).toBe(false);
     expect(namesVale("chavales")).toBe(false);
     expect(namesVale("")).toBe(false);
   });
 
-  it("hears Vale in any of the first three words, in either language", () => {
+  it("wakes on position: sentence-start Vale, opener handoff, or comma", () => {
     expect(namesVale("vale, sí agrégalo")).toBe(true);
     expect(namesVale("thanks, Vale")).toBe(true);
     expect(namesVale("okay, Vale")).toBe(true);
     expect(namesVale("hey Bale")).toBe(true);
+    // A vocative comma addresses her whatever the language: exact "vale"
+    // takes every trigger its variants take, plus the sentence start.
     expect(namesVale("sí, vale, agrégalo")).toBe(true);
-    expect(namesVale("Hola Vale")).toBe(true);
+    expect(namesVale("Yes, Vale, book it")).toBe(true);
+    expect(namesVale("Hola Vale")).toBe(false);
     expect(namesVale("Oye Vale, abre sesión")).toBe(true);
-    expect(namesVale("Buenas Vale")).toBe(true);
+    expect(namesVale("Buenas Vale")).toBe(false);
     expect(namesVale("oye por favor Vale abre")).toBe(false);
     expect(checkWake("thanks, Vale", "ip-confirm", 1000).execute).toBe(true);
     expect(
@@ -44,16 +51,45 @@ describe("wake word gate", () => {
     expect(verdict.gate).toBe("nombre");
   });
 
-  it("hears the measured ASR spellings of the wake word", () => {
-    expect(namesVale("Balle, repeat that please")).toBe(true);
+  it("hears the one list by position, never by vocabulary alone", () => {
+    expect(namesVale("Balle, repeat that please")).toBe(false);
     expect(namesVale("Thanks, Bali. That's all.")).toBe(true);
     expect(namesVale("Vale, open a session")).toBe(true);
-    // A positional rule wakes on mentions inside the first three words:
-    // the accepted cost of no opener or greeting lists (lead call).
-    expect(namesVale("Bale nails are so trendy")).toBe(true);
-    expect(namesVale("Nails by Bale are trendy")).toBe(true);
-    expect(namesVale("the Vale shop")).toBe(true);
+    // Ballet is on the list: with a comma it wakes, bare it never does.
+    expect(namesVale("Ballet, remind me of her last service.")).toBe(true);
+    expect(namesVale("Ballet classes session")).toBe(false);
+    expect(namesVale("Ballot, repeat that please")).toBe(true);
+    expect(namesVale("Hey Valley, what do I have today?")).toBe(true);
+    expect(namesVale("valley nails are trendy")).toBe(false);
+    // The never-wake list: variants without comma or opener stay chatter.
+    expect(namesVale("Bali nails are so trendy now")).toBe(false);
+    expect(namesVale("bale broke a nail again")).toBe(false);
+    expect(namesVale("Bale nails are so trendy")).toBe(false);
+    expect(namesVale("Nails by Bale are trendy")).toBe(false);
+    expect(namesVale("the Vale shop")).toBe(false);
     expect(namesVale("chavales")).toBe(false);
+  });
+
+  it("canonicalizes the triggering name to Vale for the model and tools", () => {
+    expect(canonicalizeWakeWord("Ballet, open a session with Emma.")).toBe(
+      "Vale, open a session with Emma.",
+    );
+    expect(canonicalizeWakeWord("Bale, what can you do?")).toBe(
+      "Vale, what can you do?",
+    );
+    expect(canonicalizeWakeWord("Thanks, Bali. That's all.")).toBe(
+      "Thanks, Vale. That's all.",
+    );
+    expect(canonicalizeWakeWord("Hey Valley, what do I have today?")).toBe(
+      "Hey Vale, what do I have today?",
+    );
+    expect(canonicalizeWakeWord("Vale, open a session with Emma.")).toBe(
+      "Vale, open a session with Emma.",
+    );
+    expect(canonicalizeWakeWord("Bali nails are so trendy now")).toBe(
+      "Bali nails are so trendy now",
+    );
+    expect(canonicalizeWakeWord("the Vale shop")).toBe("the Vale shop");
   });
 
   it("accepts any request inside the window, not just continuations", () => {
@@ -258,5 +294,135 @@ describe("language gate (gate:idioma)", () => {
     expect(
       checkWake("vale abre sesion con Ana", "ip-lang-es", 1000, false, "es"),
     ).toMatchObject({ execute: true, gate: "nombre" });
+  });
+});
+
+describe("shouldCutPhrase (client-side early cut)", () => {
+  it("cuts a long unnamed phrase with no session and a closed window", () => {
+    expect(
+      shouldCutPhrase({
+        text: "I was talking to my neighbor about the appointment",
+        sessionOpen: false,
+        windowOpen: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("waits for the opening words before judging", () => {
+    expect(
+      shouldCutPhrase({
+        text: "I was talking",
+        sessionOpen: false,
+        windowOpen: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("never cuts a phrase that names her, however long", () => {
+    expect(
+      shouldCutPhrase({
+        text: "please book my neighbor Ana for a gel removal tomorrow Vale",
+        sessionOpen: false,
+        windowOpen: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldCutPhrase({
+        text: "Vale please book my neighbor Ana for a gel removal tomorrow",
+        sessionOpen: false,
+        windowOpen: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("stays off with a session open or the window open", () => {
+    const text = "I was talking to my neighbor about the appointment";
+    expect(
+      shouldCutPhrase({ text, sessionOpen: true, windowOpen: false }),
+    ).toBe(false);
+    expect(
+      shouldCutPhrase({ text, sessionOpen: false, windowOpen: true }),
+    ).toBe(false);
+  });
+});
+
+describe("sheet-open window (reading a sheet keeps her listening)", () => {
+  it("executes an unnamed turn while a sheet Vale opened is on screen", () => {
+    const at = 1_000_000;
+    expect(
+      checkWake("how much is this", "ip-sheet-1", at, false, "en", true),
+    ).toMatchObject({ execute: true, namedVale: false, gate: "ventana" });
+  });
+
+  it("ignores the same turn with no sheet and a closed window", () => {
+    const at = 1_000_000;
+    expect(
+      checkWake("how much is this", "ip-sheet-2", at, false, "en", false),
+    ).toMatchObject({ execute: false, gate: "ignorado" });
+  });
+});
+
+describe("isCloseSheetIntent (spoken sheet close)", () => {
+  it("catches the short close orders in both languages", () => {
+    expect(isCloseSheetIntent("close it")).toBe(true);
+    expect(isCloseSheetIntent("Vale, close the agenda")).toBe(true);
+    expect(isCloseSheetIntent("Ok vale, close de agenda")).toBe(true);
+    expect(isCloseSheetIntent("thanks, that's all")).toBe(true);
+    expect(isCloseSheetIntent("cierra la agenda")).toBe(true);
+    expect(isCloseSheetIntent("ciérrala, por favor")).toBe(true);
+    expect(isCloseSheetIntent("gracias, eso es todo")).toBe(true);
+  });
+
+  it("closes whatever sheet is open, by noun, in either language", () => {
+    expect(isCloseSheetIntent("close the schedule")).toBe(true);
+    expect(isCloseSheetIntent("Vale, close the schedule")).toBe(true);
+    expect(isCloseSheetIntent("can you close this table")).toBe(true);
+    expect(isCloseSheetIntent("close the photos")).toBe(true);
+    expect(isCloseSheetIntent("close the card")).toBe(true);
+    expect(isCloseSheetIntent("that's all")).toBe(true);
+    expect(isCloseSheetIntent("that's it, thanks")).toBe(true);
+    expect(isCloseSheetIntent("cierra la ficha")).toBe(true);
+    expect(isCloseSheetIntent("cierra eso")).toBe(true);
+  });
+
+  it("never mistakes the session for a sheet", () => {
+    expect(isCloseSheetIntent("close the session")).toBe(false);
+    expect(isCloseSheetIntent("Vale, close the session")).toBe(false);
+    expect(isCloseSheetIntent("cierra la sesión")).toBe(false);
+    expect(isCloseSheetIntent("close")).toBe(false);
+  });
+
+  it("leaves compound orders and negations to the model", () => {
+    expect(
+      isCloseSheetIntent("close the agenda and book Ana for tomorrow at five"),
+    ).toBe(false);
+    expect(isCloseSheetIntent("don't close it yet")).toBe(false);
+    expect(isCloseSheetIntent("no la cierres todavía")).toBe(false);
+    expect(isCloseSheetIntent("book Ana for tomorrow")).toBe(false);
+    expect(isCloseSheetIntent("")).toBe(false);
+  });
+});
+
+describe("bare name calls (trial 9.1)", () => {
+  it("spots the name alone, however the ASR spells it", () => {
+    expect(isBareNameCall("Vale")).toBe(true);
+    expect(isBareNameCall("vale")).toBe(true);
+    expect(isBareNameCall("valley")).toBe(true);
+    expect(isBareNameCall("vale,")).toBe(true);
+    expect(isBareNameCall("vale vale")).toBe(true);
+  });
+
+  it("ignores anything past the name", () => {
+    for (const turn of [
+      "",
+      "vale book Ana",
+      "vale, book Ana next Friday",
+      "5 PM for a gel removal",
+      "yes",
+      "no",
+      "hola",
+    ]) {
+      expect(isBareNameCall(turn)).toBe(false);
+    }
   });
 });

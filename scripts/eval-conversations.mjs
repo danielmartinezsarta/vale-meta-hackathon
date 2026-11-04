@@ -1,5 +1,5 @@
-// HACK-017 conversation eval runner. Usage:
-//   VALE_DB_PATH=data/eval.db node scripts/eval-hack017.mjs <server-url> <conversations.json> [--lang=es] [--server-log=path]
+// Conversation eval runner. Usage:
+//   VALE_DB_PATH=data/eval.db node scripts/eval-conversations.mjs <server-url> <conversations.json> [--lang=es] [--server-log=path]
 // Resets its OWN database file (VALE_DB_PATH, default data/eval.db: schema +
 // minimal invented services/supplies) and never touches the live data/vale.db.
 // Launch the server under test with the same VALE_DB_PATH. Runs every turn as
@@ -24,7 +24,7 @@ const dbFile = (() => {
 })();
 const [server, convFile] = process.argv.slice(2);
 if (!server || !convFile) {
-  console.error("usage: node scripts/eval-hack017.mjs <server-url> <conversations.json> [--lang=es] [--server-log=path]");
+  console.error("usage: node scripts/eval-conversations.mjs <server-url> <conversations.json> [--lang=es] [--server-log=path]");
   process.exit(1);
 }
 const lang = (process.argv.find((a) => a.startsWith("--lang=")) || "--lang=en").slice(7);

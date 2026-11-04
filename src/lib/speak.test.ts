@@ -9,14 +9,19 @@ import {
   getVoicePrefs,
   isSpeaking,
   loadVoicePrefs,
+  onSpeechSettled,
   pickVoice,
   preferredVoice,
   prosodyFor,
+  prosodyForVoice,
   setVoiceEngine,
   setVoiceForLanguage,
   setVoicePrefs,
+  drainSpeechEvents,
+  primeSpokenAudio,
   speak,
   speakStream,
+  speechSettled,
   splitSentences,
   spokenText,
   stopSpeaking,
@@ -30,6 +35,7 @@ function stubSpeechSynthesis(voices: SpeechSynthesisVoice[] = []) {
   const utterances: string[] = [];
   const synth = {
     cancel: vi.fn(),
+    resume: vi.fn(),
     getVoices: vi.fn(() => voices),
     speak: vi.fn((utterance: SpeechSynthesisUtterance) => {
       utterances.push(utterance.text);
@@ -53,6 +59,16 @@ function stubSpeechSynthesis(voices: SpeechSynthesisVoice[] = []) {
     writable: true,
   });
   return { synth, utterances };
+}
+
+/** Fire the utterance end the real voice reports (onend or onerror). */
+function fireUtteranceEnd(utterance: SpeechSynthesisUtterance): void {
+  const end = (
+    utterance as unknown as {
+      onend: ((this: unknown, ev: unknown) => void) | null;
+    }
+  ).onend;
+  end?.call(utterance, {});
 }
 
 afterEach(() => {
@@ -189,6 +205,11 @@ describe("seamless voice engine", () => {
       class {
         src: string;
         onended: (() => void) | null = null;
+        paused = false;
+        ended = false;
+        seeking = false;
+        readyState = 4;
+        currentTime = 0;
         constructor(src: string) {
           this.src = src;
           instances.push(this);
@@ -216,14 +237,55 @@ describe("seamless voice engine", () => {
     vi.stubGlobal("fetch", fetchStub);
     try {
       setVoiceEngine("seamless");
+      // The engine switch warms the container; the reply counts from here.
+      fetchStub.mockClear();
       speak("Hola, soy Vale.", "es");
       await vi.waitFor(() => {
         expect(played).toHaveLength(1);
       });
       const url = String(fetchStub.mock.calls[0][0]);
       expect(url).toContain("/api/seamless-voice");
-      expect(url).toContain("speaker=10");
+      expect(url).toContain("speaker=17");
       expect(url).toContain(encodeURIComponent("Hola, soy Vale."));
+    } finally {
+      setVoiceEngine("browser");
+    }
+  });
+
+  it("warms the container on switch without playing audio", async () => {
+    stubSpeechSynthesis();
+    const { played } = stubAudio();
+    const fetchStub = vi.fn(async (_url: unknown) => new Response(WAV));
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      setVoiceEngine("seamless");
+      await vi.waitFor(() => {
+        expect(fetchStub).toHaveBeenCalledTimes(1);
+      });
+      expect(String(fetchStub.mock.calls[0][0])).toContain("speaker=17");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(played).toHaveLength(0);
+    } finally {
+      setVoiceEngine("browser");
+    }
+  });
+
+  it("plays seamless audio slowed to 0.9 with the same pitch", async () => {
+    stubSpeechSynthesis();
+    const { played, instances } = stubAudio();
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown) => new Response(WAV)));
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.waitFor(() => {
+        expect(played).toHaveLength(1);
+      });
+      const audio = instances[0] as unknown as {
+        playbackRate: number;
+        preservesPitch: boolean;
+      };
+      expect(audio.playbackRate).toBe(0.9);
+      expect(audio.preservesPitch).toBe(true);
     } finally {
       setVoiceEngine("browser");
     }
@@ -244,6 +306,32 @@ describe("seamless voice engine", () => {
       });
     } finally {
       setVoiceEngine("browser");
+    }
+  });
+
+  it("falls back to the browser voice when the proxy hangs", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("es-CO")]);
+    stubAudio();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: unknown, options?: { signal?: AbortSignal }) =>
+          new Promise<Response>((_resolve, reject) => {
+            options?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError")),
+            );
+          }),
+      ),
+    );
+    vi.useFakeTimers();
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.advanceTimersByTimeAsync(22_000);
+      expect(synth.speak).toHaveBeenCalled();
+    } finally {
+      setVoiceEngine("browser");
+      vi.useRealTimers();
     }
   });
 
@@ -290,6 +378,8 @@ describe("seamless voice engine", () => {
     vi.stubGlobal("fetch", fetchStub);
     try {
       setVoiceEngine("seamless");
+      // The engine switch warms the container; the reply counts from here.
+      fetchStub.mockClear();
       speak("Una. Dos.");
       await vi.waitFor(() => {
         expect(played).toHaveLength(1);
@@ -315,6 +405,118 @@ describe("seamless voice engine", () => {
     }
   });
 
+  it("forces a sentence end when iOS drops onended", async () => {
+    stubSpeechSynthesis();
+    const { played, instances } = stubAudio();
+    const fetchStub = vi.fn(async (_url: unknown) => new Response(WAV));
+    vi.stubGlobal("fetch", fetchStub);
+    vi.useFakeTimers();
+    try {
+      setVoiceEngine("seamless");
+      // The engine switch warms the container; the reply counts from here.
+      fetchStub.mockClear();
+      speak("Una. Dos.");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(played).toHaveLength(1);
+      expect(isSpeaking()).toBe(true);
+      // No onended ever fires (the iOS field case): past estimate +
+      // grace the watchdog ends the first sentence and cues the next
+      // fetch, and still time ends the second one too: the chain settles.
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(fetchStub).toHaveBeenCalledTimes(2);
+      expect(played).toHaveLength(2);
+      expect(isSpeaking()).toBe(false);
+    } finally {
+      setVoiceEngine("browser");
+      vi.useRealTimers();
+    }
+  });
+
+  it("ends a sentence whose playback freezes with no event", async () => {
+    stubSpeechSynthesis();
+    const { played, paused } = stubAudio();
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown) => new Response(WAV)));
+    vi.useFakeTimers();
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(played).toHaveLength(1);
+      expect(isSpeaking()).toBe(true);
+      // currentTime never advances and no event fires (the field cut):
+      // three still seconds end the sentence and settle the mic.
+      await vi.advanceTimersByTimeAsync(3500);
+      expect(paused).toHaveLength(1);
+      expect(isSpeaking()).toBe(false);
+    } finally {
+      setVoiceEngine("browser");
+      vi.useRealTimers();
+    }
+  });
+
+  it("reclaims a paused utterance at once", async () => {
+    const { synth } = stubSpeechSynthesis();
+    speak("Hola");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
+    const said = synth.speak.mock.calls[0][0] as unknown as {
+      onpause: (() => void) | null;
+    };
+    expect(typeof said.onpause).toBe("function");
+    said.onpause?.();
+    expect(synth.resume).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a browser utterance cut with no event", async () => {
+    const { synth } = stubSpeechSynthesis();
+    vi.useFakeTimers();
+    try {
+      speak("Hola");
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+      // No onend ever fires (the iOS cut): past estimate + grace the
+      // accounting releases without touching the audio itself.
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(drainSpeechEvents().map((event) => event.kind)).toContain(
+        "utterance-timeout",
+      );
+      // The fresh batch pre-clears once; the watchdog never cancels audio.
+      expect(synth.cancel).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a paused sentence until the end watchdog caps it", async () => {
+    stubSpeechSynthesis();
+    const { played, instances } = stubAudio();
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown) => new Response(WAV)));
+    vi.useFakeTimers();
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(played).toHaveLength(1);
+      const audio = instances[0] as unknown as { paused: boolean };
+      audio.paused = true;
+      // A pause never counts as stillness: no re-play, no early end.
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(played).toHaveLength(1);
+      expect(isSpeaking()).toBe(true);
+      // The end watchdog caps the total instead.
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(isSpeaking()).toBe(false);
+      const kinds = drainSpeechEvents().map((event) => event.kind);
+      expect(kinds).toContain("sentence-timeout");
+      expect(kinds).not.toContain("sentence-paused");
+      expect(kinds).not.toContain("sentence-still");
+    } finally {
+      setVoiceEngine("browser");
+      vi.useRealTimers();
+    }
+  });
+
   it("never plays a seamless reply stopped before arrival", async () => {
     stubSpeechSynthesis();
     const { played } = stubAudio();
@@ -327,6 +529,8 @@ describe("seamless voice engine", () => {
     vi.stubGlobal("fetch", fetchStub);
     try {
       setVoiceEngine("seamless");
+      // The engine switch warms the container; the reply counts from here.
+      fetchStub.mockClear();
       speak("Hola");
       await vi.waitFor(() => {
         expect(fetchStub).toHaveBeenCalledTimes(1);
@@ -555,6 +759,85 @@ describe("one voice per language (lead round p2)", () => {
     });
   });
 
+  it("settles the moment the voice really ends, not at the estimate", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    speak("Hello.", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
+    // The 150 ms/char + 2.5 s estimate is still owed: no real end yet.
+    expect(speechSettled()).toBe(false);
+    const only = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
+    fireUtteranceEnd(only);
+    expect(speechSettled()).toBe(true);
+  });
+
+  it("waits for the last queued utterance before settling", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    speak("Hi, I am Vale. Tell me what you need.", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(2);
+    });
+    const first = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
+    const second = synth.speak.mock.calls[1][0] as SpeechSynthesisUtterance;
+    fireUtteranceEnd(first);
+    expect(speechSettled()).toBe(false);
+    fireUtteranceEnd(second);
+    expect(speechSettled()).toBe(true);
+  });
+
+  it("ignores the ended reply once a newer one is queued", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    speak("First reply here.", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
+    const stale = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
+    speak("Second.", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(2);
+    });
+    fireUtteranceEnd(stale);
+    expect(speechSettled()).toBe(false);
+    const current = synth.speak.mock.calls[1][0] as SpeechSynthesisUtterance;
+    fireUtteranceEnd(current);
+    expect(speechSettled()).toBe(true);
+  });
+
+  it("settles when synth.speaking goes quiet without an end event", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    const live = synth as unknown as { speaking: boolean };
+    speak("Hello.", "en");
+    await vi.waitFor(() => {
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+    });
+    live.speaking = true;
+    expect(speechSettled()).toBe(false);
+    live.speaking = false;
+    expect(speechSettled()).toBe(true);
+    live.speaking = false;
+  });
+
+  it("notifies settle listeners once at the real end", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("en-US")]);
+    const heard: number[] = [];
+    const release = onSpeechSettled(() => {
+      heard.push(Date.now());
+    });
+    try {
+      speak("Hello.", "en");
+      await vi.waitFor(() => {
+        expect(synth.speak).toHaveBeenCalledTimes(1);
+      });
+      const only = synth.speak.mock.calls[0][0] as SpeechSynthesisUtterance;
+      fireUtteranceEnd(only);
+      expect(heard).toHaveLength(1);
+      expect(speechSettled()).toBe(true);
+    } finally {
+      release();
+    }
+  });
+
   it("caps speech end by phrase length, never cutting real speech", () => {
     expect(estimateSpeechMs("", 1)).toBe(0);
     expect(estimateSpeechMs("   ", 1)).toBe(0);
@@ -569,5 +852,104 @@ describe("one voice per language (lead round p2)", () => {
     // A 25-word reply still fits far inside its cap.
     const reply = "All set, timer is running for Nina. Take your time.".repeat(2);
     expect(estimateSpeechMs(reply, 0.9)).toBeGreaterThan(2 * reply.length * 70);
+  });
+});
+
+describe("tuned prosody only for Ava and Paulina (HACK-024)", () => {
+  it("uses the picked rate and pitch for Ava and Paulina", () => {
+    window.localStorage.removeItem("vale-voice");
+    setVoicePrefs({ rateEn: 1.2, rateEs: 0.8, pitchEn: 1.1, pitchEs: 0.9 });
+    expect(prosodyForVoice(namedVoice("Ava (Premium)"), "en")).toEqual({ rate: 1.2, pitch: 1.1 });
+    expect(prosodyForVoice(namedVoice("Ava (Enhanced)"), "en")).toEqual({ rate: 1.2, pitch: 1.1 });
+    expect(prosodyForVoice(namedVoice("Paulina (Enhanced)"), "es")).toEqual({ rate: 0.8, pitch: 0.9 });
+  });
+
+  it("stays neutral at 1.0/1.0 for a list with neither Ava nor Paulina", () => {
+    window.localStorage.removeItem("vale-voice");
+    setVoicePrefs({ rateEn: 1.2, rateEs: 0.8, pitchEn: 1.1, pitchEs: 0.9 });
+    const list = [
+      namedVoice("Samantha"),
+      namedVoice("Zoe (Premium)"),
+      namedVoice("Google US English"),
+      namedVoice("Marisol (Premium)", "es-ES"),
+      namedVoice("Jorge", "es-MX"),
+    ];
+    for (const voice of list) {
+      expect(prosodyForVoice(voice, "en")).toEqual({ rate: 1, pitch: 1 });
+      expect(prosodyForVoice(voice, "es")).toEqual({ rate: 1, pitch: 1 });
+    }
+    expect(prosodyForVoice(null, "en")).toEqual({ rate: 1, pitch: 1 });
+  });
+});
+
+describe("primeSpokenAudio (iOS gesture unlock)", () => {
+  it("speaks a zero-volume utterance and plays silent audio", () => {
+    const { synth } = stubSpeechSynthesis();
+    const played: string[] = [];
+    const audioCtor = class {
+      url: string;
+      volume = 1;
+      onended: (() => void) | null = null;
+      constructor(url: string) {
+        this.url = url;
+      }
+      play(): Promise<void> {
+        played.push(this.url);
+        return Promise.resolve();
+      }
+    };
+    vi.stubGlobal("Audio", audioCtor);
+    const urlAny = URL as unknown as Record<string, unknown>;
+    const origCreateObjectURL = urlAny.createObjectURL;
+    const minted: string[] = [];
+    urlAny.createObjectURL = () => {
+      const url = `blob:prime-${minted.length}`;
+      minted.push(url);
+      return url;
+    };
+    try {
+      primeSpokenAudio();
+      expect(synth.speak).toHaveBeenCalledTimes(1);
+      const said = synth.speak.mock.calls[0][0] as unknown as Record<
+        string,
+        unknown
+      >;
+      expect(said.text).toBe(" ");
+      expect(said.volume).toBe(0);
+      expect(minted).toHaveLength(1);
+      expect(played).toEqual(minted);
+    } finally {
+      urlAny.createObjectURL = origCreateObjectURL;
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("clears a warm utterance that never ends, and leaves an ended one", () => {
+    const { synth } = stubSpeechSynthesis();
+    vi.useFakeTimers();
+    try {
+      primeSpokenAudio();
+      // The pre-clear runs once up front; the fallback has not fired yet.
+      expect(synth.cancel).toHaveBeenCalledTimes(1);
+      const said = synth.speak.mock.calls[0][0] as unknown as {
+        onend: (() => void) | null;
+      };
+      expect(typeof said.onend).toBe("function");
+      // A stuck warm trips the fallback clear.
+      vi.advanceTimersByTime(2000);
+      expect(synth.cancel).toHaveBeenCalledTimes(2);
+      // A warm that ended on its own needs no clear.
+      vi.clearAllMocks();
+      primeSpokenAudio();
+      const saidAgain = synth.speak.mock.calls[0][0] as unknown as {
+        onend: (() => void) | null;
+      };
+      saidAgain.onend?.();
+      vi.advanceTimersByTime(5000);
+      expect(synth.cancel).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 });

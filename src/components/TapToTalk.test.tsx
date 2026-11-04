@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { stubVoiceSocket } from "./test-voice-socket";
 import { startCapture, unlockAudioContext } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -18,6 +19,12 @@ function stubGetUserMedia(impl: (...args: never[]) => unknown) {
   return getUserMedia;
 }
 
+beforeEach(() => {
+  // One transport: without an open /voice the tap ends in E-NET before
+  // capture, so the socket opens here like in every other session test.
+  stubVoiceSocket();
+});
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -25,14 +32,11 @@ afterEach(() => {
 });
 
 describe("microphone permission", () => {
-  it("requests the mic only after the first tap and goes live when granted", async () => {
+  it("requests the mic on mount and goes live when granted", async () => {
     const stream = { getTracks: () => [] } as unknown as MediaStream;
     const getUserMedia = stubGetUserMedia(async () => stream);
 
-    render(<TapToTalk />);
-    expect(getUserMedia).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
     await waitFor(() => {
       expect(getUserMedia).toHaveBeenCalledTimes(1);
@@ -40,18 +44,15 @@ describe("microphone permission", () => {
     expect(getUserMedia).toHaveBeenCalledWith({
       audio: { echoCancellation: true, noiseSuppression: true },
     });
-    expect(
-      await screen.findByText(/microphone is on/i),
-    ).toBeDefined();
+    expect(await screen.findByText("Listening")).toBeDefined();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("unlocks audio in the tap and alerts when the context stays suspended", async () => {
+  it("unlocks audio on start and alerts when the context stays suspended", async () => {
     const stream = { getTracks: () => [] } as unknown as MediaStream;
     stubGetUserMedia(async () => stream);
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     // In-gesture unlock runs before any await.
     expect(unlockAudioContext).toHaveBeenCalledTimes(1);
 
@@ -62,9 +63,6 @@ describe("microphone permission", () => {
     callbacks.onBlocked?.();
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/no arrancó|did not start/i);
-    expect(
-      screen.getByRole("button", { name: "Tap to talk" }),
-    ).toBeDefined();
   });
 
   it("shows how to re-enable the mic when denied, with no prompt loop", async () => {
@@ -73,21 +71,13 @@ describe("microphone permission", () => {
       throw denied;
     });
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/microphone is blocked/i);
     expect(alert.textContent).toMatch(/iPhone.*Safari/i);
     expect(alert.textContent).toMatch(/Chrome/i);
     expect(getUserMedia).toHaveBeenCalledTimes(1);
-
-    // Tapping again retries once more, still no loop.
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
-    await waitFor(() => {
-      expect(getUserMedia).toHaveBeenCalledTimes(2);
-    });
-    expect(await screen.findByRole("alert")).toBeDefined();
   });
 
   it("shows a plain error when no microphone is available", async () => {
@@ -96,8 +86,7 @@ describe("microphone permission", () => {
       throw missing;
     });
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/something went wrong/i);

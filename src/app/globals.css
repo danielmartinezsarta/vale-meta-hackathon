@@ -1,14 +1,90 @@
+/* Vale preview tokens for /brand. The demo screens resolve their colors
+   through BRAND (src/lib/brand-tokens.ts) and the per-screen vars in
+   src/lib/vale-theme.ts instead. */
+
+:root,
+[data-theme="light"] {
+  --vale-midnight: #14224f;
+  --vale-blue: #2f5bff;
+  --vale-cyan: #18b8e0;
+  --vale-magenta: #e6329b;
+  --vale-mist: #f5f8ff;
+  --vale-tint-blue: #8fa9ff;
+  --vale-tint-cyan: #7fddeb;
+  --vale-tint-magenta: #ff6bbe;
+  --vale-pastel-blue: #bfd0ff;
+  --vale-pastel-magenta: #fac0e0;
+
+  --vale-bg: #f5f8ff;
+  --vale-card: #ffffff;
+  --vale-border: #d8deef;
+  --vale-text: #14224f;
+  --vale-text-secondary: #505b7e;
+  --vale-wordmark: #14224f;
+
+  --vale-bar-1: #2f5bff;
+  --vale-bar-2: #2f5bff;
+  --vale-bar-3: #18b8e0;
+  --vale-bar-4: #2f5bff;
+  --vale-bar-5: #e6329b;
+
+  --vale-icon-bg: #14224f;
+  --vale-icon-bar-1: #8fa9ff;
+  --vale-icon-bar-2: #8fa9ff;
+  --vale-icon-bar-3: #7fddeb;
+  --vale-icon-bar-4: #8fa9ff;
+  --vale-icon-bar-5: #ff6bbe;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --vale-bg: #0e1634;
+    --vale-card: #162047;
+    --vale-border: #2b3866;
+    --vale-text: #f5f8ff;
+    --vale-text-secondary: #a8b2d6;
+    --vale-wordmark: #f5f8ff;
+
+    --vale-bar-1: #8fa9ff;
+    --vale-bar-2: #8fa9ff;
+    --vale-bar-3: #7fddeb;
+    --vale-bar-4: #8fa9ff;
+    --vale-bar-5: #ff6bbe;
+  }
+}
+
+[data-theme="dark"] {
+  --vale-bg: #0e1634;
+  --vale-card: #162047;
+  --vale-border: #2b3866;
+  --vale-text: #f5f8ff;
+  --vale-text-secondary: #a8b2d6;
+  --vale-wordmark: #f5f8ff;
+
+  --vale-bar-1: #8fa9ff;
+  --vale-bar-2: #8fa9ff;
+  --vale-bar-3: #7fddeb;
+  --vale-bar-4: #8fa9ff;
+  --vale-bar-5: #ff6bbe;
+}
+
 body {
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui), system-ui, -apple-system, sans-serif;
   margin: 0 auto;
   max-width: 32rem;
   padding: 2rem 1rem;
   line-height: 1.5;
+  font-size: 20px;
+  background: var(--vale-bg);
+  color: var(--vale-text);
 }
 
 button {
+  font: inherit;
   font-size: 1.25rem;
   padding: 0.75rem 1.5rem;
+  min-height: 44px;
+  min-width: 44px;
 }
 
 [role="alert"] {

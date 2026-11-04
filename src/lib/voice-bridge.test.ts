@@ -1,6 +1,17 @@
 // @vitest-environment node
 import { EventEmitter } from "node:events";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   attachVoiceBridge,
@@ -8,6 +19,7 @@ import {
   tryParseControl,
   type BridgeAgentResult,
 } from "./voice-bridge";
+import { checkWake } from "./wake";
 
 class FakeBrowser extends EventEmitter {
   readonly OPEN = 1;
@@ -41,6 +53,10 @@ let receivedBinaryBytes = 0;
 let receivedEndStream = 0;
 /** First upstream text frame per connection: the auth handshake. */
 let receivedAuth: string[] = [];
+/** Next connections get no handshake ack: Meta stays down, audio buffers. */
+let holdHandshake = false;
+/** Queued finals, one per endStream; falls back to finalTranscript. */
+let finalQueue: string[] = [];
 
 function fakeAgent(text = "All set, see you soon."): (
   args: unknown,
@@ -94,6 +110,10 @@ beforeAll(async () => {
       }
       if (message.type === "endStream") {
         receivedEndStream += 1;
+        const text =
+          finalQueue.length > 0
+            ? (finalQueue.shift() as string)
+            : finalTranscript;
         if (holdFinal) return;
         if (asrErrorOnce) {
           asrErrorOnce = false;
@@ -105,7 +125,7 @@ beforeAll(async () => {
         socket.send(
           JSON.stringify({
             type: "transcript",
-            transcript: finalTranscript,
+            transcript: text,
             final: true,
             audioProcessedMs: 800,
           }),
@@ -113,6 +133,7 @@ beforeAll(async () => {
         socket.close(1000, "turn complete");
         return;
       }
+      if (holdHandshake) return;
       socket.send(JSON.stringify({ sessionId: "bridge-test" }));
     });
   });
@@ -130,31 +151,76 @@ type AgentFn = (args: {
   onDelta: (text: string) => void;
   language?: string;
   slotKey?: string;
+  turn?: string;
 }) => Promise<BridgeAgentResult>;
+
+// Every turn-logging test owns its [voice-turn] file: the console now shows
+// the aligned vlog row, and the full JSON lives in the file for the harness.
+let turnsFile = "";
+beforeEach(() => {
+  turnsFile = join(
+    tmpdir(),
+    `bridge-turns-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`,
+  );
+  process.env.VALE_TURNS_PATH = turnsFile;
+});
+
+/** Full turn JSON rows logged since the test started, oldest first. */
+function loggedTurns(): Record<string, unknown>[] {
+  let text = "";
+  try {
+    text = readFileSync(turnsFile, "utf8");
+  } catch {
+    return [];
+  }
+  return text
+    .trim()
+    .split("\n")
+    .filter((line) => line.startsWith("[voice-turn] "))
+    .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
+}
 
 function attachForTest(
   browser: FakeBrowser,
   agent: AgentFn = fakeAgent(),
   key = "test-key",
+  clientId = "test-client",
+  overrides: {
+    turnTimeoutMs?: number;
+    now?: () => number;
+    conversation?: boolean;
+  } = {},
 ) {
   attachVoiceBridge({
     browser: browser as unknown as WebSocket,
     key,
-    clientId: "test-client",
+    clientId,
     metaUrl: url,
     runAgent: agent,
+    ...overrides,
   });
 }
 
-describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
+describe("GET /voice live bridge (browser -> server -> Meta)", () => {
+  it("sends the current board on connect so a running session shows at once", async () => {
+    const browser = new FakeBrowser();
+    attachForTest(browser);
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+    const boards = browser.frames().filter((frame) => frame.type === "board");
+    expect(boards.length).toBeGreaterThan(0);
+    expect(boards[0].board).toHaveProperty("session");
+    browser.close(1000, "test done");
+  });
+
   it("relays live partials, ends the turn on a Buffer control frame, then replies", async () => {
     receivedBinaryBytes = 0;
     receivedEndStream = 0;
     finalTranscript = "vale, live from the bridge";
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       attachForTest(browser);
@@ -213,10 +279,10 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       expect(interimAt).toBeGreaterThan(-1);
       expect(finalAt).toBeGreaterThan(interimAt);
 
-      const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+      const turns = loggedTurns();
       expect(turns).toHaveLength(1);
-      const logged = JSON.parse(turns[0].replace("[voice-turn] ", ""));
-      expect(logged.transcript).toBe("vale, live from the bridge");
+      const logged = turns[0];
+      expect(logged.transcript).toBe("Vale, live from the bridge");
       expect(logged.inputTokens).toBe(100);
       expect(logged.outputTokens).toBe(20);
       expect(logged.error).toBeNull();
@@ -250,13 +316,10 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     }
   });
 
-  it("answers silence with a gentle E-VAD notice and never calls the model", async () => {
+  it("answers silence with an empty turn, no notice, never calls the model", async () => {
     finalTranscript = "";
     const agent = vi.fn(fakeAgent());
-    const logs: string[] = [];
-    const spy = vi.spyOn(console, "log").mockImplementation((line: string) => {
-      logs.push(String(line));
-    });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       attachForTest(browser, agent);
@@ -269,21 +332,210 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       browser.peerMessage(JSON.stringify({ type: "endStream" }));
       await vi.waitFor(() => {
         expect(
-          browser.frames().some((frame) => frame.type === "notice"),
+          browser.frames().some((frame) => frame.type === "transcript"),
         ).toBe(true);
       });
-      const notice = browser.frames().find((frame) => frame.type === "notice");
-      expect(notice?.code).toBe("E-VAD");
+      expect(browser.frames().some((frame) => frame.type === "notice")).toBe(false);
       expect(agent).not.toHaveBeenCalled();
-      const turns = logs.filter((line) => line.startsWith("[voice-turn]"));
+      const turns = loggedTurns();
       expect(turns).toHaveLength(1);
-      expect(JSON.parse(turns[0].replace("[voice-turn] ", ""))).toMatchObject({
+      expect(turns[0]).toMatchObject({
         modelSkipped: true,
       });
     } finally {
       finalTranscript = "vale, live from the bridge";
       spy.mockRestore();
     }
+  });
+
+  it("persists the client engine and sheet flag from endStream", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser);
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(
+        JSON.stringify({
+          type: "endStream",
+          turn: "t042",
+          lostBlocks: 3,
+          srcBlocks: 100,
+          engine: "script",
+          sheetOpen: true,
+        }),
+      );
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+          true,
+        );
+      });
+      const turns = loggedTurns();
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({
+        turn: "t042",
+        lostBlocks: 3,
+        srcBlocks: 100,
+        engine: "script",
+        sheetOpen: true,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("adopts the endStream language with no prior language frame", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser);
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      // No language frame was ever sent: the turn still lands in Spanish.
+      browser.peerMessage(JSON.stringify({ type: "endStream", language: "es" }));
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+          true,
+        );
+      });
+      const turns = loggedTurns();
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({
+        language: "es",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("anchors the attention window on her real last word", async () => {
+    const browser = new FakeBrowser();
+    attachForTest(browser, fakeAgent(), "spoken-key", "spoken-client-1");
+    await vi.waitFor(() => {
+      expect(browser.frames().some((frame) => frame.type === "bridge")).toBe(
+        true,
+      );
+    });
+    expect(
+      checkWake("what time is it", "spoken-client-1", Date.now()).execute,
+    ).toBe(false);
+    browser.peerMessage(JSON.stringify({ type: "spoken" }));
+    expect(
+      checkWake("what time is it", "spoken-client-1", Date.now()),
+    ).toMatchObject({ execute: true, namedVale: false, gate: "ventana" });
+    expect(tryParseControl(JSON.stringify({ type: "spoken" }))).toEqual({
+      type: "spoken",
+    });
+  });
+
+  it("closes the sheet on dismiss with no model call", async () => {
+    const agent = vi.fn(fakeAgent());
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser, agent);
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(
+        JSON.stringify({ type: "dismiss", transcript: "close the agenda" }),
+      );
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+          true,
+        );
+      });
+      expect(
+        browser.frames().some((frame) => frame.type === "ignored"),
+      ).toBe(true);
+      expect(agent).not.toHaveBeenCalled();
+      const turns = loggedTurns();
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({
+        transcript: "close the agenda",
+        ignored: true,
+        modelSkipped: true,
+        gate: "cierre",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("holds the window open behind her sheet and restarts it on close", async () => {
+    finalTranscript = "read me the total";
+    const agent = vi.fn(fakeAgent());
+    const browser = new FakeBrowser();
+    attachVoiceBridge({
+      browser: browser as unknown as WebSocket,
+      key: "sheet-key",
+      clientId: "sheet-client-2",
+      metaUrl: url,
+      runAgent: agent,
+      conversation: true,
+    });
+    await vi.waitFor(() => {
+      expect(browser.frames().some((frame) => frame.type === "bridge")).toBe(
+        true,
+      );
+    });
+    const voiceTurn = (sheetOpen: boolean): void => {
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(JSON.stringify({ type: "endStream", sheetOpen }));
+    };
+    const doneCount = (): number =>
+      browser.frames().filter((frame) => frame.type === "done").length;
+    // No sheet, no window: background chatter never reaches the model.
+    voiceTurn(false);
+    await vi.waitFor(() => {
+      expect(doneCount()).toBe(1);
+    });
+    expect(agent).not.toHaveBeenCalled();
+    expect(
+      browser.frames().some((frame) => frame.type === "ignored"),
+    ).toBe(true);
+    // Sheet open on screen: the same unnamed phrase executes.
+    voiceTurn(true);
+    await vi.waitFor(() => {
+      expect(doneCount()).toBe(2);
+    });
+    expect(agent).toHaveBeenCalledTimes(1);
+    expect(
+      browser.frames().some(
+        (frame) => frame.type === "reply" && frame.text === "All set, see you soon.",
+      ),
+    ).toBe(true);
+    // The X on her sheet restarts the window: the follow-up runs sheetless.
+    browser.peerMessage(JSON.stringify({ type: "sheet-closed" }));
+    expect(
+      checkWake("and the time", "sheet-client-2", Date.now()),
+    ).toMatchObject({ execute: true, namedVale: false, gate: "ventana" });
+    // A voice close restarts it the same way.
+    browser.peerMessage(
+      JSON.stringify({ type: "dismiss", transcript: "close it" }),
+    );
+    await vi.waitFor(() => {
+      expect(doneCount()).toBe(3);
+    });
+    expect(
+      checkWake("and the time", "sheet-client-2", Date.now()),
+    ).toMatchObject({ execute: true, namedVale: false, gate: "ventana" });
+    // ...but the restarted window still expires on its own.
+    expect(
+      checkWake("and the time", "sheet-client-2", Date.now() + 46_000, false, "en")
+        .execute,
+    ).toBe(false);
   });
 
   it("hands prior turns as history and drops nothing after a failure", async () => {
@@ -332,7 +584,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       // Tap 2 sees tap 1's user turn; tap 3 also sees tap 1's vale reply,
       // even though tap 2 failed after its own user turn was stored.
       expect(
-        seen[1].some((t) => t.role === "user" && t.text === "vale, si"),
+        seen[1].some((t) => t.role === "user" && t.text === "Vale, si"),
       ).toBe(true);
       expect(seen[2].some((t) => t.role === "vale")).toBe(true);
     } finally {
@@ -387,7 +639,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     browser.close(1000, "test done");
   });
 
-  it("treats a tap wake frame like the name on a cold window", async () => {
+  it("a tap wake frame no longer opens the window", async () => {
     const agent = vi.fn(fakeAgent());
     finalTranscript = "close the session";
     const browser = new FakeBrowser();
@@ -409,10 +661,13 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     browser.peerMessage(JSON.stringify({ type: "endStream" }));
     await vi.waitFor(() => {
       expect(
-        browser.frames().some((frame) => frame.type === "reply"),
+        browser.frames().some((frame) => frame.type === "ignored"),
       ).toBe(true);
     });
-    expect(agent).toHaveBeenCalledTimes(1);
+    expect(agent).not.toHaveBeenCalled();
+    expect(
+      browser.frames().some((frame) => frame.type === "reply"),
+    ).toBe(false);
     browser.close(1000, "test done");
   });
 
@@ -502,7 +757,9 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
   });
 
   it("answers the next turn in Spanish after a mid-listening switch", async () => {
-    finalTranscript = "hola vale";
+    // Sentence-start exact name: Spanish openers no longer hand the turn
+    // off (rule call) — the language switch is what this test proves.
+    finalTranscript = "vale, hola";
     const agent = vi.fn<AgentFn>(fakeAgent("Hola Daniel."));
     try {
       const browser = new FakeBrowser();
@@ -530,7 +787,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       });
       expect(agent).toHaveBeenCalledTimes(1);
       expect(agent.mock.calls[0][0].language).toBe("es");
-      expect(agent.mock.calls[0][0].transcript).toBe("hola vale");
+      expect(agent.mock.calls[0][0].transcript).toBe("Vale, hola");
       browser.close(1000, "test done");
     } finally {
       finalTranscript = "vale, live from the bridge";
@@ -765,7 +1022,10 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
         );
       });
       expect(
-        logs.some((line) => line.startsWith("[client-state]")),
+        logs.some(
+          (line) =>
+            line.includes("| VOICE ") && line.includes('"capture":"live"'),
+        ),
       ).toBe(true);
       expect(
         browser.frames().some((frame) => frame.type === "error"),
@@ -819,9 +1079,14 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     const widgetAgent = async (): Promise<BridgeAgentResult> => ({
       text: "Here is your goal.",
       usage: { inputTokens: 100, outputTokens: 20 },
-      toolUsed: "goal_progress",
+      toolUsed: "goal_show",
       firstTokenMs: 50,
-      widget: { kind: "meta", title: "Month goal", lines: ["120.00 USD of 600.00 USD (20%)"] },
+      widget: {
+        kind: "goal",
+        title: "Monthly goal",
+        size: "half",
+        data: { name: null, goal: 600, earned: 120 },
+      },
     });
     try {
       const browser = new FakeBrowser();
@@ -848,7 +1113,50 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
       const widget = browser.frames().find((frame) => frame.type === "widget") as {
         widget?: { kind?: string };
       };
-      expect(widget.widget?.kind).toBe("meta");
+      expect(widget.widget?.kind).toBe("goal");
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
+
+  it("sends a null widget frame when the agent closes the sheet", async () => {
+    finalTranscript = "vale, paid";
+    const closingAgent = async (): Promise<BridgeAgentResult> => ({
+      text: "Payment registered.",
+      usage: { inputTokens: 100, outputTokens: 20 },
+      toolUsed: "session_quote",
+      firstTokenMs: 50,
+      widget: null,
+    });
+    try {
+      const browser = new FakeBrowser();
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: "conv-widget-close",
+        metaUrl: url,
+        runAgent: closingAgent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "widget"),
+        ).toBe(true);
+      });
+      const widget = browser.frames().find(
+        (frame) => frame.type === "widget",
+      ) as {
+        widget?: unknown;
+      };
+      expect(widget.widget).toBeNull();
       browser.close(1000, "test done");
     } finally {
       finalTranscript = "vale, live from the bridge";
@@ -859,7 +1167,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     const agent = vi.fn(fakeAgent());
     const { setPendingAction } = await import("./pending-action");
     setPendingAction("conv-vote-yes", [
-      { tool: "create_client", args: { name: "VoteVera" } },
+      { tool: "client_create", args: { name: "VoteVera" } },
     ]);
     const browser = new FakeBrowser();
     attachVoiceBridge({
@@ -931,7 +1239,7 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     const agent = vi.fn(fakeAgent());
     const { setPendingAction } = await import("./pending-action");
     setPendingAction("conv-vote-no", [
-      { tool: "create_client", args: { name: "VoteNoa" } },
+      { tool: "client_create", args: { name: "VoteNoa" } },
     ]);
     const browser = new FakeBrowser();
     attachVoiceBridge({
@@ -1040,19 +1348,17 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
       expect(
         browser.frames().some((frame) => frame.type === "ignored"),
       ).toBe(false);
-      expect(lines.some((line) => line.includes('"gate":"eco"'))).toBe(false);
+      expect(lines.some((line) => line.includes("gate=eco"))).toBe(false);
       const ventana = lines.filter((line) =>
-        line.includes('"gate":"ventana"'),
+        line.includes("gate=ventana"),
       );
       expect(ventana.length).toBeGreaterThan(0);
       // The served turn carries a real measured ASR time.
-      const served = lines
-        .filter((line) => line.startsWith("[voice-turn] "))
-        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
-      const first = served.find(
-        (entry) => entry.transcript === "vale, book Emma for gel refill",
+      const first = loggedTurns().find(
+        (entry) => entry.transcript === "Vale, book Emma for gel refill"
       );
-      expect(typeof first.asrMs).toBe("number");
+      expect(first).toBeDefined();
+      expect(typeof first?.asrMs).toBe("number");
     } finally {
       logSpy.mockRestore();
       finalTranscript = "vale, live from the bridge";
@@ -1101,12 +1407,7 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
     receivedEndStream = 0;
     const agent = vi.fn(fakeAgent("WAV heard you."));
     finalTranscript = "vale, wav check";
-    const lines: string[] = [];
-    const logSpy = vi
-      .spyOn(console, "log")
-      .mockImplementation((line: string) => {
-        lines.push(String(line));
-      });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       const client = `conv-wav-${Date.now()}`;
@@ -1140,17 +1441,15 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
           browser.frames().some((frame) => frame.type === "reply"),
         ).toBe(true);
       });
-      const served = lines
-        .filter((line) => line.startsWith("[voice-turn] "))
-        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
-      const entry = served.find(
-        (e) => e.transcript === "vale, wav check",
+      const entry = loggedTurns().find(
+        (e) => e.transcript === "Vale, wav check"
       );
       expect(entry).toBeDefined();
+      if (entry === undefined) throw new Error("wav turn was not logged");
       expect(typeof entry.wav).toBe("string");
       const { readFileSync, existsSync } = await import("node:fs");
-      expect(existsSync(entry.wav)).toBe(true);
-      const wav = readFileSync(entry.wav);
+      expect(existsSync(entry.wav as string)).toBe(true);
+      const wav = readFileSync(entry.wav as string);
       expect(wav.subarray(0, 4).toString()).toBe("RIFF");
       expect(wav.readUInt32LE(24)).toBe(24000);
       expect(entry.peakLevel).toBe(0.5);
@@ -1169,12 +1468,7 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
     const agent = vi.fn(fakeAgent("Should never run."));
     // Named, so only the junk gate can stop it: without it the agent runs.
     finalTranscript = "vale, junk check";
-    const lines: string[] = [];
-    const logSpy = vi
-      .spyOn(console, "log")
-      .mockImplementation((line: string) => {
-        lines.push(String(line));
-      });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       const client = `conv-junk-${Date.now()}`;
@@ -1212,16 +1506,11 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
         ).toBe(true);
       });
       expect(agent).not.toHaveBeenCalled();
-      const served = lines
-        .filter((line) => line.startsWith("[voice-turn] "))
-        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
-      const entry = served.find(
-        (e) => e.transcript === "vale, junk check",
+      const entry = loggedTurns().find(
+        (e) => e.transcript === "Vale, junk check"
       );
-      expect(entry).toBeDefined();
-      expect(entry.junk).toBe(true);
-      expect(entry.ignored).toBe(true);
-      expect(typeof entry.wav).toBe("string");
+      expect(entry).toMatchObject({ junk: true, ignored: true });
+      expect(typeof entry?.wav).toBe("string");
       browser.close(1000, "test done");
     } finally {
       logSpy.mockRestore();
@@ -1242,12 +1531,7 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
     // Named, so only the junk gate can stop it: without the voice guard
     // this turn dies as junk and the agent never runs.
     finalTranscript = "vale, servicio semipermanente";
-    const lines: string[] = [];
-    const logSpy = vi
-      .spyOn(console, "log")
-      .mockImplementation((line: string) => {
-        lines.push(String(line));
-      });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       const client = `conv-voice-${Date.now()}`;
@@ -1289,15 +1573,12 @@ describe("strict turns (no echo guard: the mic never hears her)", () => {
         ).toBe(true);
       });
       expect(agent).toHaveBeenCalledTimes(1);
-      const served = lines
-        .filter((line) => line.startsWith("[voice-turn] "))
-        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
-      const entry = served.find(
-        (e) => e.transcript === "vale, servicio semipermanente",
+      const entry = loggedTurns().find(
+        (e) => e.transcript === "Vale, servicio semipermanente"
       );
       expect(entry).toBeDefined();
-      expect(entry.ignored).toBe(false);
-      expect(entry.junk).toBeUndefined();
+      expect(entry?.ignored).toBe(false);
+      expect(entry?.junk).toBeUndefined();
       browser.close(1000, "test done");
     } finally {
       logSpy.mockRestore();
@@ -1311,12 +1592,7 @@ describe("empty finals (noise, not Daniel)", () => {
     receivedEndStream = 0;
     const agent = vi.fn(fakeAgent("Should never run."));
     finalTranscript = "   ";
-    const lines: string[] = [];
-    const logSpy = vi
-      .spyOn(console, "log")
-      .mockImplementation((line: string) => {
-        lines.push(String(line));
-      });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const browser = new FakeBrowser();
       const client = `conv-empty-${Date.now()}`;
@@ -1340,18 +1616,16 @@ describe("empty finals (noise, not Daniel)", () => {
           browser.frames().filter((frame) => frame.type === "done").length,
         ).toBe(1);
       });
-      // Nothing executed: no model call, no reply, no board move.
+      // Nothing executed: no model call, no reply, and no board move past
+      // the connect-time board.
       expect(agent).not.toHaveBeenCalled();
       expect(
         browser.frames().filter((frame) => frame.type === "reply"),
       ).toHaveLength(0);
       expect(
         browser.frames().filter((frame) => frame.type === "board"),
-      ).toHaveLength(0);
-      const served = lines
-        .filter((line) => line.startsWith("[voice-turn] "))
-        .map((line) => JSON.parse(line.slice("[voice-turn] ".length)));
-      const empty = served.find((entry) => entry.transcript === "");
+      ).toHaveLength(1);
+      const empty = loggedTurns().find((entry) => entry.transcript === "");
       expect(empty).toMatchObject({ modelSkipped: true, gate: null });
       browser.close(1000, "test done");
     } finally {
@@ -1370,14 +1644,27 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
       valeState: null,
       lostBlocks: null,
       srcBlocks: null,
+      engine: null,
+      sheetOpen: null,
+      visible: null,
+      actualRate: null,
+      ctxState: null,
+      rebuilds: null,
     };
     expect(tryParseControl(JSON.stringify({ type: "endStream" }))).toEqual({
       type: "endStream",
       stats: emptyStats,
+      language: null,
+      turn: null,
     });
     expect(
       tryParseControl(Buffer.from(JSON.stringify({ type: "endStream" }))),
-    ).toEqual({ type: "endStream", stats: emptyStats });
+    ).toEqual({
+      type: "endStream",
+      stats: emptyStats,
+      language: null,
+      turn: null,
+    });
     expect(
       tryParseControl(
         JSON.stringify({
@@ -1400,7 +1687,15 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
         valeState: "speaking",
         lostBlocks: 0,
         srcBlocks: 41,
+        engine: null,
+        sheetOpen: null,
+        visible: null,
+        actualRate: null,
+        ctxState: null,
+        rebuilds: null,
       },
+      language: null,
+      turn: null,
     });
     expect(
       tryParseControl(
@@ -1413,7 +1708,12 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
           srcBlocks: -2,
         }),
       ),
-    ).toEqual({ type: "endStream", stats: emptyStats });
+    ).toEqual({
+      type: "endStream",
+      stats: emptyStats,
+      language: null,
+      turn: null,
+    });
     expect(tryParseControl(Buffer.from([0, 1, 2, 3]))).toBeNull();
     expect(tryParseControl('{"type":"other"}')).toBeNull();
     expect(tryParseControl(null)).toBeNull();
@@ -1446,10 +1746,40 @@ describe("tryParseControl (spike lesson: text frames arrive as Buffer)", () => {
       tryParseControl(
         Buffer.from(JSON.stringify({ type: "vote", vote: "yes" })),
       ),
-    ).toEqual({ type: "vote", vote: "yes" });
+    ).toEqual({ type: "vote", vote: "yes", turn: null });
     expect(
       tryParseControl(JSON.stringify({ type: "vote", vote: "maybe" })),
     ).toBeNull();
+  });
+
+  it("carries the shared turn tag on endStream, vote and dismiss", () => {
+    expect(
+      tryParseControl(JSON.stringify({ type: "endStream", turn: "t042" })),
+    ).toMatchObject({ type: "endStream", turn: "t042" });
+    expect(
+      tryParseControl(
+        JSON.stringify({ type: "vote", vote: "yes", turn: "t043" }),
+      ),
+    ).toEqual({ type: "vote", vote: "yes", turn: "t043" });
+    expect(
+      tryParseControl(
+        JSON.stringify({
+          type: "dismiss",
+          transcript: "close it",
+          turn: "t044",
+        }),
+      ),
+    ).toEqual({
+      type: "dismiss",
+      transcript: "close it",
+      turn: "t044",
+    });
+    // Anything off-shape rides as "-": never the raw client string.
+    for (const bad of ["abc", "t", "t42x", "T042", 42, "t0000001"]) {
+      expect(
+        tryParseControl(JSON.stringify({ type: "endStream", turn: bad })),
+      ).toMatchObject({ turn: null });
+    }
   });
 });
 
@@ -1489,4 +1819,394 @@ describe("bridge language frame", () => {
       finalTranscript = "vale, live from the bridge";
     }
   });
+});
+
+describe("bare name calls (trial 9.1)", () => {
+  it("stays silent on the name alone and answers the rest in the same turn", async () => {
+    const agent = vi.fn(fakeAgent("Booked for gel removal."));
+    finalTranscript = "valley";
+    const voiced = () => Buffer.from(new Int16Array(960).fill(4000).buffer);
+    const endStream = () => Buffer.from(JSON.stringify({ type: "endStream" }));
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser, agent);
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(voiced());
+      browser.peerMessage(endStream());
+      // The fragment is echoed back as a partial: Vale stays listening.
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "transcript" &&
+              frame.transcript === "valley" &&
+              frame.final === false,
+          ),
+        ).toBe(true);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(agent).not.toHaveBeenCalled();
+      expect(
+        browser.frames().some((frame) => frame.type === "reply"),
+      ).toBe(false);
+      expect(
+        browser.frames().some((frame) => frame.type === "done"),
+      ).toBe(false);
+      // The rest arrives in the same turn and gets the one reply.
+      finalTranscript = "5 PM for a gel removal";
+      browser.peerMessage(voiced());
+      browser.peerMessage(endStream());
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "reply"),
+        ).toBe(true);
+      });
+      expect(agent).toHaveBeenCalledTimes(1);
+      // Step 3: the held name prepends instead of blanking, so the model
+      // hears one sentence with the name.
+      expect(
+        (agent.mock.calls[0][0] as { transcript: string }).transcript,
+      ).toBe("valley 5 PM for a gel removal");
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "done"),
+        ).toBe(true);
+      });
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
+});
+
+describe("quote reject on the touch card (decision 1)", () => {
+  it("leaves the sheet open waiting for the amount on a no vote", async () => {
+    const agent = vi.fn(fakeAgent());
+    const { getDb } = await import("./db");
+    const { runValeTool } = await import("./vale-tools");
+    const { setPendingAction, clearPendingAction } = await import(
+      "./pending-action"
+    );
+    const db = getDb();
+    const opened = runValeTool(
+      db,
+      "session_open",
+      { client_name: "Ana", service_name: "Gel removal" },
+      "en",
+    );
+    expect(opened.ok).toBe(true);
+    const quoted = runValeTool(db, "session_quote", {}, "en");
+    const pending = (quoted as { pendingAccept?: { amount: number; session_id: number } })
+      .pendingAccept;
+    expect(pending?.amount).toBeGreaterThan(0);
+    const client = "conv-quote-reject";
+    setPendingAction(client, [
+      { tool: "session_quote_accept", args: { amount: pending?.amount, session_id: pending?.session_id } },
+    ]);
+    try {
+      const browser = new FakeBrowser();
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: client,
+        metaUrl: url,
+        runAgent: agent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(
+        Buffer.from(JSON.stringify({ type: "vote", vote: "no" })),
+      );
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "reply" &&
+              String(frame.text ?? "").includes("amount"),
+          ),
+        ).toBe(true);
+      });
+      expect(agent).not.toHaveBeenCalled();
+      const widget = browser.frames().find(
+        (frame) => frame.type === "widget",
+      ) as { widget?: { kind?: string; data?: Record<string, unknown> } | null };
+      expect(widget?.widget?.kind).toBe("price");
+      expect(widget?.widget?.data).toMatchObject({ suggested: pending?.amount });
+      // The reply never names the total.
+      for (const frame of browser.frames()) {
+        if (frame.type === "reply") {
+          expect(String(frame.text ?? "")).not.toContain(
+            String(pending?.amount),
+          );
+        }
+      }
+      clearPendingAction(client);
+      browser.close(1000, "test done");
+    } finally {
+      runValeTool(db, "session_close", { products_used: [] }, "en");
+    }
+  });
+});
+
+describe("step 3: bridge (tag echo, watchdog, failover split, bare hold)", () => {
+  const pcmFrame = () => Buffer.from(new Int16Array(960).fill(4000).buffer);
+  const endStream = (turn: string, extra: Record<string, unknown> = {}) =>
+    Buffer.from(JSON.stringify({ type: "endStream", turn, ...extra }));
+
+  async function waitForBridge(browser: FakeBrowser): Promise<void> {
+    await vi.waitFor(() => {
+      expect(
+        browser.frames().some((frame) => frame.type === "bridge"),
+      ).toBe(true);
+    });
+  }
+
+  it("echoes the client turn tag on final, reply and done; interims stay plain", async () => {
+    receivedBinaryBytes = 0;
+    receivedEndStream = 0;
+    finalTranscript = "vale, live from the bridge";
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser);
+      await waitForBridge(browser);
+      browser.peerMessage(pcmFrame());
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "transcript" && frame.final === false,
+          ),
+        ).toBe(true);
+      });
+      browser.peerMessage(endStream("t007"));
+      await vi.waitFor(() => {
+        expect(browser.frames().some((frame) => frame.type === "done")).toBe(
+          true,
+        );
+      });
+      const frames = browser.frames();
+      const interim = frames.find(
+        (frame) => frame.type === "transcript" && frame.final === false,
+      );
+      const final = frames.find(
+        (frame) => frame.type === "transcript" && frame.final === true,
+      );
+      const reply = frames.find((frame) => frame.type === "reply");
+      const done = frames.find((frame) => frame.type === "done");
+      expect(interim).toBeDefined();
+      expect(interim).not.toHaveProperty("turn");
+      expect(final).toMatchObject({ turn: "t007", final: true });
+      expect(reply).toMatchObject({ turn: "t007" });
+      expect(done).toMatchObject({ turn: "t007" });
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
+
+  it("watchdog ends Meta ingress after 1.5 s of silence so the turn completes", async () => {
+    receivedBinaryBytes = 0;
+    receivedEndStream = 0;
+    finalTranscript = "vale, live from the bridge";
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser);
+      await waitForBridge(browser);
+      browser.peerMessage(pcmFrame());
+      // Meta is open (the interim below proves it) but the client never
+      // ends the stream: the watchdog must end it from the bridge side.
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "transcript" && frame.final === false,
+          ),
+        ).toBe(true);
+      });
+      await vi.waitFor(
+        () => {
+          expect(receivedEndStream).toBe(1);
+        },
+        { timeout: 5000 },
+      );
+      await vi.waitFor(
+        () => {
+          expect(
+            browser.frames().some((frame) => frame.type === "reply"),
+          ).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+    }
+  }, 15000);
+
+  it("failover keeps the next segment: only bytes past the last endStream survive", async () => {
+    holdHandshake = true;
+    receivedBinaryBytes = 0;
+    receivedEndStream = 0;
+    finalTranscript = "vale, live from the bridge";
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(browser, fakeAgent(), "test-key", "conv-split", {
+        turnTimeoutMs: 600,
+        conversation: true,
+      });
+      await waitForBridge(browser);
+      // Meta stays down: A ends (t1), then B+C buffer behind it.
+      browser.peerMessage(pcmFrame()); // A
+      browser.peerMessage(endStream("t1"));
+      browser.peerMessage(pcmFrame()); // B
+      browser.peerMessage(endStream("t2"));
+      browser.peerMessage(pcmFrame()); // C
+      // The turn times out with Meta still down: A+B (at or before the
+      // t2 mark) are dropped, C (past it) is kept for the redial.
+      await vi.waitFor(
+        () => {
+          expect(
+            browser.frames().some((frame) => frame.type === "ignored"),
+          ).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+      holdHandshake = false;
+      browser.peerMessage(pcmFrame()); // D
+      browser.peerMessage(endStream("t3"));
+      await vi.waitFor(
+        () => {
+          expect(
+            browser.frames().some((frame) => frame.type === "reply"),
+          ).toBe(true);
+        },
+        { timeout: 8000 },
+      );
+      // C + D reached Meta; A + B never did.
+      expect(receivedBinaryBytes).toBe(2 * 960 * 2);
+      browser.close(1000, "test done");
+    } finally {
+      holdHandshake = false;
+      finalTranscript = "vale, live from the bridge";
+    }
+  }, 20000);
+
+  it("holds a bare name and prepends it to the next segment", async () => {
+    finalQueue = ["Vale.", "open the card"];
+    let modelHeard = "";
+    const agent = async (args: { transcript: string }) => {
+      modelHeard = args.transcript;
+      return {
+        text: "Card opened.",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolUsed: null,
+        firstTokenMs: 50,
+      };
+    };
+    try {
+      const browser = new FakeBrowser();
+      attachForTest(
+        browser,
+        agent as (args: unknown) => Promise<BridgeAgentResult>,
+      );
+      await waitForBridge(browser);
+      browser.peerMessage(pcmFrame());
+      browser.peerMessage(endStream("t1"));
+      // The bare name shows as an interim and runs no model call.
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "transcript" &&
+              frame.final === false &&
+              String(frame.transcript ?? "").startsWith("Vale"),
+          ),
+        ).toBe(true);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(
+        browser.frames().some((frame) => frame.type === "reply"),
+      ).toBe(false);
+      // The rest of the sentence arrives next and joins the held name.
+      browser.peerMessage(pcmFrame());
+      browser.peerMessage(endStream("t2"));
+      await vi.waitFor(
+        () => {
+          expect(
+            browser.frames().some((frame) => frame.type === "reply"),
+          ).toBe(true);
+        },
+        { timeout: 8000 },
+      );
+      expect(modelHeard.toLowerCase().startsWith("vale")).toBe(true);
+      expect(modelHeard.toLowerCase()).toContain("open the card");
+      browser.close(1000, "test done");
+    } finally {
+      finalQueue = [];
+      finalTranscript = "vale, live from the bridge";
+    }
+  }, 20000);
+
+  it("drops a bare name held past 8 s instead of joining it", async () => {
+    finalQueue = ["Vale.", "open the card"];
+    let modelHeard = "";
+    const agent = async (args: { transcript: string }) => {
+      modelHeard = args.transcript;
+      return {
+        text: "Card opened.",
+        usage: { inputTokens: 10, outputTokens: 5 },
+        toolUsed: null,
+        firstTokenMs: 50,
+      };
+    };
+    try {
+      let fakeNow = Date.now();
+      const browser = new FakeBrowser();
+      attachForTest(
+        browser,
+        agent as (args: unknown) => Promise<BridgeAgentResult>,
+        "test-key",
+        "test-client",
+        { now: () => fakeNow, conversation: true },
+      );
+      await waitForBridge(browser);
+      browser.peerMessage(pcmFrame());
+      browser.peerMessage(endStream("t1"));
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some(
+            (frame) =>
+              frame.type === "transcript" && frame.final === false,
+          ),
+        ).toBe(true);
+      });
+      // Past the 8 s hold: the rest arrives on its own. Her open sheet
+      // holds the window so the unnamed rest still executes.
+      fakeNow += 9000;
+      browser.peerMessage(pcmFrame());
+      browser.peerMessage(endStream("t2", { sheetOpen: true }));
+      await vi.waitFor(
+        () => {
+          expect(
+            browser.frames().some((frame) => frame.type === "reply"),
+          ).toBe(true);
+        },
+        { timeout: 8000 },
+      );
+      expect(modelHeard.toLowerCase().startsWith("vale")).toBe(false);
+      expect(modelHeard.toLowerCase()).toContain("open the card");
+      browser.close(1000, "test done");
+    } finally {
+      finalQueue = [];
+      finalTranscript = "vale, live from the bridge";
+    }
+  }, 20000);
 });

@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -9,47 +10,23 @@ vi.mock("@/lib/capture", () => ({
 
 const mockStartCapture = vi.mocked(startCapture);
 
-function sseWithInterim(final: string, reply: string) {
-  const raw =
-    `event: interim\ndata: {"transcript":${JSON.stringify(final.slice(0, 5))}}\n\n` +
-    `event: final\ndata: {"transcript":${JSON.stringify(final)},"audioProcessedMs":800}\n\n` +
-    `event: reply\ndata: {"text":${JSON.stringify(reply)}}\n\n` +
-    "event: done\ndata: {}\n\n";
-  const bytes = new TextEncoder().encode(raw);
-  let served = false;
-  return {
-    getReader: () => ({
-      read: async () => {
-        if (!served) {
-          served = true;
-          return { done: false, value: bytes };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
-}
-
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-describe("buffered turn upload (Safari iOS has no streaming request body)", () => {
-  it("posts one Blob/Uint8Array body without duplex, interim still renders", async () => {
+describe("live turn over one socket (no buffered upload)", () => {
+  it("streams a speech burst live, interim still renders, never POSTs", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
-    // No real sockets in tests: Node's WebSocket would dial localhost:3000,
-    // so hide it and force the buffered-POST fallback path under test.
-    vi.stubGlobal("WebSocket", undefined);
+    stubVoiceSocket();
 
     // One speech burst on the first capture only; later turns stay silent.
     let fired = false;
     mockStartCapture.mockImplementation((_stream, callbacks) => {
-      if (fired) return { stop: () => {}, state: () => "running" };
+      if (fired) return { stop: () => {}, state: () => "running", engine: () => "script" as const };
       fired = true;
       const frame = new Int16Array(960).fill(4000);
       window.setTimeout(() => {
@@ -58,40 +35,55 @@ describe("buffered turn upload (Safari iOS has no streaming request body)", () =
         for (let i = 0; i < 8; i += 1) callbacks.onFrame(frame);
         callbacks.onSpeechEnd();
       }, 0);
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
-    const fetchMock = vi.fn((..._args: unknown[]) => {
-      if (fetchMock.mock.calls.length > 1) return new Promise(() => {}); // second turn hangs
-      return Promise.resolve({ ok: true, body: sseWithInterim("hello refill", "Booked in.") });
-    });
+    const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
+    await waitFor(() => {
+      expect(FakeVoiceSocket.instances).toHaveLength(1);
+    });
+    const ws = FakeVoiceSocket.instances[0];
+    // The burst rides the socket live: binary audio, one JSON endStream.
+    await waitFor(() => {
+      expect(ws.sentBinaryCount()).toBeGreaterThan(0);
+    });
+    ws.serverMessage({ type: "transcript", transcript: "hello", final: false });
+    await waitFor(() => {
+      expect(screen.getByText("hello")).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(
+        ws.sentStrings().some((raw) => raw.includes("endStream")),
+      ).toBe(true);
+    });
+
+    ws.serverMessage({
+      type: "transcript",
+      transcript: "hello refill",
+      final: true,
+    });
     await waitFor(() => {
       expect(screen.getByText("hello refill")).toBeTruthy();
     });
+    ws.serverMessage({ type: "reply", text: "Booked in." });
     await waitFor(() => {
       expect(screen.getByText("Booked in.")).toBeTruthy();
     });
+    ws.serverMessage({ type: "done" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, options] = fetchMock.mock.calls[0] as [string, Record<string, unknown>];
-    expect(
-      options.body instanceof Blob || options.body instanceof Uint8Array,
-    ).toBe(true);
-    expect(options.body instanceof ReadableStream).toBe(false);
-    // No streaming-upload flag: Safari iOS rejects `duplex: "half"`.
-    expect(options).not.toHaveProperty("duplex");
+    // One transport: the POST upload path never fires.
+    expect(fetchMock).not.toHaveBeenCalled();
 
     // Interim is replaced by the final.
     expect(screen.queryByText("hello")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
   });
 });

@@ -2,8 +2,11 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
+  clockDrifted,
+  ensureCaptureReady,
   floatToPcm16,
   framePcmBlocks,
+  isWorkletReady,
   resampleLinear,
   SpeechDetector,
   startCapture,
@@ -16,6 +19,7 @@ import {
 import {
   CAPTURE_WORKLET_NAME,
   captureWorkletSource,
+  designLowpassKernel,
 } from "./capture-worklet-source";
 
 function toneFrame(amplitude = 5000, samples = FRAME_SAMPLES): Int16Array {
@@ -99,7 +103,8 @@ describe("bug 2 VAD calibration (iPhone clipped phrase onsets)", () => {
     }
     expect(detector.isSpeaking).toBe(true);
     const tail: string[] = [];
-    for (let i = 0; i < 8; i++) tail.push(detector.feed(silence));
+    // 1000 ms of silence ends the turn once, not before.
+    for (let i = 0; i < 13; i++) tail.push(detector.feed(silence));
     expect(tail.filter((event) => event === "speech-end")).toHaveLength(1);
     expect(detector.isSpeaking).toBe(false);
   });
@@ -144,9 +149,11 @@ describe("end-of-turn pause (NEXT_PUBLIC_VAD_END_SILENCE_MS)", () => {
     return frames;
   };
 
-  it("defaults to 800 ms: slow phrases split, normal ones stay whole", () => {
-    // 1000 ms mid-pause: a slow phrase becomes two turns at the default.
-    expect(splits(new SpeechDetector(), phrase(8, 25))).toBe(1);
+  it("defaults to 1000 ms: slow phrases split, normal ones stay whole", () => {
+    // 1200 ms mid-pause: a slow phrase becomes two turns at the default.
+    expect(splits(new SpeechDetector(), phrase(8, 30))).toBe(1);
+    // 960 ms mid-pause: unhurried rhythm stays one turn.
+    expect(splits(new SpeechDetector(), phrase(8, 24))).toBe(0);
     // 200 ms mid-pause: normal rhythm stays one turn.
     expect(splits(new SpeechDetector(), phrase(8, 5))).toBe(0);
   });
@@ -176,6 +183,52 @@ describe("utterance accounting (lost blocks vs wall time)", () => {
   it("counts missing frames, never negative for surplus", () => {
     expect(utteranceLoss(1000, 20)).toBe(5);
     expect(utteranceLoss(400, 12)).toBe(0);
+  });
+});
+
+describe("capture engine reporting (worklet vs ScriptProcessor)", () => {
+  it("reports script when the context has no worklet module", () => {
+    stubAudio();
+    const engines: string[] = [];
+    const handle = startCapture({} as MediaStream, {
+      ...quietCallbacks(),
+      onEngine: (engine) => engines.push(engine),
+    });
+    expect(handle.engine()).toBe("script");
+    expect(engines).toEqual(["script"]);
+    handle.stop();
+  });
+
+  it("isWorkletReady needs the warmed module flag on the context", () => {
+    stubAudio();
+    expect(isWorkletReady({} as AudioContext)).toBe(false);
+    expect(
+      isWorkletReady({ audioWorklet: {} } as unknown as AudioContext),
+    ).toBe(false);
+    expect(
+      isWorkletReady(
+        { audioWorklet: {}, __valeWorklet: "warming" } as unknown as AudioContext,
+      ),
+    ).toBe(false);
+    expect(
+      isWorkletReady(
+        { audioWorklet: {}, __valeWorklet: "ready" } as unknown as AudioContext,
+      ),
+    ).toBe(true);
+  });
+
+  it("the kill-switch forces the fallback even with a ready module", () => {
+    stubAudio();
+    vi.stubEnv("NEXT_PUBLIC_CAPTURE_WORKLET", "0");
+    try {
+      expect(
+        isWorkletReady(
+          { audioWorklet: {}, __valeWorklet: "ready" } as unknown as AudioContext,
+        ),
+      ).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -298,6 +351,20 @@ describe("strict-turn pause (mute while Vale speaks)", () => {
     };
   };
 
+  it("pausing suspends the session and resume reopens it", () => {
+    stubAudio();
+    const handle = startCapture({} as MediaStream, quietCallbacks());
+    const context = FakeAudioContext.instances[0];
+    const resumedBefore = context.resumed;
+    handle.setPaused?.(true);
+    expect(context.suspended).toBe(1);
+    expect(context.state).toBe("suspended");
+    handle.setPaused?.(false);
+    expect(context.resumed).toBe(resumedBefore + 1);
+    expect(context.state).toBe("running");
+    handle.stop();
+  });
+
   it("pausing drops detector and frames but keeps the heartbeat", () => {
     stubAudio();
     const { seen, callbacks } = counters();
@@ -343,26 +410,50 @@ describe("strict-turn pause (mute while Vale speaks)", () => {
     handle.stop();
   });
 
-  it("resuming clears stale pre-roll so her voice never prefixes the turn", () => {
+  it("opens the turn before replaying its pre-roll", () => {
     stubAudio();
-    // Control: silence fills pre-roll, then speech flushes it (25 + 4 frames).
-    const control = counters();
-    startCapture({} as MediaStream, control.callbacks);
-    let process = liveProcessor();
+    const order: string[] = [];
+    startCapture({} as MediaStream, {
+      ...quietCallbacks(),
+      onFrame: () => void order.push("frame"),
+      onSpeechStart: () => void order.push("start"),
+    });
+    const process = liveProcessor();
     for (let i = 0; i < 30; i++) process(block(0));
     process(block(0.5));
-    expect(control.seen.frames).toBe(25 + 4);
-    // Paused path: the same silence is discarded on resume.
-    stubAudio();
-    const muted = counters();
-    const handle = startCapture({} as MediaStream, muted.callbacks);
-    process = liveProcessor();
-    for (let i = 0; i < 30; i++) process(block(0));
-    handle.setPaused?.(true);
-    handle.setPaused?.(false);
-    process(block(0.5));
-    expect(muted.seen.frames).toBe(4);
-    handle.stop();
+    // A speech-opened turn wipes pending frames: the turn must exist first.
+    expect(order[0]).toBe("start");
+    expect(order.filter((kind) => kind === "frame").length).toBeGreaterThan(0);
+  });
+
+  it("resuming parks frames in the ring while the VAD stays deaf", () => {
+    const nowSpy = vi.spyOn(Date, "now");
+    let now = 1_000_000;
+    nowSpy.mockImplementation(() => now);
+    try {
+      stubAudio();
+      const muted = counters();
+      const handle = startCapture({} as MediaStream, muted.callbacks);
+      const process = liveProcessor();
+      for (let i = 0; i < 30; i++) process(block(0));
+      handle.setPaused?.(true);
+      handle.setPaused?.(false);
+      // Inside the 300 ms window even sustained speech never trips.
+      process(block(0.5));
+      expect(muted.seen.frames).toBe(0);
+      expect(muted.seen.starts).toBe(0);
+      for (let i = 0; i < 8; i++) process(block(0.5));
+      expect(muted.seen.starts).toBe(0);
+      expect(muted.seen.frames).toBe(0);
+      // Past the window the parked ring replays first, then live flows.
+      now += 300;
+      for (let i = 0; i < 8; i++) process(block(0.5));
+      expect(muted.seen.starts).toBe(1);
+      expect(muted.seen.frames).toBeGreaterThan(8);
+      handle.stop();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });
 
@@ -373,25 +464,57 @@ class FakeAudioNode {
   disconnect(): void {}
 }
 
+class FakeWorkletNode {
+  static instances: FakeWorkletNode[] = [];
+  port: {
+    onmessage: ((event: unknown) => void) | null;
+    postMessage: () => void;
+    close: () => void;
+  };
+  constructor() {
+    this.port = { onmessage: null, postMessage: () => {}, close: () => {} };
+    FakeWorkletNode.instances.push(this);
+  }
+  connect(): void {}
+  disconnect(): void {}
+}
+
 class FakeAudioContext {
   static instances: FakeAudioContext[] = [];
   /** New contexts start suspended until resume() unlocks them. */
   static startSuspended = false;
   static resumeUnlocks = true;
+  /** Device rate the fake mic runs at; the context must adopt it, unforced. */
+  static deviceRate = CAPTURE_RATE;
+  /** Per-test worklet module loader; undefined keeps the ScriptProcessor. */
+  static workletStub:
+    | { addModule: (url: string) => Promise<void> }
+    | undefined = undefined;
   state = "running";
   sampleRate = CAPTURE_RATE;
+  audioWorklet:
+    | { addModule: (url: string) => Promise<void> }
+    | undefined = FakeAudioContext.workletStub;
+  requestedOptions: { sampleRate?: number } | undefined;
   resumed = 0;
+  suspended = 0;
   closedCount = 0;
   destination = {};
   onaudioprocess: ((event: unknown) => void) | null = null;
   constructor(options?: { sampleRate?: number }) {
-    if (options?.sampleRate) this.sampleRate = options.sampleRate;
+    this.requestedOptions = options;
+    this.sampleRate = options?.sampleRate ?? FakeAudioContext.deviceRate;
     if (FakeAudioContext.startSuspended) this.state = "suspended";
     FakeAudioContext.instances.push(this);
   }
   resume(): Promise<void> {
     this.resumed += 1;
     if (FakeAudioContext.resumeUnlocks) this.state = "running";
+    return Promise.resolve();
+  }
+  suspend(): Promise<void> {
+    this.suspended += 1;
+    this.state = "suspended";
     return Promise.resolve();
   }
   close(): Promise<void> {
@@ -415,8 +538,11 @@ class FakeAudioContext {
 function stubAudio() {
   FakeAudioContext.instances = [];
   FakeAudioNode.created = [];
+  FakeWorkletNode.instances = [];
   FakeAudioContext.startSuspended = false;
   FakeAudioContext.resumeUnlocks = true;
+  FakeAudioContext.deviceRate = CAPTURE_RATE;
+  FakeAudioContext.workletStub = undefined;
   vi.stubGlobal("window", {
     AudioContext: FakeAudioContext,
     setTimeout: (...args: [() => void, number]) =>
@@ -500,5 +626,312 @@ describe("audio unlock lifecycle (two-tap cycle)", () => {
     expect(handle.state()).toBe("running");
     handle.stop();
     expect(handle.state()).toBe("closed");
+  });
+});
+
+describe("native-rate capture (no forced 24 kHz context)", () => {
+  it("unlockAudioContext warms a context without a sampleRate option", () => {
+    stubAudio();
+    unlockAudioContext();
+    expect(FakeAudioContext.instances).toHaveLength(1);
+    expect(
+      FakeAudioContext.instances[0].requestedOptions,
+    ).toBeUndefined();
+    // Consume the warmed context so the next test builds its own.
+    startCapture({} as MediaStream, quietCallbacks()).stop();
+  });
+
+  it("startCapture creates its context without a sampleRate option", () => {
+    stubAudio();
+    // Drain any warmed leftover from an earlier test.
+    startCapture({} as MediaStream, quietCallbacks()).stop();
+    FakeAudioContext.instances = [];
+    const handle = startCapture({} as MediaStream, quietCallbacks());
+    expect(FakeAudioContext.instances).toHaveLength(1);
+    expect(
+      FakeAudioContext.instances[0].requestedOptions,
+    ).toBeUndefined();
+    handle.stop();
+  });
+
+  it("a 48 kHz device keeps its rate: the worklet decimates, not the context", () => {
+    stubAudio();
+    FakeAudioContext.deviceRate = 48000;
+    const handle = startCapture({} as MediaStream, quietCallbacks());
+    expect(FakeAudioContext.instances[0].sampleRate).toBe(48000);
+    handle.stop();
+  });
+});
+
+describe("worklet low-pass decimation", () => {
+  const kernel = designLowpassKernel(48000, 24000, 24);
+
+  it("has unity DC gain and symmetric taps", () => {
+    expect(kernel).toHaveLength(49);
+    const sum = kernel.reduce((a, b) => a + b, 0);
+    expect(sum).toBeCloseTo(1, 10);
+    for (let n = 0; n < kernel.length; n++) {
+      expect(kernel[n]).toBeCloseTo(kernel[kernel.length - 1 - n], 12);
+    }
+  });
+
+  const firDecimate = (input: Float32Array): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < 480; i++) {
+      const center = i * 2;
+      let acc = 0;
+      for (let k = 0; k < kernel.length; k++) {
+        acc += (input[center - 24 + k] ?? 0) * kernel[k];
+      }
+      out.push(acc);
+    }
+    return out;
+  };
+  const tone = (hz: number): Float32Array => {
+    const buf = new Float32Array(984);
+    for (let i = 0; i < buf.length; i++) {
+      buf[i] = Math.sin((2 * Math.PI * hz * i) / 48000);
+    }
+    return buf;
+  };
+  const rms = (xs: number[]): number =>
+    Math.sqrt(xs.reduce((a, b) => a + b * b, 0) / xs.length);
+
+  it("passes 1 kHz near unity", () => {
+    expect(rms(firDecimate(tone(1000)))).toBeCloseTo(Math.SQRT1_2, 1);
+  });
+
+  it("stops 18 kHz deep in the stopband", () => {
+    expect(rms(firDecimate(tone(18000)))).toBeLessThan(0.05);
+  });
+
+  it("the shipped module embeds the tested kernel", () => {
+    const source = captureWorkletSource();
+    expect(source).toContain("designLowpassKernel");
+    expect(source).toContain("sinc");
+  });
+
+  it("the shipped module parses as plain JavaScript", async () => {
+    const { Script } = await import("node:vm");
+    // Compiles only: the worklet globals resolve on the audio thread.
+    expect(() => new Script(captureWorkletSource())).not.toThrow();
+  });
+
+  it("the shipped module constructs and posts 24 kHz frames", async () => {
+    const { Script } = await import("node:vm");
+    // The bundler minifies the embedded kernel (designLowpassKernel becomes
+    // n) while the constructor calls it by literal template name: simulate
+    // that rename before executing, or a silent ReferenceError ships.
+    const shipped = captureWorkletSource().replace(
+      "function designLowpassKernel(",
+      "function n(",
+    );
+    expect(shipped).not.toContain("function designLowpassKernel(");
+    const posted: { type: string; pcm?: ArrayBuffer; quanta?: number }[] = [];
+    let Processor: new () => {
+      port: { onmessage: null; postMessage: (m: unknown) => void };
+      process: (inputs: Float32Array[][]) => boolean;
+    };
+    const sandbox = {
+      sampleRate: 48000,
+      currentTime: 0,
+      AudioWorkletProcessor: class {
+        port = {
+          onmessage: null,
+          postMessage: (m: { type: string; pcm?: ArrayBuffer }) =>
+            void posted.push(m),
+        };
+      },
+      registerProcessor: (
+        _name: string,
+        cls: typeof Processor,
+      ) => void (Processor = cls),
+    };
+    new Script(shipped).runInNewContext(sandbox);
+    const node = new Processor!();
+    // 16 quanta of DC 0.5 at 48 kHz: the first 960-sample frame must come out.
+    for (let q = 0; q < 16; q++) {
+      sandbox.currentTime = q * 0.002;
+      expect(
+        node.process([[new Float32Array(128).fill(0.5)]]),
+      ).toBe(true);
+    }
+    const frames = posted.filter((m) => m.type === "frame");
+    expect(frames.length).toBeGreaterThan(0);
+    const pcm = new Int16Array(frames[0].pcm!);
+    expect(pcm).toHaveLength(960);
+    let sum = 0;
+    for (const v of pcm) sum += v;
+    // DC survives the low-pass near unity: 0.5 * 32767 ≈ 16384.
+    expect(sum / pcm.length).toBeGreaterThan(14000);
+  });
+});
+
+describe("clock watchdog (drift below 0.95 rebuilds the context)", () => {
+  it("flags only a slow context over a full 2 s window", () => {
+    expect(clockDrifted(96000, 48000, 2000)).toBe(false);
+    expect(clockDrifted(90000, 48000, 2000)).toBe(true);
+    expect(clockDrifted(0, 48000, 2000)).toBe(true);
+    expect(clockDrifted(0, 48000, 1999)).toBe(false);
+    expect(clockDrifted(96000, 0, 2000)).toBe(false);
+  });
+
+  const beat = (quanta: number) => {
+    const node = FakeWorkletNode.instances.at(-1);
+    node?.port.onmessage?.({ data: { type: "beat", quanta } });
+  };
+  const flushRebuild = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+  /** Worklet path on a 48 kHz device with controllable wall time. */
+  const startWorklet48k = (callbacks: Parameters<typeof startCapture>[1]) => {
+    stubAudio();
+    FakeAudioContext.deviceRate = 48000;
+    FakeAudioContext.workletStub = { addModule: async () => {} };
+    vi.stubGlobal("AudioWorkletNode", FakeWorkletNode);
+    // jsdom has no Blob-URL factory; the module URL is a browser concern.
+    const urlAny = URL as unknown as Record<string, unknown>;
+    const origCreateObjectURL = urlAny.createObjectURL;
+    urlAny.createObjectURL = () => "blob:test-worklet";
+    try {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
+      unlockAudioContext();
+      (FakeAudioContext.instances[0] as unknown as Record<string, unknown>)[
+        "__valeWorklet"
+      ] = "ready";
+      return startCapture({} as MediaStream, callbacks);
+    } finally {
+      urlAny.createObjectURL = origCreateObjectURL;
+    }
+  };
+
+  it("rebuilds the context and worklet when audio runs slower than the wall", async () => {
+    const rebuilds: number[] = [];
+    let beats = 0;
+    const handle = startWorklet48k({
+      ...quietCallbacks(),
+      onClockRebuild: (total) => rebuilds.push(total),
+      onHeartbeat: () => void beats++,
+    });
+    expect(handle.engine()).toBe("worklet");
+    // Healthy: 2.5 s of audio over 2.5 s of wall time.
+    beat(0);
+    expect(beats).toBe(1);
+    vi.setSystemTime(1_002_500);
+    beat(938);
+    expect(rebuilds).toEqual([]);
+    expect(FakeAudioContext.instances).toHaveLength(1);
+    // Drift: 3 more s of wall time with the same quantum counter.
+    vi.setSystemTime(1_005_500);
+    beat(938);
+    await flushRebuild();
+    expect(rebuilds).toEqual([1]);
+    expect(FakeAudioContext.instances).toHaveLength(2);
+    expect(FakeAudioContext.instances[0].closedCount).toBe(1);
+    expect(handle.engine()).toBe("worklet");
+    // The rebuilt graph delivers: beats flow on the new node, no new trip.
+    const delivered = beats;
+    beat(1010);
+    expect(beats).toBe(delivered + 1);
+    vi.setSystemTime(1_008_000);
+    beat(1948);
+    await flushRebuild();
+    expect(rebuilds).toEqual([1]);
+    expect(FakeAudioContext.instances).toHaveLength(2);
+    handle.stop();
+  });
+
+  it("muted spans re-anchor the window instead of tripping the rebuild", async () => {
+    const rebuilds: number[] = [];
+    const handle = startWorklet48k({
+      ...quietCallbacks(),
+      onClockRebuild: (total) => rebuilds.push(total),
+    });
+    beat(0);
+    handle.setPaused?.(true);
+    vi.setSystemTime(1_006_000);
+    beat(10);
+    handle.setPaused?.(false);
+    await flushRebuild();
+    expect(rebuilds).toEqual([]);
+    expect(FakeAudioContext.instances).toHaveLength(1);
+    handle.stop();
+  });
+
+  it("warns the client before the detector resets", async () => {
+    const interrupts: number[] = [];
+    const rebuilds: number[] = [];
+    const handle = startWorklet48k({
+      ...quietCallbacks(),
+      onInterrupt: () => void interrupts.push(1),
+      onClockRebuild: (total) => rebuilds.push(total),
+    });
+    beat(0);
+    vi.setSystemTime(1_006_000);
+    beat(938);
+    await flushRebuild();
+    expect(rebuilds).toEqual([1]);
+    expect(interrupts).toEqual([1]);
+    handle.stop();
+  });
+});
+
+describe("worklet readiness wait (no engine coin-flip)", () => {
+  /** Drain any warmed leftover, then warm a fresh context with a stub. */
+  const warmWith = (
+    stub: { addModule: (url: string) => Promise<void> } | undefined,
+  ) => {
+    stubAudio();
+    try {
+      startCapture({} as MediaStream, quietCallbacks()).stop();
+    } catch {
+      /* no prepared context to drain */
+    }
+    FakeAudioContext.instances = [];
+    FakeAudioContext.workletStub = stub;
+    // jsdom has no Blob-URL factory; the module URL is a browser concern.
+    const urlAny = URL as unknown as Record<string, unknown>;
+    if (typeof urlAny.createObjectURL !== "function") {
+      urlAny.createObjectURL = () => "blob:test-worklet";
+    }
+    unlockAudioContext();
+  };
+
+  it("resolves true when the warmed module is already ready", async () => {
+    warmWith({ addModule: async () => {} });
+    (FakeAudioContext.instances[0] as unknown as Record<string, unknown>)[
+      "__valeWorklet"
+    ] = "ready";
+    await expect(ensureCaptureReady(50)).resolves.toBe(true);
+  });
+
+  it("waits for a warming module instead of falling back", async () => {
+    warmWith({ addModule: async () => {} });
+    // Still warming here: only the wait settles it to ready.
+    expect(
+      FakeAudioContext.instances[0] as unknown as Record<string, unknown>,
+    ).not.toHaveProperty("__valeWorklet", "ready");
+    await expect(ensureCaptureReady()).resolves.toBe(true);
+  });
+
+  it("times out to the fallback when the module never loads", async () => {
+    warmWith({ addModule: () => new Promise<void>(() => {}) });
+    await expect(ensureCaptureReady(30)).resolves.toBe(false);
+  });
+
+  it("stays on the fallback without AudioWorklet support", async () => {
+    warmWith(undefined);
+    await expect(ensureCaptureReady(10)).resolves.toBe(false);
+  });
+
+  it("stays on the fallback when the kill-switch is set", async () => {
+    warmWith({ addModule: async () => {} });
+    vi.stubEnv("NEXT_PUBLIC_CAPTURE_WORKLET", "0");
+    try {
+      await expect(ensureCaptureReady(10)).resolves.toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

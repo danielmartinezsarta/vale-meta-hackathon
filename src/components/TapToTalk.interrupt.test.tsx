@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, waitForElementToBeRemoved } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
 import { startCapture } from "@/lib/capture";
 import type { CaptureCallbacks } from "@/lib/capture";
 import { stopSpeaking } from "@/lib/speak";
@@ -33,50 +34,20 @@ function burst(callbacks: CaptureCallbacks) {
   callbacks.onSpeechEnd();
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((response) => {
-    resolve = response;
-  });
-  return { promise, resolve };
+function noAudioPost() {
+  const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
-function gatedTurn() {
-  const replyGate = deferred<void>();
-  const doneGate = deferred<void>();
-  const encoder = new TextEncoder();
-  const state = { step: 0 };
-  const body = {
-    getReader: () => ({
-      read: async (): Promise<{ done: boolean; value?: Uint8Array }> => {
-        state.step += 1;
-        if (state.step === 1) {
-          return {
-            done: false,
-            value: encoder.encode(
-              'event: final\ndata: {"transcript":"book a refill","audioProcessedMs":800}\n\n',
-            ),
-          };
-        }
-        if (state.step === 2) {
-          await replyGate.promise;
-          return {
-            done: false,
-            value: encoder.encode(
-              'event: reply\ndata: {"text":"You are booked in."}\n\n',
-            ),
-          };
-        }
-        if (state.step === 3) {
-          await doneGate.promise;
-          return { done: true, value: undefined };
-        }
-        return { done: true, value: undefined };
-      },
-      releaseLock: () => {},
-    }),
-  };
-  return { body, replyGate, doneGate };
+function liveSocket() {
+  return FakeVoiceSocket.instances[0];
+}
+
+function sentEndStream(): boolean {
+  return liveSocket()
+    .sent.filter((item): item is string => typeof item === "string")
+    .some((raw) => raw.includes("endStream"));
 }
 
 afterEach(() => {
@@ -95,35 +66,32 @@ describe("interruption (fake-device fallback)", () => {
     });
     // No real sockets in tests: Node's WebSocket would dial localhost:3000,
     // so hide it and force the buffered-POST fallback path under test.
-    vi.stubGlobal("WebSocket", undefined);
+    stubVoiceSocket();
     const seen: CaptureCallbacks[] = [];
     mockStartCapture.mockImplementation((_stream, callbacks) => {
       seen.push(callbacks);
-      return { stop: () => {}, state: () => "running" };
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
-    const turn = gatedTurn();
-    const fetchMock = vi.fn(() => {
-      if (fetchMock.mock.calls.length > 1) {
-        return new Promise(() => {}); // later turns hang: session waits
-      }
-      return Promise.resolve({ ok: true, body: turn.body });
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = noAudioPost();
 
-    render(<TapToTalk />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
     burst(seen[0]);
+    liveSocket().serverMessage({
+      type: "transcript",
+      transcript: "book a refill",
+      final: true,
+    });
 
     await waitFor(() => {
       expect(screen.getByText("book a refill")).toBeTruthy();
     });
     expect(screen.queryByText("You are booked in.")).toBeNull();
 
-    turn.replyGate.resolve();
+    liveSocket().serverMessage({ type: "reply", text: "You are booked in." });
     await screen.findByText("You are booked in.");
 
     // Strict turns: speech while she speaks changes nothing on screen.
@@ -137,8 +105,79 @@ describe("interruption (fake-device fallback)", () => {
     expect(screen.getByText("book a refill")).toBeTruthy();
 
     speakAudibleRef.current = false;
-    turn.doneGate.resolve();
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    liveSocket().serverMessage({ type: "done" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
+  });
+
+  it("pausing for her voice closes the released segment with endStream first", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getUserMedia: async () =>
+          ({ getTracks: () => [] }) as unknown as MediaStream,
+      },
+    });
+    stubVoiceSocket();
+    noAudioPost();
+    const seen: CaptureCallbacks[] = [];
+    const pauses: boolean[] = [];
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      seen.push(callbacks);
+      return {
+        stop: () => {},
+        state: () => "running",
+        engine: () => "script" as const,
+        setPaused: (value: boolean) => void pauses.push(value),
+      };
+    });
+
+    render(<TapToTalk autoStart />);
+    await waitFor(() => {
+      expect(seen.length).toBeGreaterThan(0);
+    });
+    // Released but speech never ended: her voice cuts in mid-segment.
+    seen[0].onSpeechStart();
+    const voiced = new Int16Array(960).fill(4000);
+    for (let i = 0; i < 8; i += 1) seen[0].onFrame(voiced);
+    speakAudibleRef.current = true;
+    seen[0].onFrame(voiced);
+    // The segment ends explicitly before the pause, never silently.
+    await waitFor(() => {
+      expect(sentEndStream()).toBe(true);
+    });
+    expect(pauses).toContain(true);
+    expect(screen.queryByRole("alert")).toBeNull();
+    speakAudibleRef.current = false;
+  });
+
+  it("a rebuild closes the released segment with endStream first", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getUserMedia: async () =>
+          ({ getTracks: () => [] }) as unknown as MediaStream,
+      },
+    });
+    stubVoiceSocket();
+    noAudioPost();
+    const seen: CaptureCallbacks[] = [];
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      seen.push(callbacks);
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
+    });
+
+    render(<TapToTalk autoStart />);
+    await waitFor(() => {
+      expect(seen.length).toBeGreaterThan(0);
+    });
+    seen[0].onSpeechStart();
+    const voiced = new Int16Array(960).fill(4000);
+    for (let i = 0; i < 8; i += 1) seen[0].onFrame(voiced);
+    seen[0].onInterrupt?.();
+    // The detector reset never strands the segment: endStream rode first.
+    await waitFor(() => {
+      expect(sentEndStream()).toBe(true);
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("holds the open turn while muted: no quiet churn, no vad notice", async () => {
@@ -150,19 +189,19 @@ describe("interruption (fake-device fallback)", () => {
             ({ getTracks: () => [] }) as unknown as MediaStream,
         },
       });
-      vi.stubGlobal("WebSocket", undefined);
+      stubVoiceSocket();
       const seen: CaptureCallbacks[] = [];
       mockStartCapture.mockImplementation((_stream, callbacks) => {
         seen.push(callbacks);
-        return { stop: () => {}, state: () => "running" };
+        return { stop: () => {}, state: () => "running", engine: () => "script" as const };
       });
       vi.stubGlobal(
         "fetch",
         vi.fn(() => new Promise(() => {})),
       );
-      render(<TapToTalk />);
-      fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
-      await vi.advanceTimersByTimeAsync(0);
+      render(<TapToTalk autoStart />);
+      // The /voice gate polls every 50 ms: advance past one poll.
+      await vi.advanceTimersByTimeAsync(100);
       expect(seen.length).toBeGreaterThan(0);
       // Her voice: the watch mutes within one tick and stays muted.
       speakAudibleRef.current = true;
@@ -174,7 +213,7 @@ describe("interruption (fake-device fallback)", () => {
         screen.queryByText("I didn't hear you. Speak, I'm listening."),
       ).toBeNull();
       expect(
-        screen.getByRole("button", { name: "Stop" }),
+        screen.getByRole("button", { name: "Put Vale to sleep" }),
       ).toBeTruthy();
       expect(mockStopSpeaking).not.toHaveBeenCalled();
     } finally {
@@ -182,4 +221,56 @@ describe("interruption (fake-device fallback)", () => {
       vi.useRealTimers();
     }
   });
+
+  it(
+    "schedules the summary chain while speaking: good job after 5 s, close after 5 s",
+    { timeout: 30000 },
+    async () => {
+      try {
+        vi.stubGlobal("navigator", {
+          mediaDevices: {
+            getUserMedia: async () =>
+              ({ getTracks: () => [] }) as unknown as MediaStream,
+          },
+        });
+        stubVoiceSocket();
+        render(<TapToTalk autoStart />);
+        // She speaks before the summary lands: the chain must not wait on it.
+        speakAudibleRef.current = true;
+        await screen.findByText("Speaking", undefined, { timeout: 5000 });
+        liveSocket().serverMessage({
+          type: "widget",
+          widget: {
+            kind: "session_summary",
+            title: "Session summary",
+            size: "full",
+            data: {
+              client: "David",
+              date: "Nov 2, 2026",
+              service: { name: "Gel removal", price: 24 },
+              extras: [],
+              suggested: 24,
+              charged: 24,
+              earned: null,
+              stdMinutes: null,
+              timeTotal: "11m",
+              timeParts: [],
+              costs: [],
+              fixedDetail: null,
+            },
+          },
+        });
+        // The summary shows even while she speaks the close line.
+        await screen.findByText("Session summary");
+        // Past the summary window she is still speaking, yet goodbye takes over.
+        await screen.findByText("Good job!", undefined, { timeout: 8000 });
+        // After the goodbye window the sheet closes on its own.
+        await waitForElementToBeRemoved(() => screen.queryByText("Good job!"), {
+          timeout: 8000,
+        });
+      } finally {
+        speakAudibleRef.current = false;
+      }
+    },
+  );
 });

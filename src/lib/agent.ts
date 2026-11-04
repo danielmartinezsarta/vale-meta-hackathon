@@ -2,9 +2,9 @@ import {
   VALE_TOOLS,
   clientLabel,
   getOpenSession,
-  localDay,
-  runValeTool,
+  runValeToolAsync,
 } from "./vale-tools";
+import { bogotaDay } from "./natural-date";
 import { DEFAULT_USER_NAME, getDb, userName, type HistoryTurn, type ValeDb } from "./db";
 import { DEFAULT_LANGUAGE, clarifyText, type ValeLanguage } from "./vale-language";
 import {
@@ -20,6 +20,7 @@ import {
   slotContext,
   updateSlotsFromTool,
 } from "./slot-memory";
+import { scrubSecrets, vlog } from "./turn-log";
 
 export const AGENT_MODEL = "muse-spark-1.3";
 export const RESPONSES_URL = "https://api.meta.ai/v1/responses";
@@ -37,15 +38,18 @@ const SPOKEN_BASE = [
   "Keep every reply to about 25 words at most: direct, no filler, and never end with a question unless you are asking for confirmation or for missing information.",
   "You can: open sessions with a timer, save notes on the client card (health notes stay private), keep the shopping list, register clients and supplies, quote prices and keep the agenda. Use them to act.",
   "Never invent names, prices or addresses, and never claim a write happened without calling its tool. Say it is done only after the tool succeeds.",
-  "Some tools show a screen card: goal_progress, list_today, next_appointment, add_note, create_appointment and quote_price. When a screen card shows, say one short line pointing at it (for example Here's your goal on screen.) and never read its numbers aloud; earnings and goal amounts stay on the screen only. Otherwise say every part of the breakdown.",
-  "Reads (find_client, read_shopping_list, quote_price, goal_progress, list_today, next_appointment, read_stock) run at once.",
+  "Some tools show a screen card: goal_show, agenda_show, client_card_show, client_note_add, agenda_create_appointment, session_quote, session_close and widget_show. When a screen card shows, say one short line pointing at it (for example Here's your goal on screen.) and never read its numbers aloud. Money, health notes and the goal stay on the screen only: the voice only says the card is on screen.",
+  "Reads (agenda_show, client_card_show, goal_show, widget_show, tool_get_details) run at once.",
+  "Book directly and save notes, sessions, supplies and shopping at once: the booking saves even off hours, and undo_last fixes a wrong write. Only the quote and what moves or deletes ask first: a yes registers the payment, moves the booking or cancels it.",
+  "A client alone opens their session: Start a session with David calls session_open with the client, and today's appointment names the service. Resolve natural dates (next Friday at 5 PM) with the agenda tools on the America/Bogota calendar; never invent one, and when the user corrects only the date, keep the original time.",
   "Only ask first when in doubt: unknown or ambiguous names, unknown supplies. Then say what you would do in one sentence and ask the confirmation question (Should I save it?), and wait for the user to say yes before calling.",
   "Greet briefly and varied when there is no request, without asking for data. When the client or service is missing, ask briefly and naturally, naming what you already have.",
   "If the request is outside nails (hair, makeup), say so plainly and steer back to nails.",
-  "Health notes: confirm briefly and never repeat the health text.",
+  "Notes save at once, health notes stay private: confirm briefly and never repeat the health text.",
+  "Health is screen-only: never say allergy, alert, health or private in any reply; the card voice line only points at the screen.",
   "If a date does not exist (November 31st), propose the nearest valid day at the same time, say the correction plainly, and ask for confirmation before writing.",
   "A yes only executes the proposal from your immediately previous reply; if that reply asked an open question with no concrete proposal, ask what to confirm instead of writing.",
-  "A refused write is never a license to do the opposite: if a session is already open, call open_session anyway - its refusal tells you what to ask, and the yes runs the switch.",
+  "A refused write is never a license to do the opposite: if a session is already open, call session_open anyway - its refusal tells you what to ask, and the yes runs the switch.",
 ].join(" ");
 
 /** Output line: the only part of the prompt that changes per language. */
@@ -103,8 +107,12 @@ export interface AgentResult {
   usage: AgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
-  /** Screen card derived from the tool call, never from reply text. */
-  widget: Widget | null;
+  /**
+   * Screen card derived from the tool call, never from reply text.
+   * undefined sends no frame (the screen keeps its sheet); an explicit
+   * null closes the open sheet.
+   */
+  widget: Widget | null | undefined;
 }
 
 /** Bogotá clock for the session facts; the salon runs on America/Bogota. */
@@ -165,7 +173,97 @@ export function sessionContext(db: ValeDb, now = new Date()): string {
   );
 }
 
+/**
+ * Card contract shared by the card and the summary: the full contact and
+ * notes ride data to the screen only. The summary adds its private brief
+ * on top; a null brief opens the plain card.
+ */
+function cardContract(
+  info: Record<string, unknown>,
+  brief: { label: string; lines: string[] } | null,
+): { tool: string; args: Record<string, unknown>; data: unknown } | null {
+  const card = (info.card ?? {}) as { id?: unknown; name?: unknown; notes?: unknown };
+  const notes = Array.isArray(card.notes) ? card.notes : [];
+  return {
+    tool: "find_client",
+    args: { client_name: typeof card.name === "string" ? card.name : "" },
+    data: {
+      id: card.id,
+      name: card.name,
+      notes: notes.map((note) => {
+        const entry = (note ?? {}) as { kind?: unknown; text?: unknown };
+        return { kind: entry.kind === "health_note" ? "health" : "general", text: entry.text };
+      }),
+      ...(brief === null ? {} : { brief }),
+    },
+  };
+}
+
 /** One history turn as a Responses input message. */
+/**
+ * Tool call to UI contract keys. The contract owns widget.ts: this maps
+ * each 018 tool to the dispatch key, args and data it renders. Tools
+ * without a sheet map to null; the agenda speaks and bubbles only.
+ */
+export function contractWidgetFor(
+  tool: string,
+  args: Record<string, unknown>,
+  data: unknown,
+): { tool: string; args: Record<string, unknown>; data: unknown } | null {
+  const info = (data ?? {}) as Record<string, unknown>;
+  switch (tool) {
+    case "goal_show":
+      return { tool: "goal_progress", args: {}, data };
+    case "client_card_show":
+      return cardContract(info, null);
+    case "client_summary": {
+      if ((info as { brief?: unknown }).brief == null) return cardContract(info, null);
+      const brief = ((info as { brief?: unknown }).brief ?? {}) as {
+        label?: unknown;
+        summary?: unknown;
+      };
+      const lines = Array.isArray(brief.summary) ? brief.summary : [];
+      return cardContract(info, {
+        label: typeof brief.label === "string" ? brief.label : "",
+        lines: lines.filter((line): line is string => typeof line === "string"),
+      });
+    }
+    case "client_note_add":
+      return {
+        tool: "add_note",
+        args: { ...args, kind: args.kind === "health_note" ? "health" : "general" },
+        data: null,
+      };
+    case "session_quote": {
+      // A registered amount closes the quote sheet instead of reopening it.
+      if (info.paid_amount_usd !== undefined) return null;
+      return { tool: "quote_price", args: {}, data };
+    }
+    case "photo_preview_design":
+      return { tool: "photo_preview", args: {}, data };
+    case "photo_show":
+      return { tool: "photo_show", args: {}, data };
+    case "agenda_create_appointment":
+      if (typeof info.appointment_id !== "number") return null;
+      return {
+        tool: "create_appointment",
+        args: { client_name: info.client, service_name: info.service, day: info.day, time: info.time },
+        data: null,
+      };
+    case "agenda_move_appointment":
+      if (typeof info.appointment_id !== "number") return null;
+      return {
+        tool: "move_appointment",
+        args: { client_name: info.client, service_name: info.service, day: info.day, time: info.time },
+        data: null,
+      };
+    case "session_close":
+      return { tool: "close_session", args: {}, data };
+    default:
+      return null;
+  }
+}
+
 function historyItem(turn: HistoryTurn): Record<string, unknown> {
   // The API takes input_text on user messages and output_text on assistant
   // ones (probed 2026-10-31: input_text on assistant is a 400); the role
@@ -185,18 +283,43 @@ function historyItem(turn: HistoryTurn): Record<string, unknown> {
 
 /** Tools that complete a write when they report ok. */
 const WRITE_TOOLS = new Set([
-  "open_session",
-  "close_session",
-  "add_note",
-  "create_client",
-  "add_to_shopping_list",
-  "log_supply_use",
-  "undo_last_write",
-  "create_appointment",
-  "move_appointment",
-  "set_stock",
-  "add_stock",
+  "session_open",
+  "session_close",
+  "session_log_supply",
+  "session_quote_accept",
+  "photo_preview_design",
+  "client_create",
+  "client_note_add",
+  "shopping_add",
+  "shopping_remove",
+  "agenda_create_appointment",
+  "agenda_move_appointment",
+  "agenda_cancel_appointment",
+  "agenda_create_reminder",
+  "stock_set",
+  "stock_add",
+  "undo_last",
 ]);
+
+/**
+ * Immediate narration for slow tools, spoken and shown while the tool runs.
+ * Only image generation is slow enough to need one.
+ */
+const TOOL_WAIT_PHRASE: Record<string, { en: string; es: string }> = {
+  photo_preview_design: {
+    en: "Give me a moment, creating your preview…",
+    es: "Dame un momento, estoy creando tu vista previa…",
+  },
+  client_summary: {
+    en: "Give me a few seconds, I'm reading the client's record privately.",
+    es: "Dame unos segundos, estoy leyendo la ficha en privado.",
+  },
+};
+
+export function toolWaitPhrase(tool: string, language: ValeLanguage): string | null {
+  const entry = TOOL_WAIT_PHRASE[tool];
+  return entry ? (entry[language] ?? entry.en) : null;
+}
 
 /**
  * Provider error bodies stay in the server log: they tell a stale chain
@@ -204,13 +327,7 @@ const WRITE_TOOLS = new Set([
  * goes in a header), but Bearer-looking values are scrubbed anyway.
  */
 function redactSecrets(text: string): string {
-  return text
-    .replace(/bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
-    .replace(
-      /"(api_?key|token|secret)"\s*:\s*"[^"]*"/gi,
-      '"$1":"[redacted]"',
-    )
-    .slice(0, 500);
+  return scrubSecrets(text).slice(0, 500);
 }
 
 interface ResponsesOutputItem {
@@ -277,6 +394,7 @@ async function postResponses(
   body: Record<string, unknown>,
   onDelta: (text: string) => void,
   startedAt: number,
+  turn?: string,
 ): Promise<{
   id: string;
   text: string;
@@ -300,7 +418,14 @@ async function postResponses(
     } catch {
       /* empty or unreadable body: the status alone is the signal */
     }
-    console.error(`[agent] model error ${response.status}: ${detail}`);
+    vlog({
+      turn: turn ?? "-",
+      process: "AGENT",
+      model: AGENT_MODEL,
+      status: "error",
+      detail: { http: response.status },
+      content: detail || "model error",
+    });
     throw new Error(`model error: ${response.status}${detail ? ` ${detail}` : ""}`);
   }
   let firstTokenMs: number | null = null;
@@ -366,7 +491,13 @@ async function postResponses(
                 ? data.error
                 : JSON.stringify(data.error ?? null);
             const detail = redactSecrets(raw);
-            console.error(`[agent] response failed: ${detail}`);
+            vlog({
+              turn: turn ?? "-",
+              process: "AGENT",
+              model: AGENT_MODEL,
+              status: "error",
+              content: detail || "response failed",
+            });
             throw new Error(`model error: ${detail}`);
           }
           if (functionCalls(completed?.output).length === 0) flushDeltas();
@@ -436,6 +567,8 @@ export interface AgentTurnOptions {
   history?: HistoryTurn[];
   url?: string;
   onDelta?: (text: string) => void;
+  /** Fires before each tool runs so the route can narrate slow tools at once. */
+  onToolStart?: (toolName: string) => void;
   startedAt?: number;
   /** Defaults to the shared database; tests inject an in-memory one. */
   db?: ValeDb;
@@ -445,12 +578,15 @@ export interface AgentTurnOptions {
   slotKey?: string;
   /** Overrides the seeded user name in the prompt. */
   userName?: string;
+  /** Shared turn id (t042) from the client; "-" off-turn. */
+  turn?: string;
 }
 
 export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResult> {
   const url = options.url ?? RESPONSES_URL;
   const startedAt = options.startedAt ?? Date.now();
   const onDelta = options.onDelta ?? (() => {});
+  const onToolStart = options.onToolStart ?? (() => {});
   const db = options.db ?? getDb();
   const language = options.language ?? DEFAULT_LANGUAGE;
   const slotKey = options.slotKey ?? "local";
@@ -468,7 +604,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
       toolUsed: null,
       firstTokenMs: null,
-      widget: null,
+      widget: undefined,
     };
   }
   // Stable base first, volatile facts last: Meta's prefix cache holds the
@@ -477,7 +613,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     buildInstructions(language),
     ...(openQuestion ? [YES_TO_OPEN_QUESTION] : []),
     buildStateFacts(
-      localDay(),
+      bogotaDay(new Date()),
       options.userName ?? userName(db),
       slotContext(slotKey, language),
       sessionContext(db),
@@ -497,7 +633,9 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   ];
   let text = "";
   let toolUsed: string | null = null;
-  let widget: Widget | null = null;
+  // No card by default: undefined sends no widget frame and the screen
+  // keeps whatever it shows. An explicit null closes the open sheet.
+  let widget: Widget | null | undefined;
   // A pending proposal dies with the next real turn unless that turn stores
   // a new one: a later yes must never fire a stale proposal (eval C17).
   let storedThisTurn = false;
@@ -520,6 +658,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       },
       onDelta,
       startedAt,
+      options.turn,
     );
     usage.inputTokens += turn.usage.inputTokens;
     usage.outputTokens += turn.usage.outputTokens;
@@ -538,7 +677,24 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     } catch {
       parsed = {};
     }
-    const toolResult = runValeTool(db, call.name, parsed, language);
+    const toolAt = Date.now();
+    // Slow tools narrate at once: model deltas of a tool round stay
+    // buffered until the tool finishes, so the wait line cannot ride them.
+    onToolStart(call.name);
+    const toolResult = await runValeToolAsync(db, call.name, parsed, language, fetch, options.turn);
+    // The photo preview logs its own SAM and IMAGE rows (with the same
+    // args), so the generic TOOL row stays out for it.
+    if (call.name !== "photo_preview_design") {
+      vlog({
+        turn: options.turn ?? "-",
+        process: "TOOL",
+        status: toolResult.ok ? "ok" : "error",
+        durationMs: Date.now() - toolAt,
+        detail: { tool: call.name },
+        content: toolResult.message,
+        extra: { args: parsed },
+      });
+    }
     if (!toolResult.ok) {
       // A complete proposal waits for the yes; anything else retires
       // a stale one instead of confirming the wrong thing.
@@ -549,18 +705,29 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
         widget = {
           kind: "confirm",
           title: pendingConfirmTitle(proposal, language),
-          lines: [],
+          size: "half",
+          data: {},
         };
       } else clearPendingAction(slotKey);
     } else {
-      // The screen card mirrors the tool call, never the reply text.
-      const card = buildWidget(
+      // The screen card mirrors the tool call, never the reply text. Tool
+      // names map to the UI contract keys; tools without a sheet map null.
+      const mapped = contractWidgetFor(
         call.name,
         parsed,
         (toolResult as { data?: unknown }).data ?? null,
-        language,
       );
-      if (card) widget = card;
+      if (mapped) {
+        const card = buildWidget(mapped.tool, mapped.args, mapped.data, db);
+        if (card) widget = card;
+      }
+      // A quoted total waits for Accept: the yes registers it, like any
+      // other proposal. Stored on success, never on a doubt.
+      const proposal = buildPendingActions(db, call.name, parsed, toolResult);
+      if (proposal) {
+        setPendingAction(slotKey, proposal);
+        storedThisTurn = true;
+      }
     }
     updateSlotsFromTool(
       slotKey,
@@ -572,6 +739,38 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     if (toolResult.ok && WRITE_TOOLS.has(call.name)) {
       clearPendingAction(slotKey);
       // A successful write answers itself: no second model round.
+      text = toolResult.message;
+      break;
+    }
+    if (toolResult.ok && call.name === "session_quote") {
+      // The quote answers itself with no second round: its amounts never
+      // reach the voice. A registered amount retires any stale proposal
+      // and closes the sheet; the fresh quote keeps the Accept one above.
+      const paid =
+        ((toolResult as { data?: unknown }).data as { paid_amount_usd?: unknown } | undefined)?.paid_amount_usd !== undefined;
+      if (paid) {
+        clearPendingAction(slotKey);
+        widget = null;
+      }
+      text = toolResult.message;
+      break;
+    }
+    if (toolResult.ok && call.name === "client_card_show") {
+      // The card answers itself with no second round: its contact and
+      // notes ride data to the screen only, never back to the model.
+      text = toolResult.message;
+      break;
+    }
+    if (toolResult.ok && call.name === "client_summary") {
+      // The brief answers itself with no second round: the spoken brief
+      // never re-enters the model, and history keeps only its label.
+      text = toolResult.message;
+      break;
+    }
+    if (toolResult.ok && call.name === "agenda_show" && parsed.range === "today") {
+      // Today answers itself with no second round: the tool line already
+      // names appointments and reminders, and a second round may drop
+      // the reminders. Other ranges still go through the model.
       text = toolResult.message;
       break;
     }

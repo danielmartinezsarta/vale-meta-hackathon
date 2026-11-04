@@ -1,27 +1,30 @@
 import WebSocket from "ws";
-import { runAgentTurn } from "./agent";
+import { AGENT_MODEL, runAgentTurn } from "./agent";
 import { getDb, recentTurns, recordTurn, type HistoryTurn } from "./db";
 import { getBoard } from "./board";
 import {
+  canonicalizeWakeWord,
   checkWake,
+  isBareNameCall,
   noteAttention,
   sanitizeClientId,
   type WakeVerdict,
 } from "./wake";
 import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
-import { emitTurnLog, estimateCost } from "./turn-log";
+import { emitTurnLog, estimateCost, modelElapsedMs, vlog } from "./turn-log";
 import { isMutedJunkTurn, saveTurnWav } from "./turn-audio";
 import {
   clearPendingAction,
   isConfirmYes,
   isRefusalNo,
   peekPendingAction,
+  quoteAcceptSessionId,
   runPendingActions,
   takePendingAction,
 } from "./pending-action";
 import { getSlots } from "./slot-memory";
-import { getOpenSession } from "./vale-tools";
-import type { Widget } from "./widget";
+import { getOpenSession, rejectQuote } from "./vale-tools";
+import { buildWidget, type Widget } from "./widget";
 import {
   clarifyText,
   declineText,
@@ -35,6 +38,10 @@ import {
 export const BRIDGE_TURN_TIMEOUT_MS = 120000;
 /** Cap for audio buffered before the Meta handshake ack (~40 s). */
 const MAX_BUFFERED_BYTES = 2_000_000;
+/** A bare "Vale." waits this long for the rest of the sentence. */
+const BARE_HOLD_MS = 8000;
+/** Meta open and no frame for this long: end its ingress ourselves. */
+const INGRESS_WATCHDOG_MS = 1500;
 
 export interface BridgeAgentUsage {
   inputTokens: number;
@@ -90,6 +97,7 @@ export interface VoiceBridgeOptions {
     onDelta: (text: string) => void;
     language?: ValeLanguage;
     slotKey?: string;
+    turn?: string;
   }) => Promise<BridgeAgentResult>;
   now?: () => number;
   turnTimeoutMs?: number;
@@ -107,6 +115,12 @@ export interface TurnClientStats {
   /** Blocks lost under load (wall vs frames) and source blocks spanned. */
   lostBlocks: number | null;
   srcBlocks: number | null;
+  engine: "worklet" | "script" | null;
+  sheetOpen: boolean | null;
+  visible: string | null;
+  actualRate: number | null;
+  ctxState: string | null;
+  rebuilds: number | null;
 }
 
 function parseClientStats(message: {
@@ -116,6 +130,12 @@ function parseClientStats(message: {
   valeState?: unknown;
   lostBlocks?: unknown;
   srcBlocks?: unknown;
+  engine?: unknown;
+  sheetOpen?: unknown;
+  visible?: unknown;
+  actualRate?: unknown;
+  ctxState?: unknown;
+  rebuilds?: unknown;
 }): TurnClientStats {
   const num = (value: unknown, max: number): number | null =>
     typeof value === "number" &&
@@ -142,18 +162,44 @@ function parseClientStats(message: {
     valeState: state,
     lostBlocks: int(message.lostBlocks, 3600000),
     srcBlocks: int(message.srcBlocks, 3600000),
+    engine:
+      message.engine === "worklet" || message.engine === "script"
+        ? message.engine
+        : null,
+    sheetOpen: typeof message.sheetOpen === "boolean" ? message.sheetOpen : null,
+    visible: typeof message.visible === "string" ? message.visible : null,
+    actualRate:
+      typeof message.actualRate === "number" &&
+      Number.isFinite(message.actualRate)
+        ? message.actualRate
+        : null,
+    ctxState: typeof message.ctxState === "string" ? message.ctxState : null,
+    rebuilds: int(message.rebuilds, 3600000),
   };
+}
+
+/** Shared turn id from the client (t042); anything else rides as "-". */
+export function parseTurnTag(value: unknown): string | null {
+  return typeof value === "string" && /^t\d{1,6}$/.test(value) ? value : null;
 }
 
 export function tryParseControl(
   data: unknown,
 ):
-  | { type: "endStream"; stats: TurnClientStats }
+  | {
+      type: "endStream";
+      stats: TurnClientStats;
+      language: ValeLanguage | null;
+      turn: string | null;
+    }
   | { type: "language"; language: ValeLanguage }
   | { type: "client"; client: string }
   | { type: "wake" }
   | { type: "client-state"; state: Record<string, unknown> }
-  | { type: "vote"; vote: "yes" | "no" }
+  | { type: "vote"; vote: "yes" | "no"; turn: string | null }
+  | { type: "dismiss"; transcript: string | null; turn: string | null }
+  | { type: "spoken" }
+  | { type: "sheet-closed" }
   | null {
   let text: string | null = null;
   if (typeof data === "string") {
@@ -166,9 +212,11 @@ export function tryParseControl(
   try {
     const message = JSON.parse(text) as {
       type?: unknown;
+      turn?: unknown;
       language?: unknown;
       client?: unknown;
       state?: unknown;
+      transcript?: unknown;
       vote?: unknown;
       peakLevel?: unknown;
       voicedMs?: unknown;
@@ -176,15 +224,44 @@ export function tryParseControl(
       valeState?: unknown;
       lostBlocks?: unknown;
       srcBlocks?: unknown;
+      engine?: unknown;
+      sheetOpen?: unknown;
+      visible?: unknown;
+      actualRate?: unknown;
+      ctxState?: unknown;
+      rebuilds?: unknown;
     };
     if (message.type === "endStream")
-      return { type: "endStream", stats: parseClientStats(message) };
+      return {
+        type: "endStream",
+        stats: parseClientStats(message),
+        language:
+          message.language === "en" || message.language === "es"
+            ? message.language
+            : null,
+        turn: parseTurnTag(message.turn),
+      };
     if (message.type === "wake") return { type: "wake" };
+    // Her real last word: the window counts from here, not the send time.
+    if (message.type === "spoken") return { type: "spoken" };
+    if (message.type === "sheet-closed") return { type: "sheet-closed" };
     if (
       message.type === "vote" &&
       (message.vote === "yes" || message.vote === "no")
     ) {
-      return { type: "vote", vote: message.vote };
+      return {
+        type: "vote",
+        vote: message.vote,
+        turn: parseTurnTag(message.turn),
+      };
+    }
+    if (message.type === "dismiss") {
+      return {
+        type: "dismiss",
+        transcript:
+          typeof message.transcript === "string" ? message.transcript : null,
+        turn: parseTurnTag(message.turn),
+      };
     }
     if (
       message.type === "client-state" &&
@@ -241,6 +318,22 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   let metaOpen = false;
   let gotFinal = false;
   let finalText = "";
+  /** Shared turn id from the latest endStream/dismiss/vote frame. */
+  let turnTag: string | null = null;
+  /**
+   * A bare "Vale." waits up to 8 s for the rest of the sentence, then
+   * joins it. Nothing about the held name reaches the model alone.
+   */
+  let bareHold: { text: string; at: number } | null = null;
+  /** Watchdog timer: Meta open and quiet ends its ingress. */
+  let ingressTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Cumulative bytes at the latest client endStream: the failover line. */
+  const chunkEnds: number[] = [];
+  const wavEnds: number[] = [];
+  let endStreamByteMark = 0;
+  /** Every turn-scoped frame echoes its tag so the client routes by it. */
+  const ui = (message: Record<string, unknown>): void =>
+    sendJson(browser, { turn: turnTag ?? undefined, ...message });
   let audioProcessedMs: number | null = null;
   let bufferedBytes = 0;
   const pendingAudio: Buffer[] = [];
@@ -257,6 +350,12 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     valeState: null,
     lostBlocks: null,
     srcBlocks: null,
+    engine: null,
+    sheetOpen: null,
+    visible: null,
+    actualRate: null,
+    ctxState: null,
+    rebuilds: null,
   };
   let pendingEnd = false;
   let agentRan = false;
@@ -284,6 +383,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   const finish = (code: number, reason: string) => {
     if (settled) return;
     clearTimeout(timer);
+    disarmIngressWatchdog();
     metaGen += 1;
     try {
       meta.close();
@@ -313,16 +413,46 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
 
   // Next turn on the same socket: fresh flags, same window. No dial here:
   // the next audio frames open it, so silence never holds a Meta socket.
+  const disarmIngressWatchdog = () => {
+    clearTimeout(ingressTimer);
+    ingressTimer = undefined;
+  };
   const beginNextTurn = () => {
     metaOpen = false;
     metaDialPending = false;
+    disarmIngressWatchdog();
     endStreamAt = null;
     gotFinal = false;
     finalText = "";
+    turnTag = null;
     audioProcessedMs = null;
-    bufferedBytes = 0;
+    // Failover keeps the next segment: drop only the failed turn's audio
+    // (bytes up to its endStream mark), never what arrived after it.
+    const keptAudio: Buffer[] = [];
+    const keptEnds: number[] = [];
+    for (let i = 0; i < pendingAudio.length; i += 1) {
+      if ((chunkEnds[i] ?? 0) > endStreamByteMark) {
+        keptAudio.push(pendingAudio[i]);
+        keptEnds.push(chunkEnds[i]);
+      }
+    }
     pendingAudio.length = 0;
+    pendingAudio.push(...keptAudio);
+    chunkEnds.length = 0;
+    chunkEnds.push(...keptEnds);
+    const keptWav: Buffer[] = [];
+    const keptWavEnds: number[] = [];
+    for (let i = 0; i < wavChunks.length; i += 1) {
+      if ((wavEnds[i] ?? 0) > endStreamByteMark) {
+        keptWav.push(wavChunks[i]);
+        keptWavEnds.push(wavEnds[i]);
+      }
+    }
     wavChunks.length = 0;
+    wavChunks.push(...keptWav);
+    wavEnds.length = 0;
+    wavEnds.push(...keptWavEnds);
+    bufferedBytes = keptEnds.length === 0 ? 0 : keptEnds[keptEnds.length - 1];
     turnWav = null;
     wavSaved = false;
     turnSeq += 1;
@@ -333,6 +463,12 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       valeState: null,
       lostBlocks: null,
       srcBlocks: null,
+      engine: null,
+      sheetOpen: null,
+      visible: null,
+      actualRate: null,
+      ctxState: null,
+      rebuilds: null,
     };
     pendingEnd = false;
     agentRan = false;
@@ -346,9 +482,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   // closes with a clear reason. One browser socket = visible alert only then.
   const failTurn = (message: string, code: string) => {
     if (settled) return;
+    disarmIngressWatchdog();
     if (!conversation) {
       sendJson(browser, { type: "error", message, code });
-      sendJson(browser, { type: "done" });
+      ui({ type: "done" });
       finish(1011, "turn-failed");
       return;
     }
@@ -368,7 +505,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     if (failedTurns >= maxConsecutiveFailures) {
       // No silent redial loop: the browser sees the error below, then this.
       sendJson(browser, { type: "error", message, code });
-      sendJson(browser, { type: "done" });
+      ui({ type: "done" });
       settled = true;
       try {
         browser.close(1011, "meta-unavailable");
@@ -399,7 +536,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       totalMs: null,
     });
     sendJson(browser, { type: "ignored" });
-    sendJson(browser, { type: "done" });
+    ui({ type: "done" });
     beginNextTurn();
   };
 
@@ -412,6 +549,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     "unknown";
   const logTurn = (fields: {
     ts: string;
+    turn?: string | null;
     language: ValeLanguage;
     transcript: string;
     ttftMs: number | null;
@@ -442,6 +580,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     }
     emitTurnLog({
       ...fields,
+      turn: fields.turn ?? turnTag,
       wav: turnWav,
       peakLevel: turnStats.peakLevel,
       voicedMs: turnStats.voicedMs,
@@ -449,6 +588,12 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       valeState: turnStats.valeState,
       lostBlocks: turnStats.lostBlocks,
       srcBlocks: turnStats.srcBlocks,
+      engine: turnStats.engine,
+      sheetOpen: turnStats.sheetOpen,
+      visible: turnStats.visible,
+      actualRate: turnStats.actualRate,
+      ctxState: turnStats.ctxState,
+      rebuilds: turnStats.rebuilds,
       costUsd: estimateCost(
         {
           inputTokens: fields.inputTokens,
@@ -464,6 +609,32 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     return slots.client !== undefined || slots.service !== undefined
       ? slots
       : null;
+  };
+
+  // Every screen payload also lands in the JSONL recording with its turn,
+  // so replay sees exactly what the screen showed.
+  const sendBoard = () => {
+    const board = getBoard(getDb());
+    sendJson(browser, { type: "board", board });
+    vlog({
+      turn: turnTag ?? "-",
+      process: "DB",
+      status: "ok",
+      detail: { board: true },
+      extra: { board },
+    });
+  };
+
+  const sendWidget = (widget: Widget | null) => {
+    sendJson(browser, { type: "widget", widget });
+    vlog({
+      turn: turnTag ?? "-",
+      process: "VOICE",
+      status: "ok",
+      detail: { widget: widget === null ? "none" : widget.kind },
+      content: widget === null ? null : widget.title,
+      extra: { widget },
+    });
   };
 
   let browserGone = false;
@@ -515,17 +686,13 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
 
   // Heard nothing: same gentle notice with or without a Meta round trip.
   const finishEmptyTurn = (audioSeconds: number, asrMs: number | null = null) => {
+    disarmIngressWatchdog();
     const at = now();
-    sendJson(browser, {
+    ui({
       type: "transcript",
       transcript: "",
       final: true,
       audioProcessedMs: null,
-    });
-    sendJson(browser, {
-      type: "notice",
-      message: err("vad-continue"),
-      code: "E-VAD",
     });
     logTurn({
       language: turnLanguage,
@@ -547,7 +714,100 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       sinceReplyS: null,
       totalMs: 0,
     });
-    sendJson(browser, { type: "done" });
+    ui({ type: "done" });
+    finish(1000, "turn-complete");
+  };
+
+  // Spoken sheet close: the in-flight Meta turn is dropped before any
+  // reply, and the turn logs as a close (gate cierre), never as an error.
+  // A reply that already ran wins: its done already moved the turn on.
+  const dismissTurn = (transcript: string): void => {
+    if (settled || agentRan) return;
+    disarmIngressWatchdog();
+    metaGen += 1;
+    try {
+      meta.close();
+    } catch {
+      /* already closed */
+    }
+    clearRetry();
+    clearTimeout(timer);
+    logTurn({
+      language: turnLanguage,
+      ts: new Date().toISOString(),
+      transcript,
+      ttftMs: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      audioSeconds: bufferedBytes / 48000,
+      tool: null,
+      modelSkipped: true,
+      error: null,
+      ignored: true,
+      asrMs: null,
+      chain: "none",
+      key: clientId,
+      slots: slotSnapshot(),
+      gate: "cierre",
+      sinceReplyS: null,
+      totalMs: null,
+    });
+    sendJson(browser, { type: "ignored" });
+    ui({ type: "done" });
+    if (conversation) {
+      beginNextTurn();
+      return;
+    }
+    finish(1000, "turn-complete");
+  };
+
+  // A no on the quote sheet rejects it: the sheet stays open waiting
+  // for the spoken amount, and the session stays open too. Shared by the
+  // touch vote and the spoken no.
+  const answerQuoteReject = async (
+    sessionId: number,
+    heard: string,
+    audioSeconds: number,
+    asrMs: number | null,
+    gate: WakeVerdict["gate"] | null,
+    sinceReplyS: number | null,
+  ): Promise<void> => {
+    const at = now();
+    const ts = new Date(at).toISOString();
+    const rejected = rejectQuote(getDb(), sessionId, turnLanguage);
+    recordTurn(getDb(), clientId, "user", heard);
+    recordTurn(getDb(), clientId, "vale", rejected.message, "session_quote");
+    ui({ type: "reply", text: rejected.message });
+    noteAttention(clientId);
+    sendBoard();
+    sendWidget(
+      buildWidget(
+        "quote_price",
+        {},
+        (rejected as { data?: unknown }).data ?? null,
+      ),
+    );
+    logTurn({
+      language: turnLanguage,
+      ts,
+      transcript: heard,
+      ttftMs: Date.now() - at,
+      inputTokens: 0,
+      outputTokens: 0,
+      audioSeconds,
+      tool: "session_quote",
+      modelSkipped: true,
+      error: null,
+      ignored: false,
+      asrMs,
+      chain: "none",
+      key: clientId,
+      slots: slotSnapshot(),
+      gate,
+      sinceReplyS,
+      totalMs: Date.now() - at,
+    });
+    ui({ type: "done" });
     finish(1000, "turn-complete");
   };
 
@@ -560,10 +820,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     const answerCanned = (transcript: string, said: string) => {
       recordTurn(getDb(), clientId, "user", transcript);
       recordTurn(getDb(), clientId, "vale", said, null);
-      sendJson(browser, { type: "reply", text: said });
+      ui({ type: "reply", text: said });
       noteAttention(clientId);
-      sendJson(browser, { type: "board", board: getBoard(getDb()) });
-      sendJson(browser, { type: "widget", widget: null });
+      sendBoard();
+      sendWidget(null);
       logTurn({
         language: turnLanguage,
         ts,
@@ -584,7 +844,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         sinceReplyS: null,
         totalMs: Date.now() - at,
       });
-      sendJson(browser, { type: "done" });
+      ui({ type: "done" });
       finish(1000, "turn-complete");
     };
     if (vote === "yes") {
@@ -596,11 +856,11 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       const executed = runPendingActions(getDb(), clientId, actions, turnLanguage);
       recordTurn(getDb(), clientId, "user", "yes");
       recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
-      sendJson(browser, { type: "reply", text: executed.text });
+      ui({ type: "reply", text: executed.text });
       noteAttention(clientId);
-      sendJson(browser, { type: "board", board: getBoard(getDb()) });
+      sendBoard();
       // The proposal is decided: the card goes away.
-      sendJson(browser, { type: "widget", widget: null });
+      sendWidget(null);
       logTurn({
         language: turnLanguage,
         ts,
@@ -621,12 +881,17 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         sinceReplyS: null,
         totalMs: Date.now() - at,
       });
-      sendJson(browser, { type: "done" });
+      ui({ type: "done" });
       finish(1000, "turn-complete");
       return;
     }
-    // A no: nothing writes, the card goes away.
-    clearPendingAction(clientId);
+    // A no on the quote sheet rejects it; any other no declines.
+    const stored = takePendingAction(clientId);
+    const quoteSession = quoteAcceptSessionId(stored ?? []);
+    if (quoteSession !== null) {
+      await answerQuoteReject(quoteSession, "no", 0, null, null, null);
+      return;
+    }
     await answerCanned("no", declineText(turnLanguage));
   };
 
@@ -649,10 +914,10 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         if (actions) {
           const executed = runPendingActions(getDb(), clientId, actions, turnLanguage);
           recordTurn(getDb(), clientId, "vale", executed.text, executed.toolUsed);
-          sendJson(browser, { type: "reply", text: executed.text });
+          ui({ type: "reply", text: executed.text });
           // Her reply restarts the window: the next turn counts from here.
           noteAttention(clientId);
-          sendJson(browser, { type: "board", board: getBoard(getDb()) });
+          sendBoard();
           logTurn({
             language: turnLanguage,
             ts,
@@ -676,21 +941,36 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             sinceReplyS: verdict.sinceReplyS,
             totalMs: Date.now() - speechEndAt,
           });
-          sendJson(browser, { type: "done" });
+          ui({ type: "done" });
           finish(1000, "turn-complete");
           return;
         }
       }
       // A no to Vale's pending proposal discards it at once: the card goes
-      // away with a short decline, no model, no second question.
+      // away with a short decline, no model, no second question. A no on
+      // the quote sheet rejects it instead and waits for the amount.
       if (isRefusalNo(transcript) && peekPendingAction(clientId)) {
-        clearPendingAction(clientId);
+        const stored = takePendingAction(clientId);
+        const quoteSession = quoteAcceptSessionId(stored ?? []);
+        if (quoteSession !== null) {
+          await answerQuoteReject(
+            quoteSession,
+            transcript,
+            audioProcessedMs !== null
+              ? audioProcessedMs / 1000
+              : bufferedBytes / 48000,
+            asrMs,
+            verdict.gate,
+            verdict.sinceReplyS,
+          );
+          return;
+        }
         const declined = declineText(turnLanguage);
         recordTurn(getDb(), clientId, "vale", declined, null);
-        sendJson(browser, { type: "reply", text: declined });
+        ui({ type: "reply", text: declined });
         noteAttention(clientId);
-        sendJson(browser, { type: "board", board: getBoard(getDb()) });
-        sendJson(browser, { type: "widget", widget: null });
+        sendBoard();
+        sendWidget(null);
         logTurn({
           language: turnLanguage,
           ts,
@@ -714,7 +994,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           sinceReplyS: verdict.sinceReplyS,
           totalMs: Date.now() - speechEndAt,
         });
-        sendJson(browser, { type: "done" });
+        ui({ type: "done" });
         finish(1000, "turn-complete");
         return;
       }
@@ -724,18 +1004,30 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
           transcript,
           history,
           startedAt: speechEndAt,
-          onDelta: (text) => sendJson(browser, { type: "reply-delta", text }),
+          onDelta: (text) => ui({ type: "reply-delta", text }),
           language: turnLanguage,
           slotKey: clientId,
+          turn: turnTag ?? undefined,
         },
       );
       if (!browserGone) recordTurn(getDb(), clientId, "vale", result.text, result.toolUsed);
-      sendJson(browser, { type: "reply", text: result.text });
+      vlog({
+        turn: turnTag ?? "-",
+        process: "AGENT",
+        model: AGENT_MODEL,
+        durationMs: modelElapsedMs(result.firstTokenMs, speechEndAt),
+        status: "ok",
+        detail: { tool: result.toolUsed },
+        content: result.text,
+      });
+      ui({ type: "reply", text: result.text });
       // Her reply restarts the window: the next turn counts from here.
       noteAttention(clientId);
-      sendJson(browser, { type: "board", board: getBoard(getDb()) });
-      if (result.widget) {
-        sendJson(browser, { type: "widget", widget: result.widget });
+      sendBoard();
+      // An explicit null closes the open sheet; undefined sends nothing
+      // and the screen keeps whatever it shows.
+      if (result.widget !== undefined) {
+        sendWidget(result.widget);
       }
       logTurn({
         language: turnLanguage,
@@ -792,7 +1084,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         code: "E-MODEL",
       });
     }
-    sendJson(browser, { type: "done" });
+    ui({ type: "done" });
     finish(1000, "turn-complete");
   };
 
@@ -823,19 +1115,71 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         failedTurns = 0;
         lastCountedGen = metaGen;
         clearRetry();
+        // A held "Vale." joins the rest of the sentence; a name already
+        // opening the new final makes the hold redundant.
+        if (bareHold !== null) {
+          const held = bareHold;
+          bareHold = null;
+          const fresh = now() - held.at <= BARE_HOLD_MS;
+          if (
+            fresh &&
+            !/^vale\b/i.test(canonicalizeWakeWord(message.transcript))
+          ) {
+            message.transcript = `${held.text} ${message.transcript}`;
+          }
+        }
         finalText = message.transcript;
         audioProcessedMs =
           typeof message.audioProcessedMs === "number"
             ? message.audioProcessedMs
             : null;
         const speechEndAt = now();
-        sendJson(browser, {
+        ui({
           type: "transcript",
           transcript: finalText,
           final: true,
           audioProcessedMs,
         });
         const asrMs = endStreamAt === null ? null : speechEndAt - endStreamAt;
+        vlog({
+          turn: turnTag ?? "-",
+          process: "ASR",
+          model: ASR_MODEL,
+          durationMs: asrMs,
+          status: "ok",
+          content: finalText,
+        });
+        // Canonical wake word for the gate and the model: a substitution
+        // never rides past here into tool args. The ASR row above keeps
+        // the raw spelling for the record.
+        finalText = canonicalizeWakeWord(finalText);
+        // A bare name call stays silent and holds the name: the rest of
+        // the sentence arrives next, and answering now would drop those
+        // words (trial 9.1). Retire this Meta turn first: its close is
+        // gen-stale, so it cannot fail the turn we keep listening in.
+        if (isBareNameCall(finalText)) {
+          noteAttention(clientId);
+          bareHold = { text: message.transcript, at: now() };
+          metaGen += 1;
+          try {
+            meta.close();
+          } catch {
+            /* a fresh dial replaces it when the rest arrives */
+          }
+          gotFinal = false;
+          finalText = "";
+          audioProcessedMs = null;
+          endStreamAt = null;
+          pendingEnd = false;
+          metaOpen = false;
+          metaDialPending = false;
+          sendJson(browser, {
+          type: "transcript",
+          transcript: message.transcript,
+          final: false,
+        });
+        return;
+        }
         if (finalText.trim() === "") {
           finishEmptyTurn(
             audioProcessedMs !== null
@@ -891,12 +1235,19 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
               junk: true,
             });
             sendJson(browser, { type: "ignored" });
-            sendJson(browser, { type: "done" });
+            ui({ type: "done" });
             finish(1000, "turn-complete");
             return;
           }
           const sessionOpen = getOpenSession(getDb()) !== null;
-          const verdict = checkWake(finalText, clientId, Date.now(), sessionOpen, turnLanguage);
+          const verdict = checkWake(
+            finalText,
+            clientId,
+            Date.now(),
+            sessionOpen,
+            turnLanguage,
+            turnStats.sheetOpen === true,
+          );
           if (!verdict.execute) {
             // Background chatter without the name: silent discard.
             logTurn({
@@ -923,7 +1274,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
               totalMs: Date.now() - speechEndAt,
             });
             sendJson(browser, { type: "ignored" });
-            sendJson(browser, { type: "done" });
+            ui({ type: "done" });
             finish(1000, "turn-complete");
           } else {
             void answerTranscript(finalText, speechEndAt, verdict, asrMs);
@@ -944,9 +1295,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     }
     if (message.type === "error") {
       if (!settled) {
-        console.error(
-          `[voice-asr] transcription error: ${message.message ?? "unknown"}`,
-        );
+        vlog({
+          turn: turnTag ?? "-",
+          process: "ASR",
+          model: ASR_MODEL,
+          status: "error",
+          detail: { code: "E-ASR" },
+          content: message.message ?? "unknown",
+        });
         failTurn(err("lost"), "E-ASR");
       }
     }
@@ -1009,7 +1365,14 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       if (settled) return;
       if (gotFinal) return; // Meta closes after the final; the reply is on its way.
       metaDialPending = false;
-      console.error("[voice-asr] connection closed before final transcript");
+      vlog({
+        turn: turnTag ?? "-",
+        process: "ASR",
+        model: ASR_MODEL,
+        status: "error",
+        detail: { code: "E-ASR" },
+        content: "connection closed before final transcript",
+      });
       failTurn(err("lost"), "E-ASR");
     });
   }
@@ -1028,41 +1391,79 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         clientId = control.client;
         return;
       }
-      // Tapping talk opens the window like naming Vale does.
+      // The tap announces the mic, nothing more: it must not open the
+      // window, or the first unnamed phrase of a fresh conversation would
+      // execute. The phrase earns the window by naming her (or a reply
+      // opens it), and the gate below judges the rest.
       if (control.type === "wake") {
+        return;
+      }
+      // Her voice really ended: the attention window counts from here.
+      if (control.type === "spoken") {
         noteAttention(clientId);
         return;
       }
       // Field diagnostics: capture, AudioContext, tab visibility, speech
       // and echo-hold state. Logged, never answered, never a turn.
       if (control.type === "client-state") {
-        console.log(
-          `[client-state] client=${clientId} ${JSON.stringify(control.state).slice(0, 500)}`,
-        );
+        vlog({
+          turn: turnTag ?? "-",
+          process: "VOICE",
+          status: "ok",
+          detail: { client: clientId },
+          content: JSON.stringify(control.state),
+        });
         return;
       }
       // Touch on a confirm card: the exact equivalent of a spoken yes/no.
       if (control.type === "vote") {
+        turnTag = control.turn;
         void answerVote(control.vote);
         return;
       }
+      // Spoken sheet close ("close it", "cierra la agenda"): the card goes
+      // away with no model call and no spoken reply. Closing restarts the
+      // window like any executed turn.
+      if (control.type === "dismiss") {
+        turnTag = control.turn;
+        noteAttention(clientId);
+        dismissTurn(control.transcript ?? "");
+        return;
+      }
+      // The X on a sheet Vale opened: closing restarts the window too.
+      if (control.type === "sheet-closed") {
+        noteAttention(clientId);
+        return;
+      }
       // Only endStream reaches here: keep what the client saw this turn.
-      if (control.type === "endStream") turnStats = control.stats;
+      // The language rides along so a switch that raced the handshake
+      // still applies from the first speech of the session.
+      if (control.type === "endStream") {
+        turnStats = control.stats;
+        if (control.language !== null) turnLanguage = control.language;
+        turnTag = control.turn;
+        // Failover line: audio past this mark belongs to the next segment.
+        endStreamByteMark = bufferedBytes;
+        disarmIngressWatchdog();
+      }
       // Nothing ever voiced: answer locally instead of dialing Meta for it.
       if (!metaOpen && bufferedBytes === 0 && pendingAudio.length === 0) {
         finishEmptyTurn(0);
         return;
       }
       // Voice ended here: the final arriving later sets the real ASR time.
-      endStreamAt = now();
-      if (metaOpen) {
-        try {
-          meta.send(JSON.stringify({ type: "endStream" }));
-        } catch {
-          failTurn(err("lost"), "E-NET");
+      // The watchdog may have closed Meta ingress already: never end twice.
+      if (endStreamAt === null) {
+        endStreamAt = now();
+        if (metaOpen) {
+          try {
+            meta.send(JSON.stringify({ type: "endStream" }));
+          } catch {
+            failTurn(err("lost"), "E-NET");
+          }
+        } else {
+          pendingEnd = true;
         }
-      } else {
-        pendingEnd = true;
       }
       ensureMetaOpen();
       return;
@@ -1071,6 +1472,20 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       const chunk = data as Buffer;
       bufferedBytes += chunk.length;
       wavChunks.push(chunk);
+      wavEnds.push(bufferedBytes);
+      // Ingress watchdog: Meta open and no frame for 1.5 s means the
+      // client paused mid-segment; close Meta ingress ourselves so the
+      // turn finalizes instead of hanging open without audio.
+      clearTimeout(ingressTimer);
+      ingressTimer = setTimeout(() => {
+        if (settled || browserGone || !metaOpen || endStreamAt !== null) return;
+        endStreamAt = now();
+        try {
+          meta.send(JSON.stringify({ type: "endStream" }));
+        } catch {
+          failTurn(err("lost"), "E-NET");
+        }
+      }, INGRESS_WATCHDOG_MS);
       if (conversation && !timerArmed) {
         timerArmed = true;
         clearTimeout(timer);
@@ -1089,6 +1504,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
         }
       } else {
         pendingAudio.push(chunk);
+        chunkEnds.push(bufferedBytes);
       }
     }
     // Only Buffer audio and JSON control frames are part of the protocol.
@@ -1099,6 +1515,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
     settled = true;
     browserGone = true;
     clearTimeout(timer);
+    disarmIngressWatchdog();
     clearRetry();
     try {
       meta.close();
@@ -1114,4 +1531,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
   // No Meta dial here: the first audio frames open it (dial-on-voice), so a
   // tap with no speech never holds an upstream socket that idles out.
   sendJson(browser, { type: "bridge", state: "open" });
+  // The screen opens on the truth: an already-running session shows at
+  // once instead of hiding until the first executed turn.
+  sendBoard();
 }

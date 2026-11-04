@@ -1,0 +1,336 @@
+{
+  "version": 1,
+  "recordedAt": "2026-11-03T19:47:42.612Z",
+  "turns": [
+    {
+      "turn": "t901",
+      "transcript": "Vale, what do I have today?",
+      "tool": "agenda_show",
+      "toolArgs": {
+        "range": "today"
+      },
+      "reply": "Today: David at 3 PM for Semi-permanent manicure; Sofia at 5 PM for Spa pedicure; Paola at 7 PM for Gel refill. Reminders: Buy acetone, foil wraps and cotton pads; Call the cleaning company to confirm the service.",
+      "widget": null,
+      "board": {
+        "session": null,
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.00447,
+      "language": "en"
+    },
+    {
+      "turn": "t902",
+      "transcript": "Vale, David is on his way. Show me his card.",
+      "tool": "client_card_show",
+      "toolArgs": {
+        "name": "David"
+      },
+      "reply": "Here's David's card on screen, Demo. He's booked today at 3 PM.",
+      "widget": {
+        "kind": "client_card",
+        "title": "Client card",
+        "size": "full",
+        "data": {
+          "name": "David",
+          "birthday": "1990-04-17",
+          "sex": null,
+          "phone": "+1-555-0101",
+          "email": "david@example.com",
+          "visits": [
+            {
+              "date": "2026-11-02",
+              "service": "Gel refill",
+              "photo": null
+            },
+            {
+              "date": "2026-11-01",
+              "service": "Semi-permanent manicure",
+              "photo": null
+            }
+          ],
+          "visitsMore": 0,
+          "healthNotes": [],
+          "noteTags": []
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0092635,
+      "language": "en"
+    },
+    {
+      "turn": "t903",
+      "transcript": "Vale, how am I doing with my monthly goal?",
+      "tool": "goal_show",
+      "toolArgs": null,
+      "reply": "Here's your goal on screen.",
+      "widget": {
+        "kind": "goal",
+        "title": "Monthly goal",
+        "size": "half",
+        "data": {
+          "name": null,
+          "goal": 2500,
+          "earned": 112.6
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.00879375,
+      "language": "en"
+    },
+    {
+      "turn": "t904",
+      "transcript": "Vale, how much is a semi-permanent manicure?",
+      "tool": "session_quote",
+      "toolArgs": {
+        "service_name": "semi-permanent manicure"
+      },
+      "reply": "The quote for Semi-permanent manicure is on screen, with Accept and Reject.",
+      "widget": {
+        "kind": "price",
+        "title": "Price",
+        "size": "half",
+        "data": {
+          "service": "Semi-permanent manicure",
+          "extras": null,
+          "suggested": 40
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.00509975,
+      "language": "en"
+    },
+    {
+      "turn": "t905",
+      "transcript": "Vale, open a session with David",
+      "tool": "session_open",
+      "toolArgs": {
+        "client_name": "David"
+      },
+      "reply": "Session open with David.",
+      "widget": null,
+      "board": {
+        "session": {
+          "id": 7,
+          "clientName": "David",
+          "serviceName": "Semi-permanent manicure",
+          "startedAt": "2026-11-03T19:47:31.071Z"
+        },
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.00447925,
+      "language": "en"
+    },
+    {
+      "turn": "t906",
+      "transcript": "Vale, show me the photos",
+      "tool": "photo_show",
+      "toolArgs": null,
+      "reply": "Here's David's photos on screen.",
+      "widget": {
+        "kind": "photos",
+        "title": "Photos",
+        "size": "full",
+        "data": {
+          "before": null,
+          "reference": "/api/photos?file=seed-assets/david-appointment-reference.jpg",
+          "expected": null,
+          "final": null
+        }
+      },
+      "board": {
+        "session": {
+          "id": 7,
+          "clientName": "David",
+          "serviceName": "Semi-permanent manicure",
+          "startedAt": "2026-11-03T19:47:31.071Z"
+        },
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0093005,
+      "language": "en"
+    },
+    {
+      "turn": "t907",
+      "transcript": "Vale, what do I need to buy?",
+      "tool": "widget_show",
+      "toolArgs": {
+        "name": "shopping"
+      },
+      "reply": "Here's your shopping list on screen, Demo.",
+      "widget": null,
+      "board": {
+        "session": {
+          "id": 7,
+          "clientName": "David",
+          "serviceName": "Semi-permanent manicure",
+          "startedAt": "2026-11-03T19:47:31.071Z"
+        },
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0099315,
+      "language": "en"
+    },
+    {
+      "turn": "t908",
+      "transcript": "Vale, close the session",
+      "tool": "session_close",
+      "toolArgs": null,
+      "reply": "Session closed. It lasted 1 minute.",
+      "widget": {
+        "kind": "session_summary",
+        "title": "Session summary",
+        "size": "full",
+        "data": {
+          "client": "David",
+          "date": "Nov 3, 2026",
+          "service": {
+            "name": "Semi-permanent manicure",
+            "price": 0
+          },
+          "extras": [],
+          "suggested": null,
+          "charged": null,
+          "timeTotal": "0m",
+          "timeParts": [],
+          "costs": [],
+          "fixedDetail": null
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.004609,
+      "language": "en"
+    }
+  ]
+}

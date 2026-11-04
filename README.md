@@ -42,6 +42,46 @@ shown or sent to the cloud model.
 
 Built for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/meta-ai-developer-hackathon) (Indie Developer track, "Build for Your World"), October 26 to November 4, 2026.
 
+## Private client briefs (open weights)
+
+Client records are only read by an open-weights Meta model on infrastructure
+we run. The cloud assistant handles the business and never sees the client's
+private details: "tell me about David" speaks a precomputed brief and opens
+the card with the summary on top, labeled "Prepared privately by Muse Glimmer
+(open weights)". Without a private model the card still opens, with the
+sentence "I don't have a private model set up to read client records, so
+here's David's card."
+
+Deploy the model from `modal/glimmer.py` (warm brief ~19 s, about $0.006
+per brief, $0 while idle):
+
+```
+modal deploy modal/glimmer.py  # serve and serve_draft (drafter, faster)
+modal app stop vale-glimmer    # scale to zero when done
+```
+
+Production uses the drafter endpoint
+(`https://<username>--vale-glimmer-serve-draft.us-east.modal.run`).
+Set it as `GLIMMER_URL` (see `.env.example`) and export `GLIMMER_TOKEN`
+from the Modal secret in the shell; the token never lives in the repo.
+
+The same endpoint runs locally with `llama-server` and the GGUF weights
+from `meta-models/Muse-Glimmer-30B-GGUF`
+(`Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf`, plus the dflash drafter for
+the fast path), with the flags from the model card (`--jinja`, `-ngl 99`,
+low reasoning strength, `--reasoning-budget 512`, temp 1.0, top-p 0.95,
+top-k 64), then `GLIMMER_URL=http://127.0.0.1:8080`. The app precomputes
+briefs on server start and after `npm run db:reset` for the clients with
+appointments today; a new note or a closed session regenerates that
+client's brief in the background.
+
+## Voice (Seamless, optional)
+
+The demo speaks with the browser voice unless `SEAMLESS_URL` is set. To serve
+the open model yourself: `pip install modal`, then
+`SEAMLESS_APP_NAME=vale-seamless-<something-private> modal deploy modal/seamless.py`,
+then copy the printed https URL into your local `.env` as `SEAMLESS_URL`.
+
 ## License
 
 [Apache-2.0](LICENSE)

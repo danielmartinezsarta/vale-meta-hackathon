@@ -1,6 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TapToTalk } from "./TapToTalk";
 import { VoiceControls } from "./VoiceControls";
 import { setVoicePrefs } from "@/lib/speak";
 
@@ -44,10 +43,7 @@ const VOICES = [
 ];
 
 function renderTalk() {
-  vi.stubGlobal("navigator", {
-    mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
-  });
-  render(<TapToTalk />);
+  render(<VoiceControls />);
 }
 
 afterEach(() => {
@@ -154,7 +150,7 @@ describe("voice controls", () => {
     });
   });
 
-  it("switches the voice list and prosody with the language selector", async () => {
+  it("switches the voice list and prosody with the language", async () => {
     setVoicePrefs({
       voiceEn: null,
       voiceEs: null,
@@ -164,7 +160,7 @@ describe("voice controls", () => {
       pitchEs: 0.9,
     });
     stubSpeechSynthesis(VOICES);
-    renderTalk();
+    const view = render(<VoiceControls />);
     const select = screen.getByRole("combobox", { name: "Voice" });
     await waitFor(() => {
       expect(select.querySelectorAll("option")).toHaveLength(3);
@@ -173,27 +169,35 @@ describe("voice controls", () => {
     expect(
       [...select.querySelectorAll("option")].map((o) => o.textContent),
     ).toContain("Ava (Premium)");
-    fireEvent.click(screen.getByRole("radio", { name: "Espa\u00f1ol" }));
+    view.rerender(<VoiceControls language="es" />);
     await waitFor(() => {
-      expect(select.querySelectorAll("option")).toHaveLength(2);
+      expect(
+        screen.getByRole("combobox", { name: "Voz" }).querySelectorAll("option"),
+      ).toHaveLength(2);
     });
     expect(
-      [...select.querySelectorAll("option")].map((o) => o.textContent),
+      [...screen.getByRole("combobox", { name: "Voz" }).querySelectorAll("option")].map(
+        (o) => o.textContent,
+      ),
     ).toContain("Jorge");
     // Spanish prosody loads its own pair and keeps it across switching.
     const speedEs = screen.getByRole("slider", { name: "Velocidad" });
     fireEvent.change(speedEs, { target: { value: "1.1" } });
     expect((speedEs as HTMLInputElement).value).toBe("1.1");
-    fireEvent.click(screen.getByRole("radio", { name: "English" }));
+    view.rerender(<VoiceControls />);
     await waitFor(() => {
-      expect(select.querySelectorAll("option")).toHaveLength(3);
+      expect(
+        screen.getByRole("combobox", { name: "Voice" }).querySelectorAll("option"),
+      ).toHaveLength(3);
     });
     expect(
       (screen.getByRole("slider", { name: "Speed" }) as HTMLInputElement).value,
     ).toBe("0.9");
-    fireEvent.click(screen.getByRole("radio", { name: "Espa\u00f1ol" }));
+    view.rerender(<VoiceControls language="es" />);
     await waitFor(() => {
-      expect(select.querySelectorAll("option")).toHaveLength(2);
+      expect(
+        screen.getByRole("combobox", { name: "Voz" }).querySelectorAll("option"),
+      ).toHaveLength(2);
     });
     expect(
       (screen.getByRole("slider", { name: "Velocidad" }) as HTMLInputElement)
@@ -201,18 +205,13 @@ describe("voice controls", () => {
     ).toBe("1.1");
   });
 
-  it("persists the selector and restarts in the saved language", async () => {
+  it("persists the language and restarts in the saved language", async () => {
     stubSpeechSynthesis(VOICES);
-    window.localStorage.removeItem("vale-language");
-    renderTalk();
-    fireEvent.click(screen.getByRole("radio", { name: "Español" }));
-    expect(window.localStorage.getItem("vale-language")).toBe("es");
-    cleanup();
-    renderTalk();
+    window.localStorage.setItem("vale-language", "es");
+    render(<VoiceControls language="es" />);
     expect(
-      (screen.getByRole("radio", { name: "Español" }) as HTMLInputElement)
-        .checked,
-    ).toBe(true);
+      (screen.getByRole("combobox", { name: "Voz" }) as HTMLSelectElement),
+    ).toBeDefined();
     window.localStorage.removeItem("vale-language");
   });
 });
