@@ -3,7 +3,9 @@
 import type { ValeLanguage } from "@/lib/vale-language";
 import { AgendaScreen } from "./AgendaScreen";
 import { ClientsScreen } from "./ClientsScreen";
+import { GoalsScreen } from "./GoalsScreen";
 import { PaymentsScreen } from "./PaymentsScreen";
+import { PreferencesScreen } from "./PreferencesScreen";
 import { ServicesScreen } from "./ServicesScreen";
 import { ShoppingScreen } from "./ShoppingScreen";
 import { SuppliesScreen } from "./SuppliesScreen";
@@ -36,6 +38,16 @@ export function ManageScreensHost({
       return <ShoppingScreen onBack={onBack} />;
     case "Payments":
       return <PaymentsScreen onBack={onBack} />;
+    case "Goals":
+      return <GoalsScreen onBack={onBack} />;
+    case "Preferences":
+      return (
+        <PreferencesScreen
+          onBack={onBack}
+          language={language}
+          onLanguageChange={onLanguageChange ?? (() => {})}
+        />
+      );
     default:
       return null;
   }
