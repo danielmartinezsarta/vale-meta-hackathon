@@ -126,15 +126,20 @@ async function main(): Promise<void> {
         // Let the AudioContext run: without it the capture posts zeros,
         // the app calls the mic blocked, and the session dies on turn 1.
         "--autoplay-policy=no-user-gesture-required",
+        "--window-size=390,844",
       ],
     });
     try {
       const context = await browser.newContext({
-        viewport: { width: 390, height: 844 },
+        // Null viewport plus a matching window: no grey band beside the app.
+        viewport: null,
         deviceScaleFactor: 2,
         // The demo runs in dark mode. The theme key is set before the
         // first load so the first paint is already dark.
         colorScheme: "dark",
+      });
+      await context.grantPermissions(["microphone"], {
+        origin: `http://localhost:${port}`,
       });
       await context.addInitScript(() => {
         window.localStorage.setItem("vale-theme", "dark");
@@ -142,12 +147,41 @@ async function main(): Promise<void> {
       const page = await context.newPage();
       const wakeUp = async () => {
         await page.goto(`http://localhost:${port}/`, { waitUntil: "networkidle", timeout: 60000 });
-        await page.getByRole("button", { name: "Wake Vale" }).click({ timeout: 30000 });
+        // A real mouse click: the AudioContext only resumes from a gesture.
+        const wakeBtn = page.getByRole("button", { name: "Wake Vale" });
+        await wakeBtn.waitFor({ timeout: 30000 });
+        const at = await wakeBtn.evaluate((el) => {
+          const box = el.getBoundingClientRect();
+          return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        });
+        await page.mouse.click(at.x, at.y);
         // The mic stays live and unmuted: every utterance flows through
         // the normal voice path, so the typed field stays hidden.
         await page.waitForTimeout(4000);
       };
       await wakeUp();
+      // The capture dies silent when the context never runs: prove the
+      // page can run audio before the first utterance arrives.
+      await page.waitForFunction(
+        async () => {
+          try {
+            const Ctor =
+              window.AudioContext ??
+              (window as unknown as { webkitAudioContext?: typeof AudioContext })
+                .webkitAudioContext;
+            if (!Ctor) return false;
+            const ctx = new Ctor();
+            if (ctx.state === "suspended") await ctx.resume().catch(() => {});
+            const running = ctx.state === "running";
+            await ctx.close().catch(() => {});
+            return running;
+          } catch {
+            return false;
+          }
+        },
+        undefined,
+        { timeout: 30000 },
+      );
       // Same browser id the app stored, so the demo reads the same cursor
       // the pill shows. It survives a reload, which keeps recovery exact.
       const clientId =
@@ -198,6 +232,14 @@ async function main(): Promise<void> {
         }
         if (turn.widget) await page.waitForTimeout(1500);
         await quiet(page);
+        // A session alert banner means the run is broken: stop loud,
+        // never hang. (The state subtitle can lag; only the banner counts.)
+        const banner = page.getByRole("alert").first();
+        if (await banner.isVisible().catch(() => false)) {
+          const text = ((await banner.innerText().catch(() => "")) || "").slice(0, 120);
+          await page.screenshot({ path: join(shots, `alert-${turn.turn}.png`) });
+          throw new Error(`demo stopped: session alert on screen: ${text}`);
+        }
         const shot = SHOT_TURNS[turn.turn];
         if (shot && !shotTaken.has(shot)) {
           shotTaken.add(shot);
@@ -222,7 +264,6 @@ async function main(): Promise<void> {
       // then resume for the next utterance.
       let lastCursor = 0;
       let lastAdvance = Date.now();
-      let reloaded = false;
       for (;;) {
         const state = await readState();
         if (state.done) break;
@@ -232,14 +273,14 @@ async function main(): Promise<void> {
           continue;
         }
         if (state.cursor <= lastCursor) {
-          if (Date.now() - lastAdvance > 180000 && !reloaded) {
-            // No utterance landed for 3 minutes: the session may have
-            // parked. Reload keeps the client and cursor; wake again.
-            reloaded = true;
-            console.log("[demo] stalled, reloading once");
-            await page.reload({ waitUntil: "networkidle", timeout: 60000 });
-            await wakeUp();
-            lastAdvance = Date.now();
+          // No utterance landed: the file plays once, so a parked session
+          // never recovers. Stop loud instead of hanging.
+          if (Date.now() - lastAdvance > 90000) {
+            const tail = (
+              (await page.evaluate(() => document.body.innerText)) as string
+            ).slice(-300);
+            await page.screenshot({ path: join(shots, "stall.png") });
+            throw new Error(`demo stopped: no utterance for 90 s. Screen tail: ${tail}`);
           }
           await page.waitForTimeout(1000);
           continue;
