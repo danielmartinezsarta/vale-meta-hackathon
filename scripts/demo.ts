@@ -6,7 +6,7 @@
 // for Vale to finish and the sheet to show before the next turn. One
 // voice at a time. Prints the scene name per turn. Exits non-zero on miss.
 import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -81,8 +81,26 @@ async function quiet(page: Page): Promise<void> {
   });
 }
 
+const SPEECH_WAV = "/tmp/replay-speech.wav";
+
+// The fake-mic audio is generated, never committed: a judge machine builds
+// it from the committed run with say/afconvert, or the demo fails loud.
+function ensureSpeechWav(): void {
+  const runPath = join(root, "replay", "demo-run.json");
+  const fresh =
+    existsSync(SPEECH_WAV) && statSync(SPEECH_WAV).mtimeMs > statSync(runPath).mtimeMs;
+  if (fresh) return;
+  console.log("[demo] building the fake-mic audio...");
+  execSync(`python3 ${join(root, "scripts", "make-speech-wav.py")} ${runPath} ${SPEECH_WAV}`, {
+    cwd: root,
+    stdio: "inherit",
+  });
+  if (!existsSync(SPEECH_WAV)) throw new Error(`speech wav missing: ${SPEECH_WAV}`);
+}
+
 async function main(): Promise<void> {
   const run = parseReplayRun(readFileSync(join(root, "replay", "demo-run.json"), "utf8"));
+  ensureSpeechWav();
   // The server runs the production build, so rebuild first: the demo must
   // play the current code, never a stale .next.
   console.log("[demo] building the app...");
@@ -122,19 +140,18 @@ async function main(): Promise<void> {
       args: [
         "--use-fake-ui-for-media-stream",
         "--use-fake-device-for-media-stream",
-        "--use-file-for-fake-audio-capture=/tmp/replay-speech.wav",
+        `--use-file-for-fake-audio-capture=${SPEECH_WAV}`,
         // Let the AudioContext run: without it the capture posts zeros,
         // the app calls the mic blocked, and the session dies on turn 1.
         "--autoplay-policy=no-user-gesture-required",
-        "--window-size=390,844",
+        "--window-size=430,932",
       ],
     });
     try {
       const context = await browser.newContext({
-        // Phone viewport at 2x; the window size matches so no grey band
-        // shows beside the app.
-        viewport: { width: 390, height: 844 },
-        deviceScaleFactor: 2,
+        // Null viewport: the page fills the window, so no grey band
+        // shows anywhere. The window size matches a phone.
+        viewport: null,
         // The demo runs in dark mode. The theme key is set before the
         // first load so the first paint is already dark.
         colorScheme: "dark",
@@ -274,6 +291,25 @@ async function main(): Promise<void> {
           continue;
         }
         if (state.cursor <= lastCursor) {
+          // Measure while turn 1 is pending: capture state, mic track,
+          // and which path raised suspended, straight from the page.
+          if (lastCursor === 0) {
+            const audio = await page
+              .evaluate(
+                () =>
+                  JSON.stringify(
+                    (window as unknown as { __valeAudioDebug?: unknown })
+                      .__valeAudioDebug ?? null,
+                  ),
+              )
+              .catch(() => "n/a");
+            const alertVisible = await page
+              .getByRole("alert")
+              .first()
+              .isVisible()
+              .catch(() => false);
+            console.log(`[demo] audio ${audio} alert=${alertVisible}`);
+          }
           // No utterance landed: the file plays once, so a parked session
           // never recovers. Stop loud instead of hanging.
           if (Date.now() - lastAdvance > 90000) {
