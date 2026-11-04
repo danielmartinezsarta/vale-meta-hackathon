@@ -308,15 +308,36 @@ export function TapToTalk({
       const input = document.createElement("input");
       input.type = "file";
       input.accept = "image/*";
+      // iOS Safari ignores clicks on detached inputs: the picker must
+      // live in the document (invisibly) or nothing opens at all.
+      input.style.position = "fixed";
+      input.style.top = "0";
+      input.style.left = "0";
+      input.style.opacity = "0";
+      input.style.pointerEvents = "none";
       try {
         if (window.matchMedia("(pointer: coarse)").matches) input.setAttribute("capture", "camera");
       } catch {
         /* file picker without a camera hint */
       }
+      const cleanup = (): void => {
+        try {
+          input.remove();
+        } catch {
+          /* already gone */
+        }
+      };
       input.onchange = () => {
         const file = input.files?.[0];
+        cleanup();
         if (file) void uploadSessionPhoto(file, kind, sessionId);
       };
+      try {
+        input.addEventListener("cancel", cleanup);
+      } catch {
+        /* older engines without a cancel event leak one hidden input */
+      }
+      document.body.appendChild(input);
       input.click();
     } catch {
       /* no picker without a document */
@@ -582,7 +603,10 @@ export function TapToTalk({
     onChoose: (choice: "before" | "final") => {
       const sessionId = board?.session?.id;
       closeWidgetByHand();
-      if (sessionId === undefined) return;
+      if (sessionId === undefined) {
+        setNotice("No open session for the photo.");
+        return;
+      }
       openPhotoPicker(choice, sessionId);
     },
     onVisit: () => {
