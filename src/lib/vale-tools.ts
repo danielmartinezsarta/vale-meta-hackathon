@@ -475,17 +475,25 @@ export function closeSession(db: ValeDb, args: { products_used?: unknown }, lang
   const durationS = Math.max(0, Math.round((Date.parse(endedAt) - Date.parse(started.started_at)) / 1000));
   const minutes = Math.max(1, Math.round(durationS / 60));
   const service = db.prepare("SELECT id, name FROM services WHERE id = ?").get(open.service_id) as { id: number; name: string };
-  const earned = quotePrice(
-    PRICING,
-    minutes,
-    recipeForService(db, service.id).map((line) => ({
-      qty: line.qty,
-      pricePerProductUsd: line.price_per_product_usd,
-      contentPerProduct: line.content_per_product,
-    })),
-  ).marginEarned;
+  // The same breakdown the quote sheet shows, extras included: the summary
+  // sheet reads it off the close data instead of recomputing it.
+  const quoted = computeQuoteWithSessionExtras(db, service.id, minutes, open.id);
+  const earned = "error" in quoted ? 0 : quoted.breakdown.marginEarned;
   db.prepare("UPDATE sessions SET ended_at = ?, duration_s = ?, margin_earned = ? WHERE id = ?").run(endedAt, durationS, earned, open.id);
   logWrite(db, "session_close", "sessions", open.id, { supplies: recordedIds });
+  const loggedExtras = (
+    "error" in quoted
+      ? []
+      : quoted.lines.filter((line) =>
+          db
+            .prepare("SELECT 1 FROM session_supplies WHERE session_id = ? AND supply_id = ?")
+            .get(open.id, line.supply_id),
+        )
+  ).map((line) => ({
+    name: line.name,
+    qty: line.qty,
+    amount: line.qty * line.price_per_product_usd * (line.content_per_product > 0 ? 1 / line.content_per_product : 0),
+  }));
   // The full summary sheet reads the payment off this session, if any.
   const paid = db.prepare("SELECT COALESCE(SUM(amount_usd), 0) AS total FROM payments WHERE session_id = ?").get(open.id) as { total: number };
   const lasted = language === "en" ? `It lasted ${minutes} minute${minutes === 1 ? "" : "s"}.` : `Duró ${minutes} minuto${minutes === 1 ? "" : "s"}.`;
@@ -503,6 +511,18 @@ export function closeSession(db: ValeDb, args: { products_used?: unknown }, lang
       service: service.name,
       client: clientLabel(db, open.client_id),
       paid_amount_usd: paid.total,
+      extras: loggedExtras,
+      breakdown:
+        "error" in quoted
+          ? null
+          : {
+              supplies_cost: quoted.breakdown.suppliesCost,
+              time_cost: quoted.breakdown.timeCost,
+              fixed_share: quoted.breakdown.fixedShare,
+              margin_pct: quoted.breakdown.marginPct,
+              final_price: quoted.breakdown.finalPrice,
+              margin_earned: quoted.breakdown.marginEarned,
+            },
     },
   };
 }

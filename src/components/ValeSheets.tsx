@@ -743,8 +743,8 @@ function SummaryBody({ data }: { data: SessionSummaryData }) {
         <section className="aw-sum__block">
           <h3>Service and extras</h3>
           {data.service !== null && row("service", data.service.name, usdWhole(data.service.price))}
-          {data.extras.map((extra) =>
-            row(`extra-${extra.label}`, `+ ${extra.label}`, usdWhole(extra.amount), "aw-sum__row--sub"),
+          {data.extras.map((extra, index) =>
+            row(`extra-${index}`, `${extra.label}`, usdWhole(extra.amount), "aw-sum__row--sub"),
           )}
           {data.suggested !== null &&
             row("suggested", "Suggested price", usdWhole(data.suggested), "aw-sum__row--total")}
