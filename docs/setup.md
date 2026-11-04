@@ -13,13 +13,15 @@ Copy the example and fill it in. Never commit `.env`.
 cp .env.example .env
 ```
 
+Secrets live in local `.env` (gitignored, never committed) or in the shell. `npm start` loads `.env` when the server boots. The `db:reset` brief precompute reads the shell environment, so export Glimmer values there before resetting if you want briefs.
+
 | Variable | Required | What it does |
 |---|---|---|
 | `META_API_KEY` | For live runs | Server-side key for Meta models. The browser never sees it. |
 | `GLIMMER_URL` | No | URL of your own Glimmer deploy (`modal deploy modal/glimmer.py`). Empty keeps private briefs off; cards still open. |
-| `GLIMMER_TOKEN` | No | Bearer token for that endpoint. Export it in the shell; it never goes in the file. |
+| `GLIMMER_TOKEN` | No | Bearer token for that endpoint. Local `.env` or shell; never in the repo. |
 | `SEAMLESS_URL` | No | URL of your own SeamlessM4T v2 Large deploy (`modal deploy modal/seamless.py`). Empty keeps the engine off; the browser voice says every line. |
-| `SEAMLESS_TOKEN` | No | Bearer token for that endpoint. Export it in the shell; it never goes in the file. The voice switch stays disabled without URL and token. |
+| `SEAMLESS_TOKEN` | No | Bearer token for that endpoint. Local `.env` or shell; never in the repo. The voice switch stays disabled without URL and token. |
 
 Deploy details for both backends: [modal.md](modal.md).
 
