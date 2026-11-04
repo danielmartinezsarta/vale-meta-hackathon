@@ -231,4 +231,8 @@ so a square photo leaves no empty band below. */
 .aw-cc__alert .aw-cc__h b{color:var(--aw-a3)}
 .aw-cc__alert p{margin:0}
 .aw-tags{display:flex;flex-wrap:wrap;gap:6px}
-.aw-tags span{padding:4px 10px;border-radius:999px;background:var(--aw-a1bg);color:var(--aw-a1);font-size:.78rem;font-weight:600}
+.aw-tags span{padding:4px 10px;border-radius:999px;background:var(--aw-ok);color:var(--aw-on-ok);font-size:.78rem;font-weight:600}
+.aw-cc__brief-cap{display:block;color:var(--aw-muted);font-size:.74rem;font-weight:600;overflow-wrap:anywhere}
+.aw-cc__brief{margin:2px 0 0;padding:0;list-style:none}
+.aw-cc__brief li{padding:6px 0;border-top:1px solid var(--aw-field-line);font-size:.85rem;overflow-wrap:anywhere}
+.aw-cc__brief li:first-child{border-top:0;padding-top:2px}

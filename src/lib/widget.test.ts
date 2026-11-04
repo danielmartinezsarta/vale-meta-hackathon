@@ -97,7 +97,7 @@ describe("buildWidget (typed payloads per kind)", () => {
     });
   });
 
-  it("carries the private brief on top of the card when present", () => {
+  it("carries the private brief on the card when present", () => {
     expect(
       buildWidget(
         "find_client",

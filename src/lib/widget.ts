@@ -86,7 +86,7 @@ export interface ClientVisit {
   photo: string | null;
 }
 
-/** Private Glimmer brief shown on top of the card, label first. */
+/** Private Glimmer brief shown last on the card, caption first. */
 export interface ClientBriefData {
   label: string;
   lines: string[];

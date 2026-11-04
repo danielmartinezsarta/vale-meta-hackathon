@@ -46,8 +46,8 @@ describe("ValeSheets (sheet per kind)", () => {
     expect(screen.getByText("Always on time")).toBeTruthy();
   });
 
-  it("shows the private brief on top of the card with its label", () => {
-    renderSheet({
+  it("shows the private brief last on the card, below notes", () => {
+    const { container } = renderSheet({
       kind: "client_card",
       title: "Client card",
       size: "full",
@@ -55,22 +55,38 @@ describe("ValeSheets (sheet per kind)", () => {
         name: "David",
         birthday: null,
         sex: null,
-        phone: null,
-        email: null,
+        phone: "555-0100",
+        email: "david@example.com",
         visits: [],
         visitsMore: 0,
-        healthNotes: [],
-        noteTags: [],
+        healthNotes: ["Allergic to monomer"],
+        noteTags: ["Likes neon colors"],
         brief: {
           label: "Prepared privately by Muse Glimmer (open weights)",
           lines: ["Prefers dark matte designs", "Hockey fan"],
         },
       },
     });
-    expect(screen.getByText("Prepared privately by Muse Glimmer (open weights)")).toBeTruthy();
-    expect(screen.getByText("Prefers dark matte designs")).toBeTruthy();
-    expect(screen.getByText("Hockey fan")).toBeTruthy();
-    expect(screen.getByRole("note", { name: "Private brief" })).toBeTruthy();
+    const card = container.querySelector(".aw-cc");
+    expect(card).not.toBeNull();
+    const brief = screen.getByRole("note", { name: "Private brief" });
+    expect(brief).toBeTruthy();
+    // The brief block is the last block on the card.
+    expect(card?.lastElementChild).toBe(brief);
+    expect(brief.querySelector(".aw-cc__brief-cap")?.textContent).toBe(
+      "Prepared privately by Muse Glimmer (open weights)",
+    );
+    expect(brief.querySelectorAll(".aw-cc__brief li")).toHaveLength(2);
+    // Order: phone, email, health, notes, then the brief.
+    const phone = screen.getByText("555-0100");
+    const email = screen.getByText("david@example.com");
+    const health = screen.getByText("Allergic to monomer");
+    const tag = screen.getByText("Likes neon colors");
+    const FOLLOWING = 4;
+    expect(phone.compareDocumentPosition(health) & FOLLOWING).toBe(FOLLOWING);
+    expect(email.compareDocumentPosition(health) & FOLLOWING).toBe(FOLLOWING);
+    expect(health.compareDocumentPosition(tag) & FOLLOWING).toBe(FOLLOWING);
+    expect(tag.compareDocumentPosition(brief) & FOLLOWING).toBe(FOLLOWING);
   });
 
   it("shows no camera affordance when the visit carries no photo", () => {
