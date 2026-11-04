@@ -1,8 +1,5 @@
 <div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/robot-dark.svg" />
-    <img src="docs/img/robot.svg" width="150" alt="Vale robot" />
-  </picture>
+  <img src="docs/img/robot.svg" width="150" alt="Vale robot" />
   <br />
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-dark.png" />
