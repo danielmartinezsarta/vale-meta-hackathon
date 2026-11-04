@@ -10,6 +10,7 @@ interface Handshake {
   model?: string;
   mode?: string;
   languageBias?: unknown;
+  keywords?: unknown;
 }
 
 let server: WebSocketServer;
@@ -105,6 +106,7 @@ describe("server ASR bridge", () => {
     expect(lastHandshake?.model).toBe("muse-voice-transcribe-1.0");
     expect(lastHandshake?.mode).toBe("PUSH_TO_TALK");
     expect(lastHandshake?.languageBias).toEqual(["English"]);
+    expect(lastHandshake?.keywords).toEqual(["Vale"]);
     expect(conn.open).toBe(true);
     conn.close();
     expect(events).toEqual([]);

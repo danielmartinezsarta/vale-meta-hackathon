@@ -5,6 +5,8 @@ import type { ValeLanguage } from "./vale-language";
 export const ASR_URL = "wss://api.meta.ai/v1/asr/realtime";
 export const ASR_MODEL = "muse-voice-transcribe-1.0";
 export const ASR_ENCODING = "PCM_24KHZ";
+/** Wake word hint for the transcription handshake. */
+export const ASR_KEYWORDS = ["Vale"];
 export const ASR_SAMPLE_RATE = 24000; // 24 kHz mono 16-bit = 48 000 bytes/s.
 const HANDSHAKE_TIMEOUT_MS = 10000;
 
@@ -61,6 +63,7 @@ export function openAsrConnection(
           mode: "PUSH_TO_TALK",
           // Pin listening to the screen language (names, not tags).
           languageBias: [options.language === "es" ? "Spanish" : "English"],
+          keywords: ASR_KEYWORDS,
         }),
       );
     });

@@ -716,8 +716,10 @@ describe("GET /voice live bridge (browser -> server -> Meta)", () => {
     const auth = JSON.parse(receivedAuth[0]) as {
       authorization?: { accessToken?: string };
       languageBias?: unknown;
+      keywords?: unknown;
     };
     expect(auth.languageBias).toEqual(["English"]);
+    expect(auth.keywords).toEqual(["Vale"]);
     expect(auth.authorization?.accessToken).toBe("Bearer test-key-2");
     browser.close(1000, "test done");
   });
