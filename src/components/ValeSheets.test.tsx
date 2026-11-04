@@ -420,4 +420,38 @@ describe("ValeSheets (sheet per kind)", () => {
     expect(note?.closest('[data-slot="expected"]')).not.toBeNull();
     expect(document.querySelectorAll(".aw-pics > .aw-pic")).toHaveLength(3);
   });
+
+  it("renders the shopping list items and the empty line", () => {
+    renderSheet({
+      kind: "shopping",
+      title: "Shopping list",
+      size: "half",
+      data: { items: ["Primer", "Top coat"] },
+    });
+    expect(screen.getByText("Shopping list")).toBeTruthy();
+    expect(screen.getByText("Primer")).toBeTruthy();
+    expect(screen.getByText("Top coat")).toBeTruthy();
+  });
+
+  it("renders the empty shopping list without items", () => {
+    renderSheet({
+      kind: "shopping",
+      title: "Shopping list",
+      size: "half",
+      data: { items: [] },
+    });
+    expect(screen.getByText("The list is empty.")).toBeTruthy();
+  });
+
+  it("renders low stock rows with counts", () => {
+    renderSheet({
+      kind: "low_stock",
+      title: "Low stock",
+      size: "half",
+      data: { items: [{ name: "Primer", stock: 1, min: 2 }] },
+    });
+    expect(screen.getByText("Low stock")).toBeTruthy();
+    expect(screen.getByText("Primer")).toBeTruthy();
+    expect(screen.getByText("1 left · min 2")).toBeTruthy();
+  });
 });

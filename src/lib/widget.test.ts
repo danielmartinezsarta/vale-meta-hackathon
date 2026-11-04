@@ -277,6 +277,60 @@ describe("buildWidget (typed payloads per kind)", () => {
     expect(buildWidget("no_such_tool", {}, {}, NO_DB)).toBeNull();
   });
 
+  it("stamps the shopping and low stock kinds half with English titles", () => {
+    expect(WIDGET_SIZE.shopping).toBe("half");
+    expect(WIDGET_SIZE.low_stock).toBe("half");
+    expect(widgetTitle("shopping")).toBe("Shopping list");
+    expect(widgetTitle("low_stock")).toBe("Low stock");
+  });
+
+  it("builds the shopping list from the tool payload", () => {
+    expect(
+      buildWidget("shopping_show", {}, { items: ["Primer", "Top coat"] }, NO_DB),
+    ).toEqual({
+      kind: "shopping",
+      title: "Shopping list",
+      size: "half",
+      data: { items: ["Primer", "Top coat"] },
+    });
+  });
+
+  it("refreshes the shopping list from the store after add and remove", () => {
+    const store: CardStore = {
+      prepare: () => ({
+        get: (..._params: unknown[]) => undefined,
+        all: (..._params: unknown[]) => [{ name: "Primer" }],
+      }),
+    };
+    for (const tool of ["shopping_add", "shopping_remove"]) {
+      expect(buildWidget(tool, {}, {}, store)).toEqual({
+        kind: "shopping",
+        title: "Shopping list",
+        size: "half",
+        data: { items: ["Primer"] },
+      });
+    }
+    expect(buildWidget("shopping_add", {}, {}, NO_DB)).toBeNull();
+  });
+
+  it("builds low stock rows and stays silent when stock is fine", () => {
+    expect(
+      buildWidget(
+        "stock_show_low",
+        {},
+        { low: [{ name: "Primer", stock_qty: 1, min_qty: 2 }] },
+        NO_DB,
+      ),
+    ).toEqual({
+      kind: "low_stock",
+      title: "Low stock",
+      size: "half",
+      data: { items: [{ name: "Primer", stock: 1, min: 2 }] },
+    });
+    expect(buildWidget("stock_show_low", {}, { low: [] }, NO_DB)).toBeNull();
+    expect(buildWidget("stock_show_low", {}, {}, NO_DB)).toBeNull();
+  });
+
   it("formats money, days, visits, minutes, and initials design-style", () => {
     expect(usdWhole(35)).toBe("$35");
     expect(usdWhole(2000)).toBe("$2,000");
