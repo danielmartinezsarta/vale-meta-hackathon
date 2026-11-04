@@ -8,6 +8,7 @@ import {
   BRIEF_LABEL,
   briefSourceHash,
   getStoredBrief,
+  logBriefCacheHit,
   refreshClientBrief,
   refreshClientBriefInBackground,
 } from "./client-briefs";
@@ -676,6 +677,7 @@ export function showClientSummary(
   const stored = getStoredBrief(db, found.row.id);
   const hash = briefSourceHash(db, found.row.id);
   if (stored && hash !== null && stored.source_hash === hash) {
+    logBriefCacheHit(db, found.row.id);
     return {
       ok: true,
       message: stored.brief.spoken,
@@ -715,7 +717,7 @@ export async function clientSummaryAsync(
   if (!result.ok || !data?.needsBrief) return result;
   // Voice opts out of the cold-start retry: a loading model answers the
   // card fallback at once instead of blocking speech for minutes.
-  const stored = await refreshClientBrief(db, data.client_id, fetchImpl, { retryLoading: false });
+  const stored = await refreshClientBrief(db, data.client_id, fetchImpl, { retryLoading: false, source: "voice" });
   if (!stored) return result;
   return {
     ok: true,

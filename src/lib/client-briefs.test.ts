@@ -1,5 +1,8 @@
 // @vitest-environment node
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { freshTestDb } from "./db";
 import {
   BRIEF_LABEL,
@@ -11,6 +14,7 @@ import {
   fetchClientBrief,
   getStoredBrief,
   glimmerConfigured,
+  logBriefCacheHit,
   parseBriefJson,
   precomputeBriefsForClients,
   refreshClientBrief,
@@ -31,11 +35,24 @@ function glimmerFetch(seen: { url: string; auth: string; body: string }[], conte
   });
 }
 
+beforeEach(() => {
+  // Brief generation logs GLIMMER lines: keep them out of the live log.
+  vi.stubEnv("VALE_EVENTLOG_PATH", join(mkdtempSync(join(tmpdir(), "vale-events-")), "events.jsonl"));
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
+
+function eventLines(): Record<string, unknown>[] {
+  const file = process.env.VALE_EVENTLOG_PATH ?? "";
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
 
 function davidId(db: ReturnType<typeof freshTestDb>): number {
   return (db.prepare("SELECT id FROM clients WHERE name = ?").get("David") as { id: number }).id;
@@ -80,6 +97,46 @@ describe("client briefs store", () => {
     expect(again?.created_at).toBe(first?.created_at);
     expect(seen).toHaveLength(1);
     db.close();
+  });
+
+  it("logs generation and cache hits as GLIMMER events without record text", async () => {
+    vi.stubEnv("GLIMMER_URL", "https://glimmer.test");
+    vi.stubEnv("GLIMMER_TOKEN", "secret");
+    const logs: string[] = [];
+    const savedLog = console.log;
+    console.log = (line: string) => void logs.push(line);
+    try {
+      const db = freshTestDb();
+      const id = davidId(db);
+      const seen: { url: string; auth: string; body: string }[] = [];
+      const stored = await refreshClientBrief(
+        db,
+        id,
+        glimmerFetch(seen) as unknown as typeof fetch,
+        { source: "precompute" },
+      );
+      expect(stored).not.toBeNull();
+      logBriefCacheHit(db, id);
+      db.close();
+    } finally {
+      console.log = savedLog;
+    }
+    const lines = eventLines();
+    expect(lines).toHaveLength(2);
+    const [generated, cached] = lines;
+    expect(generated.process).toBe("GLIMMER");
+    expect(generated.model).toBe("muse-glimmer-30B");
+    expect(generated.status).toBe("ok");
+    expect(generated.detail).toMatchObject({ source: "precompute", result: "stored" });
+    expect(typeof generated.durationMs).toBe("number");
+    expect(cached.detail).toMatchObject({ source: "cache", result: "cache-hit" });
+    expect(typeof (cached.detail as Record<string, unknown>).created_at).toBe("string");
+    // No record text or health content anywhere in the recording.
+    const raw = lines.map((line) => JSON.stringify(line)).join("\n");
+    expect(raw).not.toContain("Prefers dark matte");
+    expect(raw).not.toContain("Hockey");
+    // The same lines also went to the server console.
+    expect(logs.join("\n")).toContain("GLIMMER");
   });
 
   it("lists the clients with appointments today", async () => {

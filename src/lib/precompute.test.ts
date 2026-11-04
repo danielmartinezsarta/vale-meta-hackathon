@@ -1,6 +1,6 @@
 // @vitest-environment node
 // Precompute wiring: server-start hook and db:reset chain.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,6 +10,11 @@ import { getStoredBrief } from "./client-briefs";
 import { getDb } from "./db";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
+
+beforeEach(() => {
+  // Brief generation logs GLIMMER lines: keep them out of the live log.
+  vi.stubEnv("VALE_EVENTLOG_PATH", join(mkdtempSync(join(tmpdir(), "vale-events-")), "events.jsonl"));
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();

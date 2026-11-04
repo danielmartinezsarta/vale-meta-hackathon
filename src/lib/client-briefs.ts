@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 import type { ValeDb } from "./db";
 import { bogotaDay } from "./natural-date";
+import { vlog } from "./turn-log";
 
 /** Fixed Glimmer schema: what the voice says, what the card shows. */
 export interface ClientBrief {
@@ -254,6 +255,53 @@ export interface RefreshOptions {
   retryLoading?: boolean;
   /** Backoff base between 503 retries; tests shrink it. */
   retryDelayMs?: number;
+  /** Where the refresh runs: precompute warms, voice answers, refresh is misc. */
+  source?: "precompute" | "refresh" | "voice";
+}
+
+type BriefResult = "stored" | "leak-regenerated" | "leak-dropped" | "fetch-error" | "cache-hit";
+
+/**
+ * Generation and cache events for the demo recording: model, timing and
+ * outcome only. The brief text and the record (with health notes) never
+ * reach the log; vlog also prints the same line to the server console.
+ */
+function logGlimmer(event: {
+  clientId: number;
+  source: "precompute" | "refresh" | "voice" | "cache";
+  result: BriefResult;
+  ms?: number | null;
+  createdAt?: string;
+  model?: string;
+}): void {
+  vlog({
+    turn: "-",
+    process: "GLIMMER",
+    model: event.model ?? GLIMMER_MODEL,
+    durationMs: event.ms ?? null,
+    status: event.result === "fetch-error" ? "error" : event.result === "leak-dropped" ? "ignored" : "ok",
+    detail: {
+      source: event.source,
+      client: event.clientId,
+      result: event.result,
+      ...(event.createdAt === undefined ? {} : { created_at: event.createdAt }),
+    },
+    content: null,
+  });
+}
+
+/** A turn shows the card off a stored brief: record the cache hit. */
+export function logBriefCacheHit(db: ValeDb, clientId: number): void {
+  const stored = getStoredBrief(db, clientId);
+  if (!stored) return;
+  logGlimmer({
+    clientId,
+    source: "cache",
+    result: "cache-hit",
+    ms: stored.ms,
+    createdAt: stored.created_at,
+    model: stored.model === "" ? undefined : stored.model,
+  });
 }
 
 // Six tries ride out a multi-minute cold load: 15 + 30 + 45 + 60 + 75 s
@@ -290,20 +338,32 @@ export async function refreshClientBrief(
     | undefined;
   const tries = options.retryLoading === false ? 1 : REFRESH_ATTEMPTS;
   const baseDelay = options.retryDelayMs ?? 15000;
+  const source = options.source ?? "refresh";
   let regenerated = false;
   for (let attempt = 0; attempt < tries; attempt += 1) {
     try {
       const { brief, ms } = await fetchClientBrief(record, client?.sex ?? "", fetchImpl);
-      if (!briefLeaksHealth(brief, record)) return storeBrief(db, clientId, brief, hash, ms);
+      if (!briefLeaksHealth(brief, record)) {
+        const stored = storeBrief(db, clientId, brief, hash, ms);
+        logGlimmer({ clientId, source, result: regenerated ? "leak-regenerated" : "stored", ms });
+        return stored;
+      }
       // A leaking brief is dropped and generated once more; a second
       // leak stores nothing so the voice falls back to the card.
-      if (regenerated) return null;
+      if (regenerated) {
+        logGlimmer({ clientId, source, result: "leak-dropped", ms: null });
+        return null;
+      }
       regenerated = true;
     } catch (error) {
-      if (!(error instanceof GlimmerLoadingError) || attempt + 1 >= tries) return null;
+      if (!(error instanceof GlimmerLoadingError) || attempt + 1 >= tries) {
+        logGlimmer({ clientId, source, result: "fetch-error", ms: null });
+        return null;
+      }
       await sleep(baseDelay * (attempt + 1));
     }
   }
+  logGlimmer({ clientId, source, result: "fetch-error", ms: null });
   return null;
 }
 
@@ -338,7 +398,7 @@ export async function precomputeBriefsForClients(
 ): Promise<{ refreshed: number; total: number }> {
   let refreshed = 0;
   for (const clientId of clientIds) {
-    const stored = await refreshClientBrief(db, clientId, fetchImpl);
+    const stored = await refreshClientBrief(db, clientId, fetchImpl, { source: "precompute" });
     if (stored) refreshed += 1;
   }
   return { refreshed, total: clientIds.length };
