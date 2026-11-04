@@ -9,7 +9,7 @@ const MAX_CHARS = 500;
 const LIMIT_PER_MINUTE = 30;
 const WINDOW_MS = 60_000;
 
-// Best-effort per-instance bucket (HACK-013 pattern): each serverless
+// Best-effort per-instance bucket: each serverless
 // instance tracks its own callers, so a flood spread across instances
 // may pass. Every call burns Modal GPU, hence the cap.
 const hits = new Map<string, number[]>();

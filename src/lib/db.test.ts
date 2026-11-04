@@ -53,7 +53,7 @@ describe("seeded database", () => {
   });
 });
 
-describe("demo seed (HACK-018)", () => {
+describe("demo seed", () => {
   it("holds the four demo clients with full-card fields", () => {
     const db = freshTestDb();
     const rows = db

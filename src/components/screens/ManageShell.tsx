@@ -5,7 +5,7 @@ import { useScreenMode } from "@/components/useScreenMode";
 import styles from "./ManageScreens.module.css";
 
 /**
- * HACK-030 shared shell for the management screens: back button top-left,
+ * Shared shell for the management screens: back button top-left,
  * title, scrolling list/detail body, and one primary action bottom-wide.
  * Same overlay look and --vs-* tokens as the HomeScreen menu.
  */

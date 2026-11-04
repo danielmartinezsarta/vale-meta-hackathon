@@ -6,7 +6,7 @@ import type { NaturalDateAnchor } from "./natural-date";
 // Monday on the Bogota calendar; the salon clock reads 3 PM.
 const MONDAY: NaturalDateAnchor = { today: "2026-11-02", time: "15:00" };
 
-describe("demo phrases (HACK-018 req 7)", () => {
+describe("demo phrases (req 7)", () => {
   it("resolves 'next Friday at 5 PM' to the Friday of next week", () => {
     expect(parseNaturalDate("next Friday at 5 PM", MONDAY)).toEqual({
       day: "2026-11-13",

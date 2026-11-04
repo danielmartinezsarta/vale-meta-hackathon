@@ -1,4 +1,4 @@
-// Relative-date helper for scripts/seed.mjs (HACK-024). Plain-JS mirror of
+// Relative-date helper for scripts/seed.mjs. Plain-JS mirror of
 // src/lib/seed-dates.ts (the CLI seed runs under plain node, no tsx): keep
 // both implementations identical. The JSON day markers extend on
 // top of this helper; keep the marker set stable.

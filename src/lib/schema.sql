@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS shopping_list (
   supply_id INTEGER NOT NULL UNIQUE REFERENCES supplies(id),
   added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
--- HACK-018 demo reminders. A shopping reminder links to shopping_list rows
+-- Demo reminders. A shopping reminder links to shopping_list rows
 -- through reminder_items; other reminders (calls, errands) stand alone.
 CREATE TABLE IF NOT EXISTS reminders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS reminder_items (
   shopping_list_id INTEGER NOT NULL REFERENCES shopping_list(id),
   PRIMARY KEY (reminder_id, shopping_list_id)
 );
--- HACK-018 demo visits: past appointments with a photo marker for the card.
+-- Demo visits: past appointments with a photo marker for the card.
 CREATE TABLE IF NOT EXISTS visits (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   client_id INTEGER NOT NULL REFERENCES clients(id),
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS session_supplies (
   qty REAL NOT NULL DEFAULT 1,
   PRIMARY KEY (session_id, supply_id)
 );
--- HACK-018 demo payments: session_quote Accept (or a spoken amount after
+-- Demo payments: session_quote Accept (or a spoken amount after
 -- Reject) registers here. The session stays open; the sheet shows the total.
 CREATE TABLE IF NOT EXISTS payments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS write_log (
   undone INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
--- HACK-030 management screens: business settings edited from Goals, seeded
+-- Management screens: business settings edited from Goals, seeded
 -- from the seed pricing block. All values stay invented demo data.
 CREATE TABLE IF NOT EXISTS business_settings (
   key TEXT PRIMARY KEY,

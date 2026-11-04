@@ -1,5 +1,5 @@
 /**
- * Single voice process (HACK-017): serves the Next app and the /voice
+ * Single voice process: serves the Next app and the /voice
  * WebSocket endpoint from one process. One socket per conversation — turns
  * reset on the same socket while every turn redials Meta, which has no
  * resume. Meta credentials never leave this process.

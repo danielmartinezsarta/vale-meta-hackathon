@@ -1,4 +1,4 @@
-/* HACK-030 management screens: same overlay look as the HomeScreen menu.
+/* Management screens: same overlay look as the HomeScreen menu.
  * Theme arrives as --vs-* custom properties from the HomeScreen root;
  * every var carries the day-mode fallback so the shell also renders alone. */
 .mg {

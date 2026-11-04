@@ -1,5 +1,5 @@
-// HACK-023 photo slots: pre/post/ref session photos.
-// Thin storage wrapper over the HACK-004 core in ./nails (no duplication:
+// Photo slots: pre/post/ref session photos.
+// Thin storage wrapper over the core in ./nails (no duplication:
 // parsing and model calls stay there and are re-exported here for the
 // photo flow). This module never calls a model and knows nothing about
 // vale-tools or the widget layer.

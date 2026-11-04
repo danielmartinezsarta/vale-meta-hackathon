@@ -1,4 +1,4 @@
-// Seed a file database with the invented HACK-018 demo data.
+// Seed a file database with the invented demo data.
 // Usage:
 //   node scripts/seed.mjs                  -> seeds data/vale-demo.db (a copy)
 //   VALE_DB_PATH=/tmp/x.db node scripts/seed.mjs -> seeds that file

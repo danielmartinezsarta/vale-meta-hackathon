@@ -1,6 +1,6 @@
 /**
  * Screen cards from the design. One
- * typed payload per kind; HACK-018's tools fill them. Sizes are fixed per
+ * typed payload per kind; the demo tools fill them. Sizes are fixed per
  * kind: "half" rises to mid-screen with Vale visible behind, "full"
  * covers the screen. Auto-hide and timed chains live in the UI layer.
  */
@@ -176,7 +176,7 @@ export interface BookedData {
   time: string;
 }
 
-/** Session summary; null blocks hide, HACK-018 fills the rest. */
+/** Session summary; null blocks hide, the demo fills the rest. */
 export interface SessionSummaryData {
   client: string | null;
   date: string | null;
@@ -313,7 +313,7 @@ export function initials(name: string): string {
     .toUpperCase();
 }
 
-/** Contact columns are demo-local until HACK-018 owns the schema. */
+/** Contact columns are demo-local until the demo owns the schema. */
 function contactOf(
   db: CardStore | undefined,
   id: number,
@@ -549,7 +549,7 @@ function shoppingItemsOf(db: CardStore | undefined): string[] | null {
 /**
  * Screen card for a successful tool call, never from reply text. Money,
  * health and goal amounts stay in the payload; the voice never says them.
- * HACK-018 fills service extras, summary money and card contact/visits;
+ * The demo fills service extras, summary money and card contact/visits;
  * until then null blocks hide and the demo store fills what it can.
  */
 export function buildWidget(

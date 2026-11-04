@@ -855,7 +855,7 @@ describe("one voice per language (lead round p2)", () => {
   });
 });
 
-describe("tuned prosody only for Ava and Paulina (HACK-024)", () => {
+describe("tuned prosody only for Ava and Paulina", () => {
   it("uses the picked rate and pitch for Ava and Paulina", () => {
     window.localStorage.removeItem("vale-voice");
     setVoicePrefs({ rateEn: 1.2, rateEs: 0.8, pitchEn: 1.1, pitchEs: 0.9 });

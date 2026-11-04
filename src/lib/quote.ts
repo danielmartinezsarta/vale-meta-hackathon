@@ -1,4 +1,4 @@
-// HACK-003: pure price math. Reads nothing, touches no database.
+// Pure price math. Reads nothing, touches no database.
 // All money is USD. Inputs come from the invented seed; see seed-data.json.
 export interface PricingConfig {
   goalMonthlyUsd: number;

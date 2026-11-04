@@ -1,4 +1,4 @@
-// The 8 HACK-002 tools plus undo_last_write, over the SQLite database.
+// The 8 voice tools plus undo_last_write, over the SQLite database.
 // Server-side only: executors run here; only short speakable results and
 // masked public notes ever reach the model. Private health-note text never
 // leaves this module toward the cloud.
@@ -1273,7 +1273,7 @@ export function undoLastWrite(db: ValeDb, language: ValeLanguage = "es"): ToolRe
     | { id: number; action: string; table_name: string; row_id: number; extra: string | null }
     | undefined;
   if (!entry) return { ok: false, message: "No hay nada que deshacer." };
-  // HACK-030: row snapshots are plain table values (string | number | null).
+  // Row snapshots are plain table values (string | number | null).
   type UndoRow = Record<string, string | number | null>;
   const extra = entry.extra
     ? (JSON.parse(entry.extra) as {
@@ -1401,7 +1401,7 @@ export function undoLastWrite(db: ValeDb, language: ValeLanguage = "es"): ToolRe
       db.prepare("UPDATE supplies SET stock_qty = ? WHERE id = ?").run(prevQty, entry.row_id);
       break;
     }
-    // HACK-030 management screens: every screen write reverses here too.
+    // Management screens: every screen write reverses here too.
     case "manage_delete_reminder": {
       const row = extra.row;
       if (!row || typeof row.id !== "number") return { ok: false, message: "No se puede deshacer." };

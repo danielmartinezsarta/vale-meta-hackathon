@@ -28,7 +28,7 @@ function rows(db: DatabaseSync, sql: string): Record<string, unknown>[] {
   return db.prepare(sql).all() as Record<string, unknown>[];
 }
 
-describe("relative-date seed helper (HACK-024)", () => {
+describe("relative-date seed helper", () => {
   it("resolves today and tomorrow on the salon clock and passes dates through", () => {
     const today = bogotaDay(new Date());
     expect(seedDay(0)).toBe(today);
