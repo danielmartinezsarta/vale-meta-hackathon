@@ -64,10 +64,14 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
   const startedAt = Date.now();
+  // Same auth as Glimmer: the token lives only in the shell env, never
+  // in .env, and rides to Modal in the authorization header.
+  const seamlessToken = (process.env.SEAMLESS_TOKEN ?? "").trim();
   let upstream: Response;
   try {
     upstream = await fetch(
       `${seamlessUrl}?speaker=${speaker}&text=${encodeURIComponent(text)}`,
+      { headers: { authorization: `Bearer ${seamlessToken}` } },
     );
   } catch {
     return Response.json(

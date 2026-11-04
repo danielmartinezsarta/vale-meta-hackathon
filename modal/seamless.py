@@ -1,12 +1,14 @@
 """Vale demo voice: SeamlessM4T v2 text-to-speech on a T4 (HACK-026).
 
-Deploy with your own Modal account (three lines):
+Deploy with your own Modal account:
 
     pip install modal
+    modal secret create seamless-auth SEAMLESS_API_KEY=<a-long-random-token>
     SEAMLESS_APP_NAME=vale-seamless-<something-private> modal deploy modal/seamless.py
-    SEAMLESS_URL=<the https URL Modal prints> npm run dev
+    SEAMLESS_URL=<the https URL Modal prints> SEAMLESS_TOKEN=<same-token> npm run dev
 
-The URL lives only in the local `.env`, never in this repo.
+The URL and token live only in the local shell env, never in this repo.
+The endpoint requires the token, like the Glimmer one.
 """
 
 import io
@@ -15,6 +17,7 @@ import time
 import wave
 
 import modal
+from fastapi import Request
 
 MODEL_ID = "facebook/seamless-m4t-v2-large"
 GPU = "T4"
@@ -32,6 +35,20 @@ image = modal.Image.debian_slim(python_version="3.11").pip_install(
 )
 
 app = modal.App(os.environ.get("SEAMLESS_APP_NAME", "vale-seamless-tts-dev"))
+
+auth = modal.Secret.from_name("seamless-auth")
+
+
+def _authorized(authorization: str | None) -> bool:
+    import hmac
+
+    expected = os.environ.get("SEAMLESS_API_KEY", "")
+    if not expected or not authorization:
+        return False
+    scheme, _, presented = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not presented:
+        return False
+    return hmac.compare_digest(presented, expected)
 
 volume = modal.Volume.from_name("vale-seamless-cache", create_if_missing=True)
 HF_CACHE = "/root/.cache/huggingface"
@@ -85,11 +102,17 @@ class Speaker:
         return buffer.getvalue(), synthesis_seconds
 
 
-@app.function(image=image, timeout=600)
+@app.function(image=image, timeout=600, secrets=[auth])
 @modal.fastapi_endpoint(method="GET")
-def web_speak(speaker: int = 17, text: str = ""):
+def web_speak(request: Request, speaker: int = 17, text: str = ""):
     from fastapi import Response
 
+    if not _authorized(request.headers.get("authorization")):
+        return Response(
+            content='{"error":"Missing or invalid token."}',
+            media_type="application/json",
+            status_code=401,
+        )
     if text.strip() == "":
         return Response(
             content='{"error":"Missing text."}',
