@@ -455,6 +455,42 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
       required: ["name", "qty"],
     },
   },
+  {
+    type: "function",
+    name: "shopping_add",
+    description: "Add a supply to the shopping list. The list opens on screen.",
+    parameters: {
+      type: "object",
+      properties: {
+        item_name: { type: "string", description: "Supply name, in English or Spanish." },
+      },
+      required: ["item_name"],
+    },
+  },
+  {
+    type: "function",
+    name: "shopping_remove",
+    description: "Remove a supply from the shopping list. The list opens on screen.",
+    parameters: {
+      type: "object",
+      properties: {
+        item_name: { type: "string", description: "Supply name, in English or Spanish." },
+      },
+      required: ["item_name"],
+    },
+  },
+  {
+    type: "function",
+    name: "shopping_show",
+    description: "Show the shopping list on screen.",
+    parameters: noParams,
+  },
+  {
+    type: "function",
+    name: "stock_show_low",
+    description: "Show the supplies at or below minimum on screen.",
+    parameters: noParams,
+  },
 ];
 
 /**
@@ -968,10 +1004,7 @@ export function getToolDetails(args: { name?: unknown }, language: ValeLanguage 
     client_note_add: "Save a one-line note on the client card immediately, no confirmation. Kind is note or health_note (allergies and similar health topics, stays private). If the client is unknown, register them with client_create first, then save.",
 
     agenda_get_next: "Next appointment today. Internal: only when asked who is next.",
-    shopping_add: "Add a supply to the shopping list. Internal: only when asked to buy or add.",
-    shopping_remove: "Remove a supply from the shopping list. Internal: only when asked to remove.",
-    shopping_show: "Read the shopping list. Internal: reads run with the agenda.",
-    stock_show_low: "Supplies at minimum. Internal: only when asked about stock.",
+    agenda_create_reminder: "Save a standalone reminder. Internal: only when asked to remind.",
     stock_add: "Add bought stock. Internal: only when asked.",
     service_show: "One service with parts and list price. Internal: only when asked about a price.",
     session_quote_accept: "Register the quoted payment. Internal: only through the Accept proposal, never directly.",
