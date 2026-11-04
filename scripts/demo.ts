@@ -166,9 +166,9 @@ async function main(): Promise<void> {
           try {
             await seen.waitFor({ timeout: 90000 });
           } catch {
-            await page.screenshot({ path: join(shots, `miss-${turn.tag}.png`) });
-            console.log(`[demo] miss ${turn.tag} url=${page.url()} body=${((await page.evaluate(() => document.body.innerText)) as string).slice(-300)}`);
-            throw new Error(`reply never showed for ${turn.tag}`);
+            await page.screenshot({ path: join(shots, `miss-${turn.turn}.png`) });
+            console.log(`[demo] miss ${turn.turn} url=${page.url()} body=${((await page.evaluate(() => document.body.innerText)) as string).slice(-300)}`);
+            throw new Error(`reply never showed for ${turn.turn}`);
           }
         }
         if (turn.widget) await page.waitForTimeout(1500);
