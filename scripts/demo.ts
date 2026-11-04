@@ -1,9 +1,10 @@
 // npm run demo: the committed run through the real app, keyless.
-// Starts the replay server on a free port, then drives a headed Chromium
-// (fake mic and camera) exactly like the manual steps: open the app, wake
-// Vale, mute the mic and type every recorded turn, waiting for Vale to
-// finish speaking and the sheet to show before the next turn. One voice
-// at a time. Prints the scene name per turn. Exits non-zero on any miss.
+// Starts the replay server on a free port, then opens a headed Chromium
+// with a live fake mic that speaks every recorded turn, exactly like the
+// manual path: open the app, wake Vale, each utterance flows through the
+// normal voice turn (wake, listening, thinking, speaking, card), waiting
+// for Vale to finish and the sheet to show before the next turn. One
+// voice at a time. Prints the scene name per turn. Exits non-zero on miss.
 import { execSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
@@ -121,7 +122,7 @@ async function main(): Promise<void> {
       args: [
         "--use-fake-ui-for-media-stream",
         "--use-fake-device-for-media-stream",
-        "--use-file-for-fake-audio-capture=/tmp/silence.wav",
+        "--use-file-for-fake-audio-capture=/tmp/replay-speech.wav",
         // Let the AudioContext run: without it the capture posts zeros,
         // the app calls the mic blocked, and the session dies on turn 1.
         "--autoplay-policy=no-user-gesture-required",
@@ -136,9 +137,8 @@ async function main(): Promise<void> {
       const wakeUp = async () => {
         await page.goto(`http://localhost:${port}/`, { waitUntil: "networkidle", timeout: 60000 });
         await page.getByRole("button", { name: "Wake Vale" }).click({ timeout: 30000 });
-        await page.getByRole("button", { name: "Mute microphone" }).click({ timeout: 30000 });
-        // Warm-up: the typed sender wires up with the mic session, which
-        // takes a couple of seconds after wake. Clicking earlier is lost.
+        // The mic stays live and unmuted: every utterance flows through
+        // the normal voice path, so the typed field stays hidden.
         await page.waitForTimeout(4000);
       };
       await wakeUp();
@@ -175,41 +175,20 @@ async function main(): Promise<void> {
       const shots = join(root, "replay", "shots");
       mkdirSync(shots, { recursive: true });
       const shotTaken = new Set<string>();
-      const playTurn = async (turn: (typeof run.turns)[number], index: number) => {
+      // Settle a finished turn: wait for its reply in the DOM, let Vale
+      // finish speaking, shoot it if wanted, then tidy its sheet.
+      const settleTurn = async (turn: (typeof run.turns)[number], index: number) => {
         console.log(`[demo] scene: ${turn.scene} (${index + 1}/${run.turns.length})`);
-        const box = page.getByRole("textbox", { name: "Type to Vale" });
-        await box.fill(turn.transcript, { timeout: 30000 });
-        await page.waitForFunction(
-          () =>
-            !(
-              document.querySelector(
-                'button[aria-label="Send message"]',
-              ) as HTMLButtonElement | null
-            )?.disabled,
-          undefined,
-          { timeout: 30000 },
-        );
-        // Click: the form only submits via the send button. Force: an
-        // open sheet can cover the button; the DOM event is real.
-        const sendBtn = page.getByRole("button", { name: "Send message" });
-        await sendBtn.click({ force: true, timeout: 30000 });
         // Match on the reply head: the tail can render across elements.
-        const head = turn.reply.slice(0, 48).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         // Attached, not visible: the open sheet can cover the bubbles.
+        const head = turn.reply.slice(0, 48).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const seen = page.getByText(new RegExp(head)).first();
         try {
-          await seen.waitFor({ timeout: 15000, state: "attached" });
+          await seen.waitFor({ timeout: 90000, state: "attached" });
         } catch {
-          // Click landed before the sender was ready: the text is still
-          // in the box, so click again like a user would.
-          if ((await box.inputValue()) !== "") await sendBtn.click({ force: true, timeout: 30000 });
-          try {
-            await seen.waitFor({ timeout: 90000, state: "attached" });
-          } catch {
-            await page.screenshot({ path: join(shots, `miss-${turn.turn}.png`) });
-            console.log(`[demo] miss ${turn.turn} url=${page.url()} body=${((await page.evaluate(() => document.body.innerText)) as string).slice(-300)}`);
-            throw new Error(`reply never showed for ${turn.turn}`);
-          }
+          await page.screenshot({ path: join(shots, `miss-${turn.turn}.png`) });
+          console.log(`[demo] miss ${turn.turn} url=${page.url()}`);
+          throw new Error(`reply never showed for ${turn.turn}`);
         }
         if (turn.widget) await page.waitForTimeout(1500);
         await quiet(page);
@@ -221,39 +200,52 @@ async function main(): Promise<void> {
         }
         // Tidy the sheet like a user would, so the next turn's card is
         // its own. The X names the open sheet; Escape is its close key.
-        // Both are harmless at Home with nothing open.
         const closer = page.getByRole("button", { name: /^Close / });
         if ((await closer.count()) > 0) await closer.first().click({ timeout: 5000 });
         await page.keyboard.press("Escape");
         await page.waitForTimeout(500);
       };
-      // The pill owns the cursor: pause holds, stop and jumps move it, and
-      // the demo types whatever turn the cursor points at, one at a time.
-      let guard = 0;
+      const act = async (action: string) => {
+        const response = await fetch(
+          `http://localhost:${port}/api/voice?replay=${action}&client=${encodeURIComponent(clientId)}`,
+        );
+        if (!response.ok) throw new Error(`replay control ${action} failed`);
+      };
+      // The utterances arrive on the file's schedule; the demo paces them
+      // one voice at a time: pause as soon as a turn lands, settle it,
+      // then resume for the next utterance.
+      let lastCursor = 0;
+      let lastAdvance = Date.now();
+      let reloaded = false;
       for (;;) {
-        if (guard++ > run.turns.length * 3) {
-          throw new Error("replay looped: the cursor never reached the end");
-        }
         const state = await readState();
         if (state.done) break;
-        if (state.paused) {
+        if (state.paused && state.cursor <= lastCursor) {
           console.log(`[demo] paused at turn ${state.cursor + 1}/${state.total}`);
           await page.waitForTimeout(3000);
           continue;
         }
-        const turn = run.turns[state.cursor];
-        try {
-          await playTurn(turn, state.cursor);
-        } catch {
-          // A confirm sheet can park the session mid-run: reload keeps the
-          // same client and cursor, wake again, and retry the turn once.
-          console.log(`[demo] retry ${turn.turn} after reload`);
-          await page.reload({ waitUntil: "networkidle", timeout: 60000 });
-          await page.getByRole("button", { name: "Wake Vale" }).click({ timeout: 30000 });
-          await page.getByRole("button", { name: "Mute microphone" }).click({ timeout: 30000 });
-          await page.waitForTimeout(4000);
-          await playTurn(turn, state.cursor);
+        if (state.cursor <= lastCursor) {
+          if (Date.now() - lastAdvance > 180000 && !reloaded) {
+            // No utterance landed for 3 minutes: the session may have
+            // parked. Reload keeps the client and cursor; wake again.
+            reloaded = true;
+            console.log("[demo] stalled, reloading once");
+            await page.reload({ waitUntil: "networkidle", timeout: 60000 });
+            await wakeUp();
+            lastAdvance = Date.now();
+          }
+          await page.waitForTimeout(1000);
+          continue;
         }
+        await act("pause");
+        const finished = run.turns.slice(lastCursor, state.cursor);
+        for (const [offset, turn] of finished.entries()) {
+          await settleTurn(turn, lastCursor + offset);
+        }
+        lastCursor = state.cursor;
+        lastAdvance = Date.now();
+        await act("resume");
       }
       console.log(`[demo] complete: ${run.turns.length} turns, one voice at a time`);
       await browser.close();

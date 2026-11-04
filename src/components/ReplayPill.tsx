@@ -134,8 +134,6 @@ export function ReplayPill() {
     : status.current
       ? `${status.current.scene} ${status.current.indexInScene}/${status.current.sceneCount}`
       : "Replay";
-  const pct =
-    status.total > 0 ? Math.min(100, Math.round((status.cursor / status.total) * 100)) : 0;
 
   return (
     <div
@@ -146,9 +144,9 @@ export function ReplayPill() {
       onKeyDown={onKeyDown}
     >
       <span className={styles.dot} aria-hidden="true" />
-      <span className={styles.text}>{label}</span>
-      <span className={styles.bar} aria-hidden="true">
-        <span style={{ width: `${pct}%` }} />
+      <span className={styles.main}>
+        <span className={styles.kicker}>Replay</span>
+        <span className={styles.text}>{label}</span>
       </span>
       <span className={styles.buttons}>
         <button

@@ -1,17 +1,17 @@
 .pill {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  top: calc(env(safe-area-inset-top, 0px) + 64px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 40;
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 320px;
+  max-width: 350px;
   background: rgba(17, 19, 28, 0.92);
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
+  border-radius: 22px;
   padding: 8px 12px;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -27,7 +27,7 @@
 }
 
 .shut {
-  max-width: 230px;
+  max-width: 250px;
 }
 
 .dot {
@@ -36,41 +36,37 @@
   height: 8px;
   border-radius: 50%;
   background: var(--aw-ok);
+  align-self: flex-start;
+  margin-top: 4px;
 }
 
 .shut .dot {
   background: rgba(255, 255, 255, 0.5);
 }
 
+.main {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  min-width: 0;
+}
+
+.kicker {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
 .text {
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   font-size: 13px;
-  line-height: 1.2;
-}
-
-.bar {
-  flex: 1 1 40px;
-  min-width: 32px;
-  height: 3px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.2);
-  overflow: hidden;
-}
-
-.bar > span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--aw-user);
-  transition: width 0.3s ease;
 }
 
 .buttons {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
 }
 
 .buttons button {
