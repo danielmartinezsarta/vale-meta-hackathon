@@ -143,10 +143,12 @@ export function ReplayPill() {
       tabIndex={0}
       onKeyDown={onKeyDown}
     >
-      <span className={styles.dot} aria-hidden="true" />
-      <span className={styles.main}>
-        <span className={styles.kicker}>Replay</span>
-        <span className={styles.text}>{label}</span>
+      <span className={styles.top}>
+        <span className={styles.dot} aria-hidden="true" />
+        <span className={styles.main}>
+          <span className={styles.kicker}>Replay</span>
+          <span className={styles.text}>{label}</span>
+        </span>
       </span>
       <span className={styles.buttons}>
         <button

@@ -142,6 +142,29 @@ async function main(): Promise<void> {
       await context.addInitScript(() => {
         window.localStorage.setItem("vale-theme", "dark");
       });
+      // Alert flash log: records every role=alert node with its text,
+      // so a transient banner names itself instead of stopping the run blind.
+      await context.addInitScript(() => {
+        const log = (window as unknown as { __alertFlashes?: unknown[] }).__alertFlashes ?? [];
+        (window as unknown as { __alertFlashes?: unknown[] }).__alertFlashes = log;
+        const seen = new WeakSet<Node>();
+        new MutationObserver((mutations) => {
+          for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+              if (!(node instanceof HTMLElement)) continue;
+              const alerts: HTMLElement[] =
+                node.getAttribute?.("role") === "alert"
+                  ? [node]
+                  : Array.from(node.querySelectorAll?.('[role="alert"]') ?? []);
+              for (const alert of alerts) {
+                if (seen.has(alert)) continue;
+                seen.add(alert);
+                log.push({ t: Date.now(), text: (alert.innerText ?? "").slice(0, 120) });
+              }
+            }
+          }
+        }).observe(document.documentElement, { childList: true, subtree: true });
+      });
       const page = await context.newPage();
       const realClick = async (name: string | RegExp) => {
         // A real mouse click: audio only unlocks from a gesture.
@@ -247,6 +270,15 @@ async function main(): Promise<void> {
             const text = ((await banner.innerText().catch(() => "")) || "").trim().slice(0, 120);
             if (text !== "") {
               await page.screenshot({ path: join(shots, `alert-${turn.turn}.png`) });
+              const flashes = await page
+                .evaluate(
+                  () =>
+                    JSON.stringify(
+                      (window as unknown as { __alertFlashes?: unknown }).__alertFlashes ?? [],
+                    ),
+                )
+                .catch(() => "n/a");
+              console.log(`[demo] alert flashes: ${flashes}`);
               throw new Error(`demo stopped: session alert on screen: ${text}`);
             }
             console.log(`[demo] transient empty alert node at ${turn.turn}, continuing`);
@@ -277,6 +309,15 @@ async function main(): Promise<void> {
         }
         await typeTurn(run.turns[state.cursor], state.cursor);
       }
+      const flashes = await page
+        .evaluate(
+          () =>
+            JSON.stringify(
+              (window as unknown as { __alertFlashes?: unknown }).__alertFlashes ?? [],
+            ),
+        )
+        .catch(() => "n/a");
+      console.log(`[demo] alert flashes: ${flashes}`);
       console.log(`[demo] complete: ${run.turns.length} turns, one voice at a time`);
       await browser.close();
     } finally {

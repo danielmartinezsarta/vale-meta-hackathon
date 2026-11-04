@@ -5,15 +5,16 @@
   transform: translateX(-50%);
   z-index: 40;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 350px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: max-content;
+  max-width: 230px;
   background: rgba(17, 19, 28, 0.92);
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 22px;
   padding: 8px 10px;
-  max-width: 290px;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   box-shadow: 0 6px 20px rgba(10, 18, 48, 0.35);
@@ -31,14 +32,18 @@
   max-width: 250px;
 }
 
+.top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .dot {
   flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--aw-ok);
-  align-self: flex-start;
-  margin-top: 4px;
 }
 
 .shut .dot {
@@ -67,6 +72,7 @@
 .buttons {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0;
   flex: none;
 }
