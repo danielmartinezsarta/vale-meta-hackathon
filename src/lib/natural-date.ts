@@ -89,7 +89,9 @@ export function formatNaturalDateTime(day: string, time: string, language: ValeL
       timeZone: "America/Bogota",
       weekday: "long",
     }).format(noon);
-    return `el ${weekday} ${parsed.day} a las ${hour12(time)}`;
+    // Una: "a la 1 PM", otherwise "a las".
+    const article = Number(time.split(":")[0]) % 12 === 1 ? "a la" : "a las";
+    return `el ${weekday} ${parsed.day} ${article} ${hour12(time)}`;
   }
   const weekday = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Bogota",
