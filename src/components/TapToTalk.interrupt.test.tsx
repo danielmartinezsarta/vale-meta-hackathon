@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, waitForElementToBeRemoved } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
 import { FakeVoiceSocket, stubVoiceSocket } from "./test-voice-socket";
@@ -225,4 +225,57 @@ describe("interruption (fake-device fallback)", () => {
       vi.useRealTimers();
     }
   });
+
+  it(
+    "schedules the summary chain while speaking: good job after 5 s, close after 5 s",
+    { timeout: 30000 },
+    async () => {
+      try {
+        vi.stubGlobal("navigator", {
+          mediaDevices: {
+            getUserMedia: async () =>
+              ({ getTracks: () => [] }) as unknown as MediaStream,
+          },
+        });
+        stubVoiceSocket();
+        render(<TapToTalk debug />);
+        fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+        // She speaks before the summary lands: the chain must not wait on it.
+        speakAudibleRef.current = true;
+        await screen.findByText("Speaking", undefined, { timeout: 5000 });
+        liveSocket().serverMessage({
+          type: "widget",
+          widget: {
+            kind: "session_summary",
+            title: "Session summary",
+            size: "full",
+            data: {
+              client: "David",
+              date: "Nov 2, 2026",
+              service: { name: "Gel removal", price: 24 },
+              extras: [],
+              suggested: 24,
+              charged: 24,
+              earned: null,
+              stdMinutes: null,
+              timeTotal: "11m",
+              timeParts: [],
+              costs: [],
+              fixedDetail: null,
+            },
+          },
+        });
+        // The summary shows even while she speaks the close line.
+        await screen.findByText("Session summary");
+        // Past the summary window she is still speaking, yet goodbye takes over.
+        await screen.findByText("Good job!", undefined, { timeout: 8000 });
+        // After the goodbye window the sheet closes on its own.
+        await waitForElementToBeRemoved(() => screen.queryByText("Good job!"), {
+          timeout: 8000,
+        });
+      } finally {
+        speakAudibleRef.current = false;
+      }
+    },
+  );
 });

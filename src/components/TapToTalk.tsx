@@ -345,10 +345,8 @@ export function TapToTalk({
   };
 
   /** Timed hides report back so the server restarts the window. */
-  const closeWidgetByHand = useCallback(() => {
-    if (widgetRef.current === null) return;
-    clearWidgetTimer();
-    setWidget(null);
+  /** The server keeps per-turn sheet stats off this; logging never breaks a turn. */
+  const notifySheetClosed = useCallback(() => {
     try {
       const socket = convSocketRef.current;
       if (
@@ -361,7 +359,33 @@ export function TapToTalk({
     } catch {
       /* the next turn's stats still describe the screen */
     }
-  }, [clearWidgetTimer]);
+  }, []);
+
+  /** The goodbye screen after the summary, timer-held like every sheet. */
+  const showGoodJob = useCallback(() => {
+    clearDoneTimer();
+    valeStoreRef.current.set("done");
+    setWidget({ kind: "good_job", title: widgetTitle("good_job"), size: "full", data: {} });
+    widgetTimerRef.current = window.setTimeout(() => {
+      widgetTimerRef.current = 0;
+      setWidget(null);
+      notifySheetClosed();
+      settleToListening();
+    }, GOODBYE_MS);
+  }, [clearDoneTimer, notifySheetClosed, settleToListening]);
+
+  const closeWidgetByHand = useCallback(() => {
+    if (widgetRef.current === null) return;
+    const closingSummary = widgetRef.current.kind === "session_summary";
+    clearWidgetTimer();
+    if (closingSummary) {
+      // The summary X skips the wait and goes straight to goodbye.
+      showGoodJob();
+    } else {
+      setWidget(null);
+    }
+    notifySheetClosed();
+  }, [clearWidgetTimer, showGoodJob, notifySheetClosed]);
 
   /** A working tool shows done, then falls back ~1.5 s later; speech wins. */
   const handleWidget = useCallback(
@@ -372,6 +396,14 @@ export function TapToTalk({
       // buildWidget always stamps size: the single guarantor lives in lib.
       const next = (incoming ?? null) as Widget | null;
       setWidget(next);
+      if (next !== null && next.kind === "session_summary") {
+        // The summary always arrives mid-speech, so its chain schedules
+        // before the speaking early return below: it never depends on it.
+        widgetTimerRef.current = window.setTimeout(() => {
+          widgetTimerRef.current = 0;
+          showGoodJob();
+        }, SUMMARY_MS);
+      }
       if (next === null || valeStoreRef.current.get() === "speaking") return;
       if (next.kind === "good_job") {
         // Held through goodbye: done face and care icons stay 5 s.
@@ -395,21 +427,9 @@ export function TapToTalk({
           widgetTimerRef.current = 0;
           closeWidgetByHand();
         }, AUTO_HIDE_MS);
-      } else if (next.kind === "session_summary") {
-        widgetTimerRef.current = window.setTimeout(() => {
-          widgetTimerRef.current = 0;
-          clearDoneTimer();
-          valeStoreRef.current.set("done");
-          setWidget({ kind: "good_job", title: widgetTitle("good_job"), size: "full", data: {} });
-          widgetTimerRef.current = window.setTimeout(() => {
-            widgetTimerRef.current = 0;
-            closeWidgetByHand();
-            settleToListening();
-          }, GOODBYE_MS);
-        }, SUMMARY_MS);
       }
     },
-    [clearDoneTimer, clearWidgetTimer, closeWidgetByHand, settleToListening],
+    [clearDoneTimer, clearWidgetTimer, closeWidgetByHand, settleToListening, showGoodJob],
   );
   const toggleMute = useCallback(() => {
     if (mutedOutRef.current) {

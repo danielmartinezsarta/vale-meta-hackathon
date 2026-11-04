@@ -167,7 +167,11 @@ export function ValeScreenShell({
       <div className={styles.stage}>
         <VoiceRobot state={robotState} level={level} className={styles.robot} />
         <div className={styles.cap}>{widget?.kind === "good_job" ? "Good job!" : title}</div>
-        {widget?.kind !== "good_job" && <div className={styles.sub}>{subtitle ?? stateLabel(robotState, visible)}</div>}
+        {widget?.kind === "good_job" ? (
+          <div className={styles.sub}>Don&apos;t forget to hydrate and do some stretching before moving on.</div>
+        ) : (
+          <div className={styles.sub}>{subtitle ?? stateLabel(robotState, visible)}</div>
+        )}
       </div>
 
       {widget?.kind === "good_job" ? (
