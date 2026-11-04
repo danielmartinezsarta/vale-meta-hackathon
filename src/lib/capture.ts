@@ -384,47 +384,6 @@ export function isWorkletReady(context: AudioContext): boolean {
   }
 }
 
-/**
- * Live capture facts for the replay demo: the demo polls
- * `window.__valeAudioDebug` every second and prints it. `blockedBy` names
- * the capture-side raiser ("capture-blocked" for the suspended-context
- * watchdog, "clock-rebuild" for a failed clock rebuild); when the alert
- * shows with `blockedBy` still null, the TapToTalk stall watchdog raised it.
- */
-export interface AudioDebugSnapshot {
-  ctx: string | null;
-  track: string | null;
-  quanta: number;
-  blockedBy: string | null;
-}
-
-function noteAudioDebug(patch: Partial<AudioDebugSnapshot>): void {
-  try {
-    const holder = window as unknown as { __valeAudioDebug?: AudioDebugSnapshot };
-    holder.__valeAudioDebug = {
-      ctx: null,
-      track: null,
-      quanta: 0,
-      blockedBy: null,
-      ...holder.__valeAudioDebug,
-      ...patch,
-    };
-  } catch {
-    /* reporting never breaks capture */
-  }
-}
-
-function trackDebug(stream: MediaStream): string {
-  try {
-    return stream
-      .getAudioTracks()
-      .map((track) => `${track.readyState}${track.muted ? "+muted" : ""}`)
-      .join(",");
-  } catch {
-    return "?";
-  }
-}
-
 export function startCapture(
   stream: MediaStream,
   callbacks: CaptureCallbacks,
@@ -442,12 +401,10 @@ export function startCapture(
   } catch {
     /* resume is best-effort; the watchdog below reports a stuck context */
   }
-  noteAudioDebug({ ctx: context.state, track: trackDebug(stream), blockedBy: null });
   let blockedNotified = false;
   window.setTimeout(() => {
     if (!stopped && !blockedNotified && context.state === "suspended") {
       blockedNotified = true;
-      noteAudioDebug({ ctx: context.state, track: trackDebug(stream), blockedBy: "capture-blocked" });
       try {
         callbacks.onBlocked?.();
       } catch {
@@ -512,7 +469,6 @@ export function startCapture(
   let rebuildTotal = 0;
   let engine: CaptureEngine = "script";
 
-  let debugQuanta = 0;
   const noteQuanta = (quanta: number) => {
     if (lastQuanta === null) {
       lastQuanta = quanta;
@@ -520,10 +476,6 @@ export function startCapture(
     }
     if (quanta > lastQuanta) audioSamples += (quanta - lastQuanta) * 128;
     lastQuanta = quanta;
-    debugQuanta += 1;
-    if (debugQuanta % 64 === 0) {
-      noteAudioDebug({ ctx: context.state, track: trackDebug(stream), quanta: debugQuanta });
-    }
   };
 
   const checkClock = () => {
@@ -751,7 +703,6 @@ export function startCapture(
         /* reporting never breaks capture */
       }
     } catch {
-      noteAudioDebug({ blockedBy: "clock-rebuild" });
       try {
         callbacks.onBlocked?.();
       } catch {
@@ -775,9 +726,6 @@ export function startCapture(
     processor.onaudioprocess = (event: AudioProcessingEvent) => {
       if (stopped) return;
       runQuanta += 1;
-      if (runQuanta % 64 === 0) {
-        noteAudioDebug({ ctx: context.state, track: trackDebug(stream), quanta: runQuanta });
-      }
       audioSamples += event.inputBuffer.length;
       // Muted while Vale speaks: blocks still heartbeat, nothing else flows.
       if (paused) {

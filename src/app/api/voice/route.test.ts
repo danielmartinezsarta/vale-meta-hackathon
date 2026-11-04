@@ -923,42 +923,6 @@ describe("GET /api/voice replay controls", () => {
     }
   });
 
-  it("answers audio turns by index, ignoring the audio content", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const { parseReplayRun } = await import("@/lib/replay");
-    const run = parseReplayRun(readFileSync(join(process.cwd(), "replay", "demo-run.json"), "utf8"));
-    vi.stubEnv("VALE_REPLAY", "1");
-    vi.stubEnv("META_API_KEY", "");
-    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({}) })));
-    try {
-      const client = "pill-audio-idx-1";
-      for (const turn of run.turns.slice(0, 2)) {
-        const request = new Request("http://localhost/api/voice", {
-          method: "POST",
-          headers: {
-            "content-type": "audio/l16",
-            "x-forwarded-for": client,
-          },
-          body: pcmBody(4800),
-          // @ts-expect-error Node fetch streaming upload flag
-          duplex: "half",
-        });
-        const response = await POST(request);
-        const text = await response.text();
-        expect(response.status).toBe(200);
-        expect(text).toContain(turn.reply.slice(0, 40));
-        expect(text).toContain("event: done");
-        expect(text).not.toContain("event: error");
-      }
-      expect((await stateOf(client)).cursor).toBe(2);
-    } finally {
-      vi.unstubAllGlobals();
-      vi.stubEnv("VALE_REPLAY", "");
-      vi.stubEnv("META_API_KEY", "test-key");
-    }
-  });
-
   it("answers a jumped-over turn without moving the cursor", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");

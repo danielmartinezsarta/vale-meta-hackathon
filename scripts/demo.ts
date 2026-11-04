@@ -1,12 +1,11 @@
 // npm run demo: the committed run through the real app, keyless.
 // Starts the replay server on a free port, then opens a headed Chromium
-// with a live fake mic that speaks every recorded turn, exactly like the
-// manual path: open the app, wake Vale, each utterance flows through the
-// normal voice turn (wake, listening, thinking, speaking, card), waiting
-// for Vale to finish and the sheet to show before the next turn. One
-// voice at a time. Prints the scene name per turn. Exits non-zero on miss.
+// and plays every recorded turn exactly like the manual path: open the
+// app, wake Vale, mute the mic first, type each turn, wait for Vale to
+// finish speaking and the card to show, next turn. One voice at a time.
+// Prints the scene name per turn. Exits non-zero on miss.
 import { execSync, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -81,26 +80,8 @@ async function quiet(page: Page): Promise<void> {
   });
 }
 
-const SPEECH_WAV = "/tmp/replay-speech.wav";
-
-// The fake-mic audio is generated, never committed: a judge machine builds
-// it from the committed run with say/afconvert, or the demo fails loud.
-function ensureSpeechWav(): void {
-  const runPath = join(root, "replay", "demo-run.json");
-  const fresh =
-    existsSync(SPEECH_WAV) && statSync(SPEECH_WAV).mtimeMs > statSync(runPath).mtimeMs;
-  if (fresh) return;
-  console.log("[demo] building the fake-mic audio...");
-  execSync(`python3 ${join(root, "scripts", "make-speech-wav.py")} ${runPath} ${SPEECH_WAV}`, {
-    cwd: root,
-    stdio: "inherit",
-  });
-  if (!existsSync(SPEECH_WAV)) throw new Error(`speech wav missing: ${SPEECH_WAV}`);
-}
-
 async function main(): Promise<void> {
   const run = parseReplayRun(readFileSync(join(root, "replay", "demo-run.json"), "utf8"));
-  ensureSpeechWav();
   // The server runs the production build, so rebuild first: the demo must
   // play the current code, never a stale .next.
   console.log("[demo] building the app...");
@@ -139,8 +120,6 @@ async function main(): Promise<void> {
       headless: false,
       args: [
         "--use-fake-ui-for-media-stream",
-        "--use-fake-device-for-media-stream",
-        `--use-file-for-fake-audio-capture=${SPEECH_WAV}`,
         // Let the AudioContext run: without it the capture posts zeros,
         // the app calls the mic blocked, and the session dies on turn 1.
         "--autoplay-policy=no-user-gesture-required",
@@ -163,43 +142,24 @@ async function main(): Promise<void> {
         window.localStorage.setItem("vale-theme", "dark");
       });
       const page = await context.newPage();
-      const wakeUp = async () => {
-        await page.goto(`http://localhost:${port}/`, { waitUntil: "networkidle", timeout: 60000 });
-        // A real mouse click: the AudioContext only resumes from a gesture.
-        const wakeBtn = page.getByRole("button", { name: "Wake Vale" });
-        await wakeBtn.waitFor({ timeout: 30000 });
-        const at = await wakeBtn.evaluate((el) => {
-          const box = el.getBoundingClientRect();
-          return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-        });
-        await page.mouse.click(at.x, at.y);
-        // The mic stays live and unmuted: every utterance flows through
-        // the normal voice path, so the typed field stays hidden.
-        await page.waitForTimeout(4000);
-      };
-      await wakeUp();
-      // The capture dies silent when the context never runs: prove the
-      // page can run audio before the first utterance arrives.
-      await page.waitForFunction(
-        async () => {
-          try {
-            const Ctor =
-              window.AudioContext ??
-              (window as unknown as { webkitAudioContext?: typeof AudioContext })
-                .webkitAudioContext;
-            if (!Ctor) return false;
-            const ctx = new Ctor();
-            if (ctx.state === "suspended") await ctx.resume().catch(() => {});
-            const running = ctx.state === "running";
-            await ctx.close().catch(() => {});
-            return running;
-          } catch {
-            return false;
-          }
-        },
-        undefined,
-        { timeout: 30000 },
-      );
+      await page.goto(`http://localhost:${port}/`, { waitUntil: "networkidle", timeout: 60000 });
+      // A real mouse click: the session only starts from a gesture.
+      const wakeBtn = page.getByRole("button", { name: "Wake Vale" });
+      await wakeBtn.waitFor({ timeout: 30000 });
+      const at = await wakeBtn.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      });
+      await page.mouse.click(at.x, at.y);
+      // Mute the instant the button exists, before capture checks the
+      // context (~1 s after wake): muting stops capture, so the blocked
+      // alert never fires, and the typed field shows for every turn.
+      const muteBtn = page.getByRole("button", { name: "Mute microphone" });
+      await muteBtn.waitFor({ state: "visible", timeout: 30000 });
+      await muteBtn.click({ timeout: 30000 });
+      // Warm-up: the typed sender wires up with the mic session, which
+      // takes a couple of seconds after wake. Sending earlier is lost.
+      await page.waitForTimeout(4000);
       // Same browser id the app stored, so the demo reads the same cursor
       // the pill shows. It survives a reload, which keeps recovery exact.
       const clientId =
@@ -233,20 +193,42 @@ async function main(): Promise<void> {
       const shots = join(root, "replay", "shots");
       mkdirSync(shots, { recursive: true });
       const shotTaken = new Set<string>();
-      // Settle a finished turn: wait for its reply in the DOM, let Vale
-      // finish speaking, shoot it if wanted, then tidy its sheet.
-      const settleTurn = async (turn: (typeof run.turns)[number], index: number) => {
+      // One turn as text through the typed box: the form only submits
+      // via the send button. Force: an open sheet can cover the button,
+      // but the DOM event is real.
+      const typeTurn = async (turn: (typeof run.turns)[number], index: number) => {
         console.log(`[demo] scene: ${turn.scene} (${index + 1}/${run.turns.length})`);
+        const box = page.getByRole("textbox", { name: "Type to Vale" });
+        await box.fill(turn.transcript, { timeout: 30000 });
+        await page.waitForFunction(
+          () =>
+            !(
+              document.querySelector(
+                'button[aria-label="Send message"]',
+              ) as HTMLButtonElement | null
+            )?.disabled,
+          undefined,
+          { timeout: 30000 },
+        );
+        const sendBtn = page.getByRole("button", { name: "Send message" });
+        await sendBtn.click({ force: true, timeout: 30000 });
         // Match on the reply head: the tail can render across elements.
         // Attached, not visible: the open sheet can cover the bubbles.
         const head = turn.reply.slice(0, 48).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const seen = page.getByText(new RegExp(head)).first();
         try {
-          await seen.waitFor({ timeout: 90000, state: "attached" });
+          await seen.waitFor({ timeout: 15000, state: "attached" });
         } catch {
-          await page.screenshot({ path: join(shots, `miss-${turn.turn}.png`) });
-          console.log(`[demo] miss ${turn.turn} url=${page.url()}`);
-          throw new Error(`reply never showed for ${turn.turn}`);
+          // Click landed before the sender was ready: the text is still
+          // in the box, so click again like a user would.
+          if ((await box.inputValue()) !== "") await sendBtn.click({ force: true, timeout: 30000 });
+          try {
+            await seen.waitFor({ timeout: 90000, state: "attached" });
+          } catch {
+            await page.screenshot({ path: join(shots, `miss-${turn.turn}.png`) });
+            console.log(`[demo] miss ${turn.turn} url=${page.url()}`);
+            throw new Error(`reply never showed for ${turn.turn}`);
+          }
         }
         if (turn.widget) await page.waitForTimeout(1500);
         await quiet(page);
@@ -271,65 +253,17 @@ async function main(): Promise<void> {
         await page.keyboard.press("Escape");
         await page.waitForTimeout(500);
       };
-      const act = async (action: string) => {
-        const response = await fetch(
-          `http://localhost:${port}/api/voice?replay=${action}&client=${encodeURIComponent(clientId)}`,
-        );
-        if (!response.ok) throw new Error(`replay control ${action} failed`);
-      };
-      // The utterances arrive on the file's schedule; the demo paces them
-      // one voice at a time: pause as soon as a turn lands, settle it,
-      // then resume for the next utterance.
-      let lastCursor = 0;
-      let lastAdvance = Date.now();
+      // The demo types whatever turn the cursor points at, one at a time;
+      // the pill's pause holds the reply, its stop and jumps move the cursor.
       for (;;) {
         const state = await readState();
-        if (state.done) break;
-        if (state.paused && state.cursor <= lastCursor) {
+        if (state.done || state.cursor >= run.turns.length) break;
+        if (state.paused) {
           console.log(`[demo] paused at turn ${state.cursor + 1}/${state.total}`);
           await page.waitForTimeout(3000);
           continue;
         }
-        if (state.cursor <= lastCursor) {
-          // Measure while turn 1 is pending: capture state, mic track,
-          // and which path raised suspended, straight from the page.
-          if (lastCursor === 0) {
-            const audio = await page
-              .evaluate(
-                () =>
-                  JSON.stringify(
-                    (window as unknown as { __valeAudioDebug?: unknown })
-                      .__valeAudioDebug ?? null,
-                  ),
-              )
-              .catch(() => "n/a");
-            const alertVisible = await page
-              .getByRole("alert")
-              .first()
-              .isVisible()
-              .catch(() => false);
-            console.log(`[demo] audio ${audio} alert=${alertVisible}`);
-          }
-          // No utterance landed: the file plays once, so a parked session
-          // never recovers. Stop loud instead of hanging.
-          if (Date.now() - lastAdvance > 90000) {
-            const tail = (
-              (await page.evaluate(() => document.body.innerText)) as string
-            ).slice(-300);
-            await page.screenshot({ path: join(shots, "stall.png") });
-            throw new Error(`demo stopped: no utterance for 90 s. Screen tail: ${tail}`);
-          }
-          await page.waitForTimeout(1000);
-          continue;
-        }
-        await act("pause");
-        const finished = run.turns.slice(lastCursor, state.cursor);
-        for (const [offset, turn] of finished.entries()) {
-          await settleTurn(turn, lastCursor + offset);
-        }
-        lastCursor = state.cursor;
-        lastAdvance = Date.now();
-        await act("resume");
+        await typeTurn(run.turns[state.cursor], state.cursor);
       }
       console.log(`[demo] complete: ${run.turns.length} turns, one voice at a time`);
       await browser.close();

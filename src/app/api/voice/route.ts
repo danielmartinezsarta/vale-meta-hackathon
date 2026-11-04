@@ -156,13 +156,11 @@ function sse(event: string, data: unknown): string {
 // One push-to-talk turn: raw PCM_24KHZ body or JSON transcript; answers an SSE stream.
 export async function POST(request: Request): Promise<Response> {
   const key = process.env.META_API_KEY;
-  // Keyless replay (npm run demo): recorded turns need no key, typed or
-  // audio; every other turn still goes through the key gate below.
-  const replayContent = (request.headers.get("content-type") ?? "").includes(
-    "application/json",
-  );
-  const replayTyped = process.env.VALE_REPLAY === "1" && replayContent;
-  const replayAudio = process.env.VALE_REPLAY === "1" && !replayContent;
+  // Keyless replay (npm run demo): recorded typed turns need no key; every
+  // other turn still goes through the key gate below.
+  const replayTyped =
+    process.env.VALE_REPLAY === "1" &&
+    (request.headers.get("content-type") ?? "").includes("application/json");
   // Closed language from the screen selector; JSON and PCM turns agree.
   const language = parseLanguage(
     new URL(request.url).searchParams.get("language") ?? DEFAULT_LANGUAGE,
@@ -175,7 +173,7 @@ export async function POST(request: Request): Promise<Response> {
   // by design and only ever take the recorded answer path, so the empty
   // fallback below can never reach the model.
   const modelKey = key ?? "";
-  if (!key && !replayTyped && !replayAudio) {
+  if (!key && !replayTyped) {
     // Server-side log only; the key itself is never logged.
     vlog({
       turn: turnTag ?? "-",
@@ -326,10 +324,7 @@ export async function POST(request: Request): Promise<Response> {
       // turn from the committed run in order — transcript, reply, card —
       // with no ASR and no model. The client runs its real turn path:
       // wake, listening, thinking, speaking, sheets, back to idle.
-      // byIndex answers the Nth utterance with the Nth recorded turn and
-      // ignores the audio content entirely: no ASR, no wake gate, no model.
-      // The transcript shown on screen is the recorded one.
-      const answerRecordedTurn = async (transcript: string, byIndex = false): Promise<boolean> => {
+      const answerRecordedTurn = async (transcript: string): Promise<boolean> => {
         if (process.env.VALE_REPLAY !== "1") return false;
         let run: ReplayRun | null = null;
         try {
@@ -349,9 +344,7 @@ export async function POST(request: Request): Promise<Response> {
         // matching turn anywhere in the run without moving the cursor.
         let idx = state.cursor;
         let advance = true;
-        if (byIndex) {
-          if (idx >= run.turns.length) return false;
-        } else if (idx >= run.turns.length || run.turns[idx].transcript !== transcript) {
+        if (idx >= run.turns.length || run.turns[idx].transcript !== transcript) {
           advance = false;
           idx = -1;
           for (let k = 0; k < run.turns.length; k += 1) {
@@ -365,10 +358,6 @@ export async function POST(request: Request): Promise<Response> {
         }
         const turn = run.turns[idx];
         if (advance) state.cursor = idx + 1;
-        if (byIndex) {
-          send("final", { transcript: turn.transcript });
-          transcript = turn.transcript;
-        }
         recordTurn(getDb(), clientKey, "user", transcript);
         const half = Math.ceil(turn.reply.length / 2);
         if (turn.reply !== "") {
@@ -397,7 +386,7 @@ export async function POST(request: Request): Promise<Response> {
           chain: "none",
           key: clientKey,
           slots: stored.client !== undefined || stored.service !== undefined ? stored : null,
-          gate: byIndex ? "audio" : "typed",
+          gate: "typed",
           sinceReplyS: null,
           totalMs: 0,
         });
@@ -734,26 +723,6 @@ export async function POST(request: Request): Promise<Response> {
             return;
           }
           await answerTranscript(cannedTranscript, 0, Date.now(), verdict);
-          send("done", {});
-          clearTimeout(timeout);
-          closeStream();
-          return;
-        }
-
-        // Replay audio (npm run demo): drain the utterance — the VAD already
-        // showed listening — then answer the next recorded turn by index.
-        // Overruns past the run stay silent; nothing here reaches the model.
-        if (process.env.VALE_REPLAY === "1" && !jsonTurn) {
-          const drain = (request.body as ReadableStream<Uint8Array>).getReader();
-          try {
-            for (;;) {
-              const part = await drain.read();
-              if (part.done) break;
-            }
-          } finally {
-            drain.releaseLock();
-          }
-          await answerRecordedTurn("", true);
           send("done", {});
           clearTimeout(timeout);
           closeStream();
