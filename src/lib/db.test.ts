@@ -319,7 +319,7 @@ describe("test-database guards", () => {
 
   it("never lets the eval runner target the live database file", () => {
     const source = readFileSync(
-      join(process.cwd(), "scripts", "eval-hack017.mjs"),
+      join(process.cwd(), "scripts", "eval-conversations.mjs"),
       "utf8",
     );
     // The runner resolves its own disposable file through VALE_DB_PATH.
