@@ -10,7 +10,7 @@ export interface ReplayPlanTurn {
 export const REPLAY_PLAN: ReplayPlanTurn[] = [
   // Daily agenda: the day plus the next booking.
   { scene: "Daily agenda", phrase: "Vale, what do I have today?" },
-  { scene: "Daily agenda", phrase: "Vale, what time is David coming today?" },
+  { scene: "Daily agenda", phrase: "Vale, who is my next client today?" },
   // Agenda management: create, move, cancel, and a dated reminder. The
   // tools write at once with notice cards since #22, so no confirm turns.
   { scene: "Agenda management", phrase: "Vale, book Ana for a gel refill on Friday at 6 PM" },

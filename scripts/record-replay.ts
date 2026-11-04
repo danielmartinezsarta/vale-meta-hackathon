@@ -118,6 +118,21 @@ function latestSessionId(file: string): number {
   }
 }
 
+/** Latest payment amount on the latest session, if any. */
+function latestSessionPayment(file: string): number | null {
+  const db = new DatabaseSync(file);
+  try {
+    const row = db
+      .prepare(
+        "SELECT p.amount_usd AS amount FROM payments p JOIN sessions s ON s.id = p.session_id ORDER BY p.id DESC LIMIT 1",
+      )
+      .get() as { amount: number } | undefined;
+    return row ? row.amount : null;
+  } finally {
+    db.close();
+  }
+}
+
 /**
  * Upload one studio photo through the real endpoint (same path the camera
  * upload takes): SAM runs, the slot file lands on disk, and the after
@@ -206,6 +221,21 @@ async function main(): Promise<void> {
         if (suggested === null) throw new Error("quote turn carried no suggested total");
         paymentAmount = suggested + 5;
         console.log(`[replay:record] quoted ${suggested}, will pay ${paymentAmount}`);
+      }
+      // A note write kicks Glimmer's background refresh; the next note
+      // waits for it to land so two refreshes never race and the stored
+      // brief cannot go stale behind the card scene.
+      if (REPLAY_PLAN[i].phrase.startsWith("Vale, save a note for Nina:")) {
+        await new Promise((resolve) => setTimeout(resolve, 30000));
+      }
+      // The amount turn must write a real payment row; the run stops
+      // instead of recording a claimed-but-missing payment.
+      if (i === paymentIndex) {
+        const paid = latestSessionPayment(file);
+        if (paid !== paymentAmount) {
+          throw new Error(`payment of ${paymentAmount} missing (found ${paid}); not recording a fake pay turn`);
+        }
+        console.log(`[replay:record] payment of ${paymentAmount} verified`);
       }
       // Nina's health note kicks Glimmer's background brief; the card
       // turn needs the stored row, so wait for the real one here.
