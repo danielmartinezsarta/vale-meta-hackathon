@@ -4,38 +4,47 @@ Voice in, sheets and voice out. One Next.js app; the agent and all tools run ser
 
 ```mermaid
 flowchart LR
-    mic[Microphone] --> asr[Muse Voice Transcribe<br/>turn detection]
-    asr --> agent[Muse Spark 1.3<br/>agent]
-    agent --> tools[Business tools<br/>vale-tools.ts]
-    tools --> db[(SQLite<br/>data/vale.db)]
-    tools --> sheets[Widget sheets<br/>widget.ts + ValeSheets.tsx]
-    agent --> reply[Voice reply<br/>browser voice, Seamless optional]
-    tools --> glimmer[[Muse Glimmer 30B<br/>open weights, our Modal]]
+    person[Person, hands busy] <--> phone[Phone browser<br/>mic, sheets, voice]
+    phone <--> server[Next.js server<br/>agent loop, business tools, SQLite]
+    server <--> cloud[Meta Model API<br/>Spark 1.3 · Transcribe 1.0 · Image 1.0 · SAM 3.1]
+    server <--> modal[Our Modal GPU<br/>Glimmer 30B · SeamlessM4T v2 Large]
 ```
+
+Health text crosses only into the Modal box. The Meta API key never leaves the server.
 
 ## The loop
 
-1. The mic streams to Muse Voice Transcribe (`src/lib/asr.ts`), which also detects turn ends. The wake word is “Vale”.
-2. Each turn goes to Muse Spark 1.3 (`src/lib/agent.ts`) with the tool list. The agent books, saves, quotes and shows directly; only the quote and moves or deletes ask first.
-3. Tools read and write SQLite (`src/lib/db.ts`, file `data/vale.db`, override with `VALE_DB_PATH`). Every write is logged; `undo_last` reverts the last one.
-4. Tools return a widget kind; the screen renders the matching sheet (`src/lib/widget.ts` builds it, `src/components/ValeSheets.tsx` shows it): `shopping`, `low_stock`, `price`, `photos`, `client_card`, `goal`, and confirmations.
-5. The reply is spoken with the browser voice, or Seamless when `SEAMLESS_URL` is set (`src/lib/speak.ts`, `src/app/api/seamless-voice/route.ts`).
+1. The mic streams to Muse Voice Transcribe, which also detects turn ends. The wake word is “Vale”.
+2. Each turn goes to Muse Spark 1.3 with the tool list. The agent books, saves, quotes and shows directly; only the quote and moves or deletes ask first.
+3. Tools read and write SQLite. Every write is logged; `undo_last` reverts the last one.
+4. Tools return a widget kind and the screen renders the matching sheet: shopping, low stock, price, photos, client card, goal, and confirmations.
+5. The reply is spoken with the browser voice, or with SeamlessM4T v2 Large when its Modal endpoint is set.
 
 ## Tools
 
-Defined in `src/lib/vale-tools.ts`:
-
-- Sessions: `session_open`, `session_close`, `session_log_supply`, `session_quote`, `session_quote_accept`
-- Clients: `client_create`, `client_card_show`, `client_summary`, `client_note_add`
-- Agenda: `agenda_create_appointment`, `agenda_show`, `agenda_move_appointment`, `agenda_cancel_appointment`, `agenda_create_reminder`
-- Stock and shopping: `stock_set`, `stock_add`, `shopping_show`, `shopping_add`, `shopping_remove`, `stock_show_low`
-- Meta: `undo_last`, `widget_show`, `tool_get_details`
-- Photos: `photo_preview_design`, `photo_show`
+Sessions: `session_open`, `session_close`, `session_log_supply`, `session_quote`, `session_quote_accept`. Clients: `client_create`, `client_card_show`, `client_summary`, `client_note_add`. Agenda: `agenda_create_appointment`, `agenda_show`, `agenda_move_appointment`, `agenda_cancel_appointment`, `agenda_create_reminder`. Stock and shopping: `stock_set`, `stock_add`, `shopping_show`, `shopping_add`, `shopping_remove`, `stock_show_low`. Meta: `undo_last`, `widget_show`, `tool_get_details`. Photos: `photo_preview_design`, `photo_show`.
 
 ## Private briefs
 
-Client records go only to Glimmer, the open-weights model on infrastructure we run (`src/lib/client-briefs.ts`, `modal/glimmer.py`). The cloud model sees the name and the agenda, never the health notes. `npm run db:reset` precomputes one brief per client; failures resolve to null and the cards open without them.
+Client records go only to Glimmer, the open-weights model on infrastructure we run. The cloud model sees the name and the agenda, never the health notes. Resetting the demo database precomputes one brief per client; failures resolve to null and the cards open without them.
 
 ## Replay
 
-`replay/demo-run.json` holds recorded turns: transcript, tool call, reply, widget and board, with health notes masked. `VALE_REPLAY=1` serves that file instead of the mic (`/api/replay`), and the screen plays it back labeled “Replay: recorded run”. Record a fresh run with `npm run replay:record`.
+The demo run file holds recorded turns: transcript, tool call, reply, widget and board, with health notes masked. A replay flag serves that file instead of the mic, and the screen plays it back labeled “Replay: recorded run”. A record script folds fresh live turns into a new run file.
+
+## Code map
+
+| Component | File |
+|---|---|
+| Agent loop | [src/lib/agent.ts](../src/lib/agent.ts) |
+| Business tools | [src/lib/vale-tools.ts](../src/lib/vale-tools.ts) |
+| Voice input and turn detection | [src/lib/asr.ts](../src/lib/asr.ts) |
+| Database | [src/lib/db.ts](../src/lib/db.ts) |
+| Widget kinds | [src/lib/widget.ts](../src/lib/widget.ts) |
+| Screen sheets | [src/components/ValeSheets.tsx](../src/components/ValeSheets.tsx) |
+| Voice reply | [src/lib/speak.ts](../src/lib/speak.ts), [src/app/api/seamless-voice/route.ts](../src/app/api/seamless-voice/route.ts) |
+| Photo preview | [src/lib/photo-preview.ts](../src/lib/photo-preview.ts), [src/app/api/photo-preview/route.ts](../src/app/api/photo-preview/route.ts) |
+| Nail segmentation | [src/lib/nails.ts](../src/lib/nails.ts) |
+| Private briefs | [src/lib/client-briefs.ts](../src/lib/client-briefs.ts) |
+| Replay player | [src/lib/replay.ts](../src/lib/replay.ts), [replay/demo-run.json](../replay/demo-run.json) |
+| Modal backends | [modal/glimmer.py](../modal/glimmer.py), [modal/seamless.py](../modal/seamless.py) |
