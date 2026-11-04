@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { WidgetSheet } from "@/components/WidgetSheet";
 import { SegmentedControl } from "./SegmentedControl";
+import { ThemeSwitch } from "./ThemeSwitch";
 import {
   setSeamlessAvailable,
   setVoiceEngine,
@@ -74,6 +75,10 @@ export function SettingsSheet({
           ]}
         />
         {!seamless && <p className={styles.sub}>{ui.seamlessEnableHint}</p>}
+      </fieldset>
+      <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+        <legend>{ui.theme}</legend>
+        <ThemeSwitch language={language} />
       </fieldset>
     </WidgetSheet>
   );

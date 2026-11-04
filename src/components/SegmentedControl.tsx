@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import styles from "./SegmentedControl.module.css";
 
 export type SegmentOption<T extends string> = {
   value: T;
-  label: string;
+  label: ReactNode;
+  ariaLabel?: string;
   disabled?: boolean;
 };
 
@@ -52,6 +53,7 @@ export function SegmentedControl<T extends string>({
             type="button"
             role="radio"
             aria-checked={selected}
+            aria-label={option.ariaLabel}
             disabled={option.disabled}
             tabIndex={focusable ? 0 : -1}
             className={selected ? `${styles.opt} ${styles.on}` : styles.opt}

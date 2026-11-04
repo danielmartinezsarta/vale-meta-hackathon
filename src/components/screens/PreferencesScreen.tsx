@@ -12,6 +12,7 @@ import {
 import { uiStrings } from "@/lib/vale-ui";
 import type { ValeLanguage } from "@/lib/vale-language";
 import { SegmentedControl } from "../SegmentedControl";
+import { ThemeSwitch } from "../ThemeSwitch";
 import styles from "./ManageScreens.module.css";
 
 /**
@@ -110,6 +111,10 @@ export function PreferencesScreen({
             ]}
           />
           {!seamless && <p className={styles.sub}>{ui.seamlessEnableHint}</p>}
+        </fieldset>
+        <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+          <legend className={styles.h}>{ui.theme}</legend>
+          <ThemeSwitch language={language} />
         </fieldset>
       </div>
     </ManageShell>

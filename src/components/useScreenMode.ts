@@ -3,27 +3,46 @@
 import { useEffect, useState } from "react";
 import type { HomeMode } from "@/lib/vale-theme";
 
-/** Stored override from the app shell, if the user ever set one. */
-function storedMode(): HomeMode | null {
+/** Stored appearance: "light" only when the user picked it, else dark. */
+export type ThemeChoice = "light" | "dark";
+
+const KEY = "vale-theme";
+const EVENT = "vale-theme-change";
+
+export function themeChoice(): ThemeChoice {
   try {
-    const saved = window.localStorage.getItem("vale-theme");
-    if (saved === "light") return "day";
-    if (saved === "dark") return "night";
-    return null;
+    return window.localStorage.getItem(KEY) === "light" ? "light" : "dark";
   } catch {
-    return null;
+    return "dark";
   }
 }
 
-/** Day/night follows the stored choice, else the device. */
+/**
+ * Persist the pick, repaint <html> at once, and tell every mounted
+ * useScreenMode hook so all three switches move together with no reload.
+ */
+export function applyTheme(choice: ThemeChoice): void {
+  try {
+    window.localStorage.setItem(KEY, choice);
+  } catch {
+    /* private mode: the page still repaints */
+  }
+  document.documentElement.dataset.theme = choice;
+  window.dispatchEvent(new CustomEvent<ThemeChoice>(EVENT, { detail: choice }));
+}
+
+/** Day/night follows the stored choice; with nothing saved it starts dark. */
 export function useScreenMode(): HomeMode {
-  const [mode, setMode] = useState<HomeMode>("day");
+  const [mode, setMode] = useState<HomeMode>(() =>
+    typeof window === "undefined" || themeChoice() === "dark" ? "night" : "day",
+  );
   useEffect(() => {
-    const query = window.matchMedia?.("(prefers-color-scheme: dark)");
-    const apply = () => setMode(storedMode() ?? (query?.matches ? "night" : "day"));
-    apply();
-    query?.addEventListener("change", apply);
-    return () => query?.removeEventListener("change", apply);
+    const onChange = (event: Event) => {
+      const choice = (event as CustomEvent<ThemeChoice>).detail;
+      setMode(choice === "light" ? "day" : "night");
+    };
+    window.addEventListener(EVENT, onChange);
+    return () => window.removeEventListener(EVENT, onChange);
   }, []);
   return mode;
 }

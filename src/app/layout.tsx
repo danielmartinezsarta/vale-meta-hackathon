@@ -34,12 +34,11 @@ export const metadata: Metadata = {
 
 const themeScript = `
 (function () {
+  var saved = null;
   try {
-    var saved = localStorage.getItem("vale-theme");
-    if (saved === "light" || saved === "dark") {
-      document.documentElement.dataset.theme = saved;
-    }
+    saved = localStorage.getItem("vale-theme");
   } catch (e) {}
+  document.documentElement.dataset.theme = saved === "light" ? "light" : "dark";
 })();
 `;
 
