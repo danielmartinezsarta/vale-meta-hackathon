@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { WidgetSheet } from "@/components/WidgetSheet";
+import { SegmentedControl } from "./SegmentedControl";
 import {
   setSeamlessAvailable,
   setVoiceEngine,
@@ -63,27 +64,15 @@ export function SettingsSheet({
     <WidgetSheet size="half" onClose={onClose} label={ui.settings}>
       <fieldset>
         <legend>{ui.voiceEngine}</legend>
-        <label>
-          <input
-            type="radio"
-            name="vale-voice-engine"
-            value="browser"
-            checked={engine === "browser"}
-            onChange={() => pick("browser")}
-          />{" "}
-          {ui.browserVoice}
-        </label>
-        <label>
-          <input
-            type="radio"
-            name="vale-voice-engine"
-            value="seamless"
-            checked={engine === "seamless"}
-            disabled={!seamless}
-            onChange={() => pick("seamless")}
-          />{" "}
-          {ui.seamlessVoice}
-        </label>
+        <SegmentedControl<VoiceEngine>
+          label={ui.voiceEngine}
+          value={engine}
+          onChange={pick}
+          options={[
+            { value: "browser", label: ui.browserVoice },
+            { value: "seamless", label: ui.seamlessVoice, disabled: !seamless },
+          ]}
+        />
         {!seamless && <p>{ui.seamlessUnavailable}</p>}
         {!seamless && <p className={styles.sub}>{ui.seamlessEnableHint}</p>}
       </fieldset>

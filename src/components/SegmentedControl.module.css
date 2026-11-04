@@ -1,0 +1,37 @@
+/* Segmented switch: one rounded track, active side filled with the accent.
+   Every color resolves from the host screen tokens (home, awake and manage
+   screens each define their own pair), so both switches look alike. */
+
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid var(--vs-line, var(--aw-line));
+}
+
+.opt {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 6px 18px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--vs-muted, var(--aw-muted));
+  cursor: pointer;
+}
+
+.opt.on {
+  background: var(--vs-a1, var(--aw-a1));
+  color: var(--vs-card, var(--aw-sheet));
+}
+
+.opt:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.opt:focus-visible {
+  outline: 2px solid var(--vs-a1, var(--aw-a1));
+  outline-offset: 2px;
+}

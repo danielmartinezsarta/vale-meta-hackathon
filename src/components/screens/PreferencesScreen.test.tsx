@@ -60,10 +60,10 @@ describe("PreferencesScreen", () => {
     const onLanguageChange = vi.fn();
     render(<PreferencesScreen onBack={() => {}} language="en" onLanguageChange={onLanguageChange} />);
     await screen.findByLabelText("Name");
-    fireEvent.click(screen.getByLabelText("ES"));
+    fireEvent.click(screen.getByRole("radio", { name: "ES" }));
     expect(onLanguageChange).toHaveBeenCalledWith("es");
-    fireEvent.click(screen.getByLabelText("Browser"));
-    expect(screen.getByLabelText("Browser")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Browser" }));
+    expect(screen.getByRole("radio", { name: "Browser" })).toBeTruthy();
   });
 
   it.each([
@@ -102,7 +102,7 @@ describe("PreferencesScreen", () => {
     });
     expect(window.localStorage.getItem("vale-engine")).toBe("browser");
     expect(
-      (screen.getByRole("radio", { name: "Browser" }) as HTMLInputElement).checked,
-    ).toBe(true);
+      (screen.getByRole("radio", { name: "Browser" }) as HTMLElement).getAttribute("aria-checked"),
+    ).toBe("true");
   });
 });

@@ -11,6 +11,7 @@ import {
 } from "@/lib/speak";
 import { uiStrings } from "@/lib/vale-ui";
 import type { ValeLanguage } from "@/lib/vale-language";
+import { SegmentedControl } from "../SegmentedControl";
 import styles from "./ManageScreens.module.css";
 
 /**
@@ -98,21 +99,15 @@ export function PreferencesScreen({
         </fieldset>
         <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
           <legend>{ui.voiceEngine}</legend>
-          <label>
-            <input type="radio" name="prefs-voice-engine" value="browser" checked={engine === "browser"} onChange={() => pick("browser")} />{" "}
-            {ui.browserVoice}
-          </label>{" "}
-          <label>
-            <input
-              type="radio"
-              name="prefs-voice-engine"
-              value="seamless"
-              checked={engine === "seamless"}
-              disabled={!seamless}
-              onChange={() => pick("seamless")}
-            />{" "}
-            {ui.seamlessVoice}
-          </label>
+          <SegmentedControl<VoiceEngine>
+            label={ui.voiceEngine}
+            value={engine}
+            onChange={pick}
+            options={[
+              { value: "browser", label: ui.browserVoice },
+              { value: "seamless", label: ui.seamlessVoice, disabled: !seamless },
+            ]}
+          />
           {!seamless && <p>{ui.seamlessUnavailable}</p>}
           {!seamless && <p className={styles.sub}>{ui.seamlessEnableHint}</p>}
         </fieldset>

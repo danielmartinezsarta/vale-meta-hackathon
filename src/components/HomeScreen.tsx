@@ -7,6 +7,7 @@ import { PhoneFrame } from "@/components/PhoneFrame";
 import { ManageScreensHost } from "@/components/screens/ManageScreensHost";
 import { useScreenMode } from "@/components/useScreenMode";
 import type { ValeLanguage } from "@/lib/vale-language";
+import { SegmentedControl } from "./SegmentedControl";
 import type { HomeData } from "@/lib/home-data";
 import styles from "./HomeScreen.module.css";
 
@@ -365,26 +366,15 @@ export function HomeScreen({
           )}
           <fieldset className={styles.lang}>
             <legend>Language</legend>
-            <label>
-              <input
-                type="radio"
-                name="home-language"
-                value="en"
-                checked={language === "en"}
-                onChange={() => onLanguageChange("en")}
-              />{" "}
-              EN
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="home-language"
-                value="es"
-                checked={language === "es"}
-                onChange={() => onLanguageChange("es")}
-              />{" "}
-              ES
-            </label>
+            <SegmentedControl<ValeLanguage>
+              label="Language"
+              value={language}
+              onChange={onLanguageChange}
+              options={[
+                { value: "en", label: "EN" },
+                { value: "es", label: "ES" },
+              ]}
+            />
           </fieldset>
           </nav>
         </div>
