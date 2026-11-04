@@ -352,8 +352,11 @@ export async function ensureCaptureReady(timeoutMs = 1500): Promise<boolean> {
 
 export interface CaptureHandle {
   stop: () => void;
-  /** Resume a suspended context inside a user gesture; watchdogs report failure. */
-  resume: () => void;
+  /**
+   * Resume a suspended context inside a user gesture; watchdogs report
+   * failure. Optional so older test doubles still typecheck.
+   */
+  resume?: () => void;
   /** Live AudioContext state: the stall watchdog reports it, never blocks on it. */
   state: () => string;
   /** Which thread feeds this capture; the turn log persists it. */

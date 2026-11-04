@@ -341,7 +341,7 @@ describe("muted mic (no mic errors while muted)", () => {
     await goLiveWithSession();
     fireEvent.click(screen.getByRole("button", { name: "Mute microphone" }));
     const callbacks = mockStartCapture.mock.calls[0][1];
-    callbacks.onBlocked();
+    callbacks.onBlocked?.();
     await new Promise((resolve) => setTimeout(resolve, 100));
     // No alert, session kept: the timer still runs and typing still works.
     expect(screen.queryByRole("alert")).toBeNull();
@@ -361,7 +361,7 @@ describe("muted mic (no mic errors while muted)", () => {
     }));
     await goLiveWithSession();
     const callbacks = mockStartCapture.mock.calls[0][1];
-    callbacks.onBlocked();
+    callbacks.onBlocked?.();
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeTruthy();
     });
