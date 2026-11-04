@@ -38,7 +38,7 @@ describe("voice selector in Settings", () => {
     fireEvent.click(seamless);
     expect(voiceEngine()).toBe("seamless");
     expect(window.localStorage.getItem("vale-engine")).toBe("seamless");
-    expect(screen.queryByText("Seamless voice is not configured.")).toBeNull();
+    expect(screen.queryByText("To enable Seamless TTS, set SEAMLESS_URL and SEAMLESS_TOKEN in .env.")).toBeNull();
 
     fireEvent.click(browser);
     expect(voiceEngine()).toBe("browser");
@@ -55,7 +55,7 @@ describe("voice selector in Settings", () => {
     await waitFor(() => {
       expect((seamless as HTMLButtonElement).disabled).toBe(true);
     });
-    expect(screen.getByText("Seamless voice is not configured.")).toBeTruthy();
+    expect(await screen.findByText("To enable Seamless TTS, set SEAMLESS_URL and SEAMLESS_TOKEN in .env.")).toBeTruthy();
     expect((screen.getByRole("radio", { name: "Browser" }) as HTMLElement).getAttribute("aria-checked")).toBe("true");
   });
 
@@ -67,7 +67,7 @@ describe("voice selector in Settings", () => {
       name: "Seamless (open model)",
     });
     expect((seamless as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.queryByText("Seamless voice is not configured.")).toBeTruthy();
+    expect(await screen.findByText("To enable Seamless TTS, set SEAMLESS_URL and SEAMLESS_TOKEN in .env.")).toBeTruthy();
   });
 
   it.each([

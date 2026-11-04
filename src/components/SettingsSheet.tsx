@@ -62,7 +62,7 @@ export function SettingsSheet({
 
   return (
     <WidgetSheet size="half" onClose={onClose} label={ui.settings}>
-      <fieldset>
+      <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
         <legend>{ui.voiceEngine}</legend>
         <SegmentedControl<VoiceEngine>
           label={ui.voiceEngine}
@@ -73,7 +73,6 @@ export function SettingsSheet({
             { value: "seamless", label: ui.seamlessVoice, disabled: !seamless },
           ]}
         />
-        {!seamless && <p>{ui.seamlessUnavailable}</p>}
         {!seamless && <p className={styles.sub}>{ui.seamlessEnableHint}</p>}
       </fieldset>
     </WidgetSheet>

@@ -87,18 +87,19 @@ export function PreferencesScreen({
           <input aria-label="Name" value={name} onChange={(event) => setName(event.target.value)} />
         </ManageField>
         <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend>Language</legend>
-          <label>
-            <input type="radio" name="prefs-language" value="en" checked={language === "en"} onChange={() => onLanguageChange("en")} />{" "}
-            EN
-          </label>{" "}
-          <label>
-            <input type="radio" name="prefs-language" value="es" checked={language === "es"} onChange={() => onLanguageChange("es")} />{" "}
-            ES
-          </label>
+          <legend className={styles.h}>Language</legend>
+          <SegmentedControl<ValeLanguage>
+            label="Language"
+            value={language}
+            onChange={onLanguageChange}
+            options={[
+              { value: "en", label: "EN" },
+              { value: "es", label: "ES" },
+            ]}
+          />
         </fieldset>
         <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend>{ui.voiceEngine}</legend>
+          <legend className={styles.h}>{ui.voiceEngine}</legend>
           <SegmentedControl<VoiceEngine>
             label={ui.voiceEngine}
             value={engine}
@@ -108,7 +109,6 @@ export function PreferencesScreen({
               { value: "seamless", label: ui.seamlessVoice, disabled: !seamless },
             ]}
           />
-          {!seamless && <p>{ui.seamlessUnavailable}</p>}
           {!seamless && <p className={styles.sub}>{ui.seamlessEnableHint}</p>}
         </fieldset>
       </div>

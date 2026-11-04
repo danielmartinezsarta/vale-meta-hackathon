@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ManageField, ManageShell } from "./ManageShell";
 import { manageDelete, manageGet, managePost } from "./manageApi";
 import styles from "./ManageScreens.module.css";
+import { SegmentedControl } from "../SegmentedControl";
 
 interface Appointment {
   id: number;
@@ -267,7 +268,7 @@ export function AgendaScreen({ onBack }: { onBack: () => void }) {
             ))}
           </datalist>
           <ManageField label="Service">
-            <select aria-label="Service" value={appt.serviceName} onChange={(event) => setAppt({ ...appt, serviceName: event.target.value })}>
+            <select className={styles.select} aria-label="Service" value={appt.serviceName} onChange={(event) => setAppt({ ...appt, serviceName: event.target.value })}>
               <option value="">Select a service</option>
               {services.map((service) => (
                 <option key={service.id} value={service.name}>{service.name}</option>
@@ -303,12 +304,15 @@ export function AgendaScreen({ onBack }: { onBack: () => void }) {
           </ManageField>
           <fieldset className={styles.seg}>
             <legend className={styles.h}>Kind</legend>
-            {(["general", "call", "shopping"] as const).map((kind) => (
-              <label key={kind}>
-                <input type="radio" name="reminder-kind" value={kind} checked={reminder.kind === kind} onChange={() => setReminder({ ...reminder, kind })} />{" "}
-                {kind[0].toUpperCase() + kind.slice(1)}
-              </label>
-            ))}
+            <SegmentedControl<string>
+              label="Kind"
+              value={reminder.kind}
+              onChange={(kind) => setReminder({ ...reminder, kind })}
+              options={(["general", "call", "shopping"] as const).map((kind) => ({
+                value: kind,
+                label: kind[0].toUpperCase() + kind.slice(1),
+              }))}
+            />
           </fieldset>
           <ManageField label="Day">
             <input aria-label="Day" type="date" value={reminder.day} disabled={reminder.noDate} onChange={(event) => setReminder({ ...reminder, day: event.target.value })} />

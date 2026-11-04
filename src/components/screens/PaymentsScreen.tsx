@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ManageField, ManageShell } from "./ManageShell";
 import { manageDelete, manageGet, managePost } from "./manageApi";
 import styles from "./ManageScreens.module.css";
+import { SegmentedControl } from "../SegmentedControl";
 
 interface Payment {
   id: number;
@@ -117,12 +118,15 @@ export function PaymentsScreen({ onBack }: { onBack: () => void }) {
         <>
           <fieldset className={styles.seg}>
             <legend className={styles.h}>Filter</legend>
-            {(["week", "month"] as const).map((value) => (
-              <label key={value}>
-                <input type="radio" name="payment-range" value={value} checked={range === value} onChange={() => setRange(value)} />{" "}
-                {value === "week" ? "This week" : "This month"}
-              </label>
-            ))}
+            <SegmentedControl<"week" | "month">
+              label="Filter"
+              value={range}
+              onChange={setRange}
+              options={(["week", "month"] as const).map((value) => ({
+                value,
+                label: value === "week" ? "This week" : "This month",
+              }))}
+            />
           </fieldset>
           <section className={styles.card} aria-label="Charges">
             {rows === null ? (
@@ -155,7 +159,7 @@ export function PaymentsScreen({ onBack }: { onBack: () => void }) {
         <div className={styles.card}>
           <h2 className={styles.h}>New charge</h2>
           <ManageField label="Session">
-            <select aria-label="Session" value={sessionId} onChange={(event) => setSessionId(event.target.value)}>
+            <select className={styles.select} aria-label="Session" value={sessionId} onChange={(event) => setSessionId(event.target.value)}>
               <option value="">Select a session</option>
               {(sessions ?? []).map((row) => (
                 <option key={row.sessionId} value={row.sessionId}>

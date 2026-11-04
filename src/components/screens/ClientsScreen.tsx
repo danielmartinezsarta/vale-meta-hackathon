@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ManageField, ManageShell } from "./ManageShell";
 import { manageDelete, manageGet, managePost } from "./manageApi";
 import styles from "./ManageScreens.module.css";
+import { SegmentedControl } from "../SegmentedControl";
 
 interface ClientRow {
   id: number;
@@ -187,12 +188,15 @@ export function ClientsScreen({ onBack }: { onBack: () => void }) {
             </ManageField>
             <fieldset className={styles.seg}>
               <legend className={styles.h}>Sex</legend>
-              {(["", "female", "male"] as const).map((sex) => (
-                <label key={sex || "unspecified"}>
-                  <input type="radio" name="client-sex" value={sex} checked={form.sex === sex} onChange={() => setForm({ ...form, sex })} />{" "}
-                  {sex === "" ? "Unspecified" : sex[0].toUpperCase() + sex.slice(1)}
-                </label>
-              ))}
+              <SegmentedControl<string>
+                label="Sex"
+                value={form.sex}
+                onChange={(sex) => setForm({ ...form, sex })}
+                options={(["", "female", "male"] as const).map((sex) => ({
+                  value: sex,
+                  label: sex === "" ? "Unspecified" : sex[0].toUpperCase() + sex.slice(1),
+                }))}
+              />
             </fieldset>
             <ManageField label="Phone">
               <input aria-label="Phone" type="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} />

@@ -160,6 +160,18 @@ div.row {
   resize: vertical;
 }
 
+/** Standalone select outside a ManageField: same paint as field inputs. */
+.select {
+  min-height: 48px;
+  border-radius: 12px;
+  border: 1px solid var(--vs-line, #b9c8f5);
+  background: var(--vs-bg, #d5e0ff);
+  color: inherit;
+  font: inherit;
+  font-size: 1rem;
+  padding: 10px 12px;
+}
+
 .inline {
   display: flex;
   align-items: center;

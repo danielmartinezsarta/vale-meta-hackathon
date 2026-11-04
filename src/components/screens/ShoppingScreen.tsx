@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ManageField, ManageShell } from "./ManageShell";
+import { ManageShell } from "./ManageShell";
 import { manageDelete, manageGet, managePost } from "./manageApi";
 import styles from "./ManageScreens.module.css";
+import { SegmentedControl } from "../SegmentedControl";
 
 interface ShoppingItem {
   id: number;
@@ -118,14 +119,15 @@ export function ShoppingScreen({ onBack }: { onBack: () => void }) {
             </div>
           ))
         )}
-        <ManageField label="Add item">
-          <select aria-label="Add item" value={pick} onChange={(event) => setPick(event.target.value)}>
-            <option value="">Select a supply</option>
-            {options.map((row) => (
-              <option key={row.id} value={row.name}>{row.name}</option>
-            ))}
-          </select>
-        </ManageField>
+        <fieldset className={styles.seg}>
+          <legend className={styles.h}>Add item</legend>
+          <SegmentedControl<string>
+            label="Add item"
+            value={pick}
+            onChange={setPick}
+            options={options.map((row) => ({ value: row.name, label: row.name }))}
+          />
+        </fieldset>
         <button className={styles.action} type="button" onClick={() => add(pick)}>+ Item</button>
       </section>
       <section className={styles.card} aria-label="Suggestions">

@@ -41,7 +41,7 @@ describe("PreferencesScreen", () => {
     const name = (await screen.findByLabelText("Name")) as HTMLInputElement;
     expect(name.value).toBe("demo");
     expect(screen.getByText("Browser")).toBeTruthy();
-    expect(screen.getByText("Seamless voice is not configured.")).toBeTruthy();
+    expect(await screen.findByText("To enable Seamless TTS, set SEAMLESS_URL and SEAMLESS_TOKEN in .env.")).toBeTruthy();
   });
 
   it("saves the edited profile name", async () => {
