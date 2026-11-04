@@ -7,7 +7,7 @@ Deploy with your own Modal account:
     SEAMLESS_APP_NAME=vale-seamless-<something-private> modal deploy modal/seamless.py
     SEAMLESS_URL=<the https URL Modal prints> SEAMLESS_TOKEN=<same-token> npm run dev
 
-The URL and token live only in the local shell env, never in this repo.
+The URL and token live only in the local .env (gitignored) or the shell env, never in this repo.
 The endpoint requires the token, like the Glimmer one.
 """
 
