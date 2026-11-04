@@ -201,7 +201,7 @@ function attachForTest(
   });
 }
 
-describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
+describe("GET /voice live bridge (browser -> server -> Meta)", () => {
   it("sends the current board on connect so a running session shows at once", async () => {
     const browser = new FakeBrowser();
     attachForTest(browser);

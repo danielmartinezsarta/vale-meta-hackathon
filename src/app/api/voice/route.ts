@@ -1,5 +1,3 @@
-import { connection } from "next/server";
-import { upgradeWebSocket } from "@vercel/functions";
 import { AGENT_MODEL, runAgentTurn, toolWaitPhrase } from "@/lib/agent";
 import { getDb, recentTurns, recordTurn } from "@/lib/db";
 import { getBoard } from "@/lib/board";
@@ -37,35 +35,9 @@ import {
 
 export const runtime = "nodejs";
 
-// Live bridge: one browser socket = one Meta socket = one PUSH_TO_TALK turn.
-export async function GET(): Promise<Response> {
-  const key = process.env.META_API_KEY;
-  if (!key) {
-    vlog({
-      turn: "-",
-      process: "ERROR",
-      status: "error",
-      content: "META_API_KEY is not configured; rejecting turn",
-    });
-    return Response.json(
-      {
-        error: turnErrorText("setup"),
-        code: "E-NET",
-      },
-      { status: 503 },
-    );
-  }
-  await connection();
-  // The upgrade handler receives no request, so the WS turn language
-  // arrives as a {type:"language"} control frame from the browser instead.
-  return upgradeWebSocket((browser) => {
-    attachVoiceBridge({
-      browser,
-      key,
-      metaUrl: process.env.META_ASR_URL || undefined,
-    });
-  });
-}
+// One voice socket: the browser dials /voice, served by server.ts
+// (plain ws upgrade, no platform helpers). This route keeps the POST
+// turns only: typed turns and the replay/POST fallback.
 
 const TURN_TIMEOUT_MS = 120000;
 
