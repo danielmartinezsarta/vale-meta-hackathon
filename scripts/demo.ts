@@ -14,10 +14,11 @@ import { chromium, type Page } from "playwright";
 import { parseReplayRun } from "../src/lib/replay";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SHOT_SCENES: Record<string, string> = {
-  "Daily agenda": "agenda.png",
-  "Client's card": "card.png",
-  "Nail photo studio": "studio.png",
+// Shot by turn tag: each shot needs that turn's own card on screen.
+const SHOT_TURNS: Record<string, string> = {
+  t901: "agenda.png",
+  t910: "card.png",
+  t923: "studio.png",
 };
 
 async function freePort(start: number): Promise<number> {
@@ -117,6 +118,9 @@ async function main(): Promise<void> {
         "--use-fake-ui-for-media-stream",
         "--use-fake-device-for-media-stream",
         "--use-file-for-fake-audio-capture=/tmp/silence.wav",
+        // Let the AudioContext run: without it the capture posts zeros,
+        // the app calls the mic blocked, and the session dies on turn 1.
+        "--autoplay-policy=no-user-gesture-required",
       ],
     });
     try {
@@ -173,12 +177,16 @@ async function main(): Promise<void> {
         }
         if (turn.widget) await page.waitForTimeout(1500);
         await quiet(page);
-        const shot = SHOT_SCENES[turn.scene];
+        const shot = SHOT_TURNS[turn.turn];
         if (shot && !shotTaken.has(shot)) {
           shotTaken.add(shot);
           await page.screenshot({ path: join(shots, shot) });
           console.log(`[demo] shot: ${shot}`);
         }
+        // Tidy the sheet like a user would, so the next turn's card is
+        // its own. Escape is the sheet's own close key; harmless at Home.
+        await page.keyboard.press("Escape");
+        await page.waitForTimeout(500);
       }
       console.log(`[demo] complete: ${run.turns.length} turns, one voice at a time`);
       await browser.close();
