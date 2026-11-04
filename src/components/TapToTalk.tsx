@@ -16,10 +16,12 @@ import { hasVisibleContent, type Turn } from "@/lib/turn-view";
 import { parseSseStream } from "@/lib/sse";
 import { isCloseSheetIntent } from "@/lib/wake";
 import {
+  drainSpeechEvents,
   isSpeaking,
   onSpeechSettled,
   setVoiceEngine,
   speak,
+  primeSpokenAudio,
   speechSettled,
   stopSpeaking,
   voiceEngine,
@@ -711,6 +713,29 @@ export function TapToTalk({
       window.clearInterval(speechWatchRef.current);
       speechWatchRef.current = window.setInterval(() => {
         if (!sessionRef.current) return;
+        // Speech-path telemetry rides the open socket to the server log,
+        // one small row per sentence end: the field test reads it live.
+        for (const speechEvent of drainSpeechEvents()) {
+          try {
+            if (
+              convOpen &&
+              convSocket &&
+              typeof WebSocket !== "undefined" &&
+              convSocket.readyState === WebSocket.OPEN
+            ) {
+              convSocket.send(
+                JSON.stringify({
+                  type: "client-state",
+                  state: {
+                    speech: `${speechEvent.kind} ${speechEvent.detail}`.trim(),
+                  },
+                }),
+              );
+            }
+          } catch {
+            /* diagnostics never break the turn */
+          }
+        }
         if (!speechSettled()) {
           // She owns the air: the store says so even when the frame guard
           // muted first (set is idempotent, no extra render past the first).
@@ -718,6 +743,7 @@ export function TapToTalk({
           if (!mutedRef.current) {
             mutedRef.current = true;
             muteStartRef.current = Date.now();
+            endReleasedTurn();
             captureRef.current?.setPaused?.(true);
             window.clearTimeout(resumeTimerRef.current);
           } else if (
@@ -773,6 +799,49 @@ export function TapToTalk({
       let convOpen = false;
       let pendingConvTurn: number | null = null;
       let convAttempt = 0;
+      // The bridge echoes the turn tag on final/reply/done: route by it.
+      const parseBridgeTurn = (raw: unknown): string | null => {
+        try {
+          const text =
+            typeof raw === "string"
+              ? raw
+              : new TextDecoder().decode(raw as ArrayBuffer);
+          const turn = (JSON.parse(text) as { turn?: unknown }).turn;
+          return typeof turn === "string" && /^t\d{1,6}$/.test(turn)
+            ? turn
+            : null;
+        } catch {
+          return null;
+        }
+      };
+      // Route bridge messages by the echoed turn tag; untagged frames go to
+      // the ended turn or the live one. A done never touches the segment
+      // being captured: dropping it here keeps a cut fragment from
+      // deleting the live turn.
+      const routeBridgeMessage = (raw: unknown): number | null => {
+        const tagged = parseBridgeTurn(raw);
+        if (tagged !== null) {
+          for (const [id, transport] of transports) {
+            if (transport.tag === tagged) return id;
+          }
+          return null;
+        }
+        const id = pendingConvTurn ?? currentId;
+        if (id === currentId && !transports.get(id)?.ended) {
+          let type: unknown;
+          try {
+            const text =
+              typeof raw === "string"
+                ? raw
+                : new TextDecoder().decode(raw as ArrayBuffer);
+            type = (JSON.parse(text) as { type?: unknown }).type;
+          } catch {
+            type = undefined;
+          }
+          if (type === "done") return null;
+        }
+        return id;
+      };
       interface TurnTransport {
         socket: WebSocket | null;
         /** Shared turn tag (t001…) assigned at birth, sent with every close. */
@@ -797,9 +866,11 @@ export function TapToTalk({
         endFrames: Int16Array[] | null;
         /** Frames with real voice (energy above the VAD threshold). */
         voiced: number;
+        /** Voiced flags of the last 10 frames: release needs 8 of 10. */
+        recent: boolean[];
         /**
-         * 300 ms of voice passed the gate: the buffered frames rode a
-         * socket. Before that nothing leaves the device, not even a blip.
+         * 8 of the last 10 frames carried voice: the buffered frames rode
+         * a socket. Before that nothing leaves the device, not even a blip.
          */
         released: boolean;
         /** Frozen endStream payload: the same stats on every (re)send. */
@@ -877,7 +948,8 @@ export function TapToTalk({
         socket.onmessage = (event: MessageEvent) => {
           // Session-scoped frames (board, widgets) land before the first
           // turn opens; handleBridgeMessage routes what needs no turn.
-          const id = pendingConvTurn ?? currentId;
+          const id = routeBridgeMessage(event.data);
+          if (id === null) return;
           handleBridgeMessage(id, event.data);
           try {
             const raw =
@@ -985,6 +1057,7 @@ export function TapToTalk({
           postRetried: false,
           endFrames: null,
           voiced: 0,
+          recent: [],
           released: false,
           endPayload: null,
         });
@@ -1046,6 +1119,17 @@ export function TapToTalk({
       // the gate owns the verdict. Cutting here desyncs from the server and
       // orphans the frames already streamed.
 
+      // One invariant for every stall: a released segment ends only by the
+      // VAD, always with an explicit endStream. Pausing capture, rebuilding
+      // the graph, or restarting after a stall closes the released turn
+      // first; nothing else ever clears a segment or ends it silently.
+      const endReleasedTurn = () => {
+        const transport = transports.get(currentId);
+        if (!transport || !transport.released || transport.failed) return;
+        if (transport.settled || transport.ended) return;
+        posted = true;
+        endTurnTransport(currentId);
+      };
       // A failed turn ends the session so the user can tap to retry.
       const failTurn = (id: number, message: string, code: string | null = null) => {
         // A failed turn may still show what was heard: only a contentless
@@ -1594,7 +1678,7 @@ export function TapToTalk({
       // phrases keep pauses under this; longer silence splits the turn.
       const endSilenceMs = Math.max(
         1,
-        Number(process.env.NEXT_PUBLIC_VAD_END_SILENCE_MS) || 800,
+        Number(process.env.NEXT_PUBLIC_VAD_END_SILENCE_MS) || 1000,
       );
       // Stall watchdog: the processor feeds a heartbeat on every audio
       // block, speech or silence, so a quiet mic still proves it is alive.
@@ -1688,6 +1772,7 @@ export function TapToTalk({
             // capture pause usually drops these first; this guards the gap
             // before the next watch tick lands.
             if (!speechSettled()) {
+              endReleasedTurn();
               captureRef.current?.setPaused?.(true);
               mutedRef.current = true;
               // The watch reads this for the 60 s backstop: stamp it on
@@ -1703,10 +1788,16 @@ export function TapToTalk({
             // device and no socket opens for it.
             const transport = transports.get(currentId);
             if (transport && !transport.failed) {
-              if (countVoiced(frame)) transport.voiced += 1;
+              const voicedNow = countVoiced(frame);
+              if (voicedNow) transport.voiced += 1;
+              // Sliding hold: 8 of the last 10 frames above the VAD line.
+              // Cumulative counts let room noise through; the window does not.
+              transport.recent.push(voicedNow);
+              if (transport.recent.length > 10) transport.recent.shift();
               transport.frames.push(frame.slice());
               if (!transport.released) {
-                if (transport.voiced * FRAME_MS >= MIN_VOICED_MS) {
+                const loud = transport.recent.filter(Boolean).length;
+                if (loud >= 8) {
                   releaseTurn();
                 } else {
                   return;
@@ -1789,8 +1880,14 @@ export function TapToTalk({
               null,
             );
           },
+          // The detector is about to reset: close the released segment
+          // with endStream first, or its ending rides nowhere.
+          onInterrupt: () => {
+            if (!sessionRef.current) return;
+            endReleasedTurn();
+          },
         // Threshold 200 with 1 s pre-roll; the end silence comes from
-        // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 800 ms).
+        // NEXT_PUBLIC_VAD_END_SILENCE_MS (default 1000 ms).
         };
         castVoteRef.current = castVote;
         sendTypedRef.current = sendTyped;
@@ -1811,6 +1908,9 @@ export function TapToTalk({
       watchdogRef.current = window.setInterval(() => {
         void (async () => {
           if (!sessionRef.current) return;
+          // Her voice owns the session: the context is suspended on
+          // purpose, so rebuilding here would yank her audio mid-reply.
+          if (mutedRef.current) return;
           if (Date.now() - lastBeatAt < STALL_MS) return;
         const tracks =
           typeof stream.getTracks === "function" ? stream.getTracks() : [];
@@ -1826,6 +1926,7 @@ export function TapToTalk({
         }
         logClientState("stall-restart");
         try {
+          endReleasedTurn();
           await beginCapture();
         } catch {
           endSessionWithAlert(
@@ -1885,8 +1986,11 @@ export function TapToTalk({
     if (status === "requesting") return;
     // In-gesture audio unlock: resume() after the getUserMedia await below
     // no longer counts as a gesture on iOS and the mic delivers zeros.
+    // The same gesture primes both speech paths, or iOS Safari stays
+    // muted for the later out-of-gesture speak()/play() calls.
     try {
       unlockAudioContext();
+      primeSpokenAudio();
     } catch {
       /* startCapture throws the clear error when unsupported */
     }

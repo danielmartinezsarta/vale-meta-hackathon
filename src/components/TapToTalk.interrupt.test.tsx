@@ -44,6 +44,12 @@ function liveSocket() {
   return FakeVoiceSocket.instances[0];
 }
 
+function sentEndStream(): boolean {
+  return liveSocket()
+    .sent.filter((item): item is string => typeof item === "string")
+    .some((raw) => raw.includes("endStream"));
+}
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -103,6 +109,78 @@ describe("interruption (fake-device fallback)", () => {
     liveSocket().serverMessage({ type: "done" });
     expect(fetchMock).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+  });
+
+  it("pausing for her voice closes the released segment with endStream first", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getUserMedia: async () =>
+          ({ getTracks: () => [] }) as unknown as MediaStream,
+      },
+    });
+    stubVoiceSocket();
+    noAudioPost();
+    const seen: CaptureCallbacks[] = [];
+    const pauses: boolean[] = [];
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      seen.push(callbacks);
+      return {
+        stop: () => {},
+        state: () => "running",
+        engine: () => "script" as const,
+        setPaused: (value: boolean) => void pauses.push(value),
+      };
+    });
+
+    render(<TapToTalk debug />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(seen.length).toBeGreaterThan(0);
+    });
+    // Released but speech never ended: her voice cuts in mid-segment.
+    seen[0].onSpeechStart();
+    const voiced = new Int16Array(960).fill(4000);
+    for (let i = 0; i < 8; i += 1) seen[0].onFrame(voiced);
+    speakAudibleRef.current = true;
+    seen[0].onFrame(voiced);
+    // The segment ends explicitly before the pause, never silently.
+    await waitFor(() => {
+      expect(sentEndStream()).toBe(true);
+    });
+    expect(pauses).toContain(true);
+    expect(screen.queryByRole("alert")).toBeNull();
+    speakAudibleRef.current = false;
+  });
+
+  it("a rebuild closes the released segment with endStream first", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getUserMedia: async () =>
+          ({ getTracks: () => [] }) as unknown as MediaStream,
+      },
+    });
+    stubVoiceSocket();
+    noAudioPost();
+    const seen: CaptureCallbacks[] = [];
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      seen.push(callbacks);
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
+    });
+
+    render(<TapToTalk debug />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    await waitFor(() => {
+      expect(seen.length).toBeGreaterThan(0);
+    });
+    seen[0].onSpeechStart();
+    const voiced = new Int16Array(960).fill(4000);
+    for (let i = 0; i < 8; i += 1) seen[0].onFrame(voiced);
+    seen[0].onInterrupt?.();
+    // The detector reset never strands the segment: endStream rode first.
+    await waitFor(() => {
+      expect(sentEndStream()).toBe(true);
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("holds the open turn while muted: no quiet churn, no vad notice", async () => {

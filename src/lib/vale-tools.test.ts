@@ -128,6 +128,29 @@ describe("sessions", () => {
     db.close();
   });
 
+  it("closes with extras, breakdown and payment for the summary sheet", () => {
+    const db = freshTestDb();
+    expect(openSession(db, { client_name: "Ana", service_name: "Gel removal" }).ok).toBe(true);
+    expect(logSupplyUse(db, { name: "gold foil" }).ok).toBe(true);
+    expect(logSupplyUse(db, { name: "three crystals" }).ok).toBe(true);
+    expect(quoteSession(db, { amount: 25 }, "en").ok).toBe(true);
+    const closed = closeSession(db, { products_used: [] });
+    expect(closed.ok).toBe(true);
+    const data = closed.data as {
+      extras: { name: string; qty: number; amount: number }[];
+      breakdown: { supplies_cost: number; final_price: number } | null;
+      paid_amount_usd: number;
+    };
+    expect(data.extras).toHaveLength(2);
+    expect(data.extras).toContainEqual({ name: "Gold foil", qty: 1, amount: 4 });
+    expect(data.extras).toContainEqual({ name: "Crystals", qty: 3, amount: 4.5 });
+    expect(data.breakdown).not.toBeNull();
+    // Gel removal recipe (8.82) plus the two logged extras (4 + 4.50).
+    expect(data.breakdown?.supplies_cost).toBeCloseTo(17.32, 5);
+    expect(data.paid_amount_usd).toBe(25);
+    db.close();
+  });
+
   it("rejects a second open session and a close without one", () => {
     const db = freshTestDb();
     openAna(db);
@@ -454,16 +477,32 @@ describe("log_supply_use", () => {
     db.close();
   });
 
-  it("saves unknown supplies at once like notes", () => {
+  it("asks to confirm unknown supplies instead of inventing rows", () => {
     const db = freshTestDb();
     openAna(db);
-    const saved = logSupplyUse(db, { name: "Esmalte verde" }, "en");
-    expect(saved.ok).toBe(true);
-    expect(saved.message).toBe("Esmalte verde added to Ana's session.");
+    const asked = logSupplyUse(db, { name: "Esmalte verde" }, "en");
+    expect(asked.ok).toBe(false);
+    expect(asked.pendingCreate).toBe("Esmalte verde");
+    const count = (db.prepare("SELECT COUNT(*) AS n FROM supplies").get() as { n: number }).n;
+    expect(count).toBe(25);
+    db.close();
+  });
+
+  it("logs three crystals as one Crystals row and accumulates quantity", () => {
+    const db = freshTestDb();
+    openAna(db);
+    // The count rides in the name: the server strips it as a safety net.
+    const logged = logSupplyUse(db, { name: "three crystals" }, "en");
+    expect(logged.ok).toBe(true);
+    // An explicit quantity adds onto the same row.
+    const more = logSupplyUse(db, { name: "crystals", quantity: 2 }, "en");
+    expect(more.ok).toBe(true);
     const rows = db.prepare(
-      "SELECT s.name FROM session_supplies ss JOIN supplies s ON s.id = ss.supply_id",
-    ).all() as { name: string }[];
-    expect(rows.map((row) => row.name)).toContain("Esmalte verde");
+      "SELECT s.name, ss.qty FROM session_supplies ss JOIN supplies s ON s.id = ss.supply_id",
+    ).all() as { name: string; qty: number }[];
+    expect(rows).toEqual([{ name: "Crystals", qty: 5 }]);
+    const count = (db.prepare("SELECT COUNT(*) AS n FROM supplies").get() as { n: number }).n;
+    expect(count).toBe(25);
     db.close();
   });
 });
@@ -496,7 +535,7 @@ describe("undo_last_write", () => {
     logSupplyUse(db, { name: "Esmalte verde", confirm_create: true });
     undoLastWrite(db);
     const supplies = db.prepare("SELECT COUNT(*) AS n FROM supplies").get() as { n: number };
-    expect(supplies.n).toBe(23);
+    expect(supplies.n).toBe(25);
     closeSession(db, { products_used: ["Algodon"] });
     undoLastWrite(db);
     const session = db.prepare("SELECT ended_at FROM sessions ORDER BY id DESC LIMIT 1").get() as {
@@ -563,7 +602,7 @@ describe("session_quote", () => {
     expect(badSupply.ok).toBe(false);
     expect(badSupply.message).toContain("No encuentro");
     const both = db.prepare("SELECT COUNT(*) AS n FROM supplies").get() as { n: number };
-    expect(both.n).toBe(23);
+    expect(both.n).toBe(25);
     db.close();
   });
 
@@ -645,10 +684,29 @@ describe("session_quote", () => {
     db.close();
   });
 
-  it("refuses a stray amount with no quote waiting", () => {
+  it("registers a spoken amount with no quote waiting when a session is open", () => {
     const db = freshTestDb();
     openAna(db);
-    expect(quoteSession(db, { amount: 35 }, "en").ok).toBe(false);
+    const paid = quoteSession(db, { amount: 25 }, "en");
+    expect(paid.ok).toBe(true);
+    expect(paid.message).toBe("Payment registered.");
+    const rows = db.prepare("SELECT amount_usd FROM payments").all() as { amount_usd: number }[];
+    expect(rows).toEqual([{ amount_usd: 25 }]);
+    db.close();
+  });
+
+  it("registers the amount with the quote open and keeps the session open", () => {
+    const db = freshTestDb();
+    openSession(db, { client_name: "Ana", service_name: "Gel removal" });
+    const quoted = quoteSession(db, {}, "en");
+    expect(quoted.ok).toBe(true);
+    const paid = quoteSession(db, { amount: 25 }, "en");
+    expect(paid.ok).toBe(true);
+    expect(paid.message).toBe("Payment registered.");
+    const rows = db.prepare("SELECT amount_usd FROM payments").all() as { amount_usd: number }[];
+    expect(rows).toEqual([{ amount_usd: 25 }]);
+    const open = db.prepare("SELECT id FROM sessions WHERE ended_at IS NULL").get() as { id: number };
+    expect(open).toBeDefined();
     db.close();
   });
 });

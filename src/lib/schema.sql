@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS session_supplies (
   session_id INTEGER NOT NULL REFERENCES sessions(id),
   supply_id INTEGER NOT NULL REFERENCES supplies(id),
+  qty REAL NOT NULL DEFAULT 1,
   PRIMARY KEY (session_id, supply_id)
 );
 -- HACK-018 demo payments: session_quote Accept (or a spoken amount after

@@ -173,6 +173,8 @@
     { "name": "Regular nail polish", "es": "Esmalte tradicional", "aliases": ["esmalte normal", "tradicional"], "content_per_product": 15, "unit": "ml", "stock": 60, "min": 15, "price_per_product_usd": 12 },
     { "name": "Acetone", "es": "Acetona", "aliases": ["acetona", "acetona pura"], "content_per_product": 250, "unit": "ml", "stock": 500, "min": 100, "price_per_product_usd": 15 },
     { "name": "Foil wraps", "es": "Envolturas de aluminio", "aliases": ["foils", "aluminio"], "content_per_product": 100, "unit": "pcs", "stock": 100, "min": 20, "price_per_product_usd": 45 },
-    { "name": "Cotton pads", "es": "Pads de algodón", "aliases": ["algodon"], "content_per_product": 100, "unit": "pcs", "stock": 300, "min": 60, "price_per_product_usd": 20 }
+    { "name": "Cotton pads", "es": "Pads de algodón", "aliases": ["algodon"], "content_per_product": 100, "unit": "pcs", "stock": 300, "min": 60, "price_per_product_usd": 20 },
+    { "name": "Gold foil", "es": "Lámina dorada", "aliases": ["gold foil", "lamina dorada"], "content_per_product": 1, "unit": "pcs", "stock": 50, "min": 10, "price_per_product_usd": 4 },
+    { "name": "Crystals", "es": "Cristales", "aliases": ["crystals", "cristal"], "content_per_product": 1, "unit": "pcs", "stock": 300, "min": 50, "price_per_product_usd": 1.5 }
   ]
 }
