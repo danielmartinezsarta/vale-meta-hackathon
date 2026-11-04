@@ -27,6 +27,8 @@ export type WidgetKind =
   | "booked"
   | "session_summary"
   | "good_job"
+  | "shopping"
+  | "low_stock"
   | "confirm";
 
 /** Fixed sheet size per kind; good_job is a screen state, never a sheet. */
@@ -43,6 +45,8 @@ export const WIDGET_SIZE: Record<WidgetKind, WidgetSize> = {
   booked: "half",
   session_summary: "full",
   good_job: "full",
+  shopping: "half",
+  low_stock: "half",
   confirm: "half",
 };
 
@@ -73,6 +77,10 @@ export function widgetTitle(kind: WidgetKind): string {
       return "Session summary";
     case "good_job":
       return "Good job!";
+    case "shopping":
+      return "Shopping list";
+    case "low_stock":
+      return "Low stock";
     case "confirm":
       return "Confirm";
   }
@@ -183,6 +191,22 @@ export interface SessionSummaryData {
 /** Good-job screen state after the summary; no payload. */
 export type GoodJobData = Record<string, never>;
 
+/** Shopping list: names in list order; empty renders the empty line. */
+export interface ShoppingData {
+  items: string[];
+}
+
+/** Low stock: one row per supply at or below its minimum. */
+export interface LowStockItem {
+  name: string;
+  stock: number;
+  min: number;
+}
+
+export interface LowStockData {
+  items: LowStockItem[];
+}
+
 /** Touch fallback for proposals with no widget of their own. */
 export type ConfirmData = Record<string, never>;
 
@@ -199,6 +223,8 @@ export type Widget =
   | { kind: "booked"; title: string; size: "half"; data: BookedData }
   | { kind: "session_summary"; title: string; size: "full"; data: SessionSummaryData }
   | { kind: "good_job"; title: string; size: "full"; data: GoodJobData }
+  | { kind: "shopping"; title: string; size: "half"; data: ShoppingData }
+  | { kind: "low_stock"; title: string; size: "half"; data: LowStockData }
   | { kind: "confirm"; title: string; size: "half"; data: ConfirmData };
 
 /** Read-only store for card and summary enrichment; columns may be absent. */
@@ -495,6 +521,21 @@ function buildSummary(
   };
 }
 
+/** Current shopping list names in list order; null without a store. */
+function shoppingItemsOf(db: CardStore | undefined): string[] | null {
+  if (!db) return null;
+  try {
+    const rows = db
+      .prepare(
+        "SELECT s.name FROM shopping_list l JOIN supplies s ON s.id = l.supply_id ORDER BY l.id",
+      )
+      .all() as { name?: unknown }[];
+    return rows.map((row) => text(row.name)).filter((name) => name !== "");
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Screen card for a successful tool call, never from reply text. Money,
  * health and goal amounts stay in the payload; the voice never says them.
@@ -599,6 +640,42 @@ export function buildWidget(
     }
     case "close_session":
       return buildSummary(info, db);
+    case "shopping_show":
+    case "shopping_add":
+    case "shopping_remove": {
+      const fromData = Array.isArray(info.items)
+        ? info.items.map(text).filter((name) => name !== "")
+        : [];
+      const items = fromData.length > 0 ? fromData : shoppingItemsOf(db);
+      if (items === null) return null;
+      return {
+        kind: "shopping",
+        title: widgetTitle("shopping"),
+        size: "half",
+        data: { items },
+      };
+    }
+    case "stock_show_low": {
+      const rows = Array.isArray(info.low) ? info.low : [];
+      const items = rows
+        .map((row) => dataOf(row))
+        .map((row) => ({
+          name: text(row.name),
+          stock: num(row.stock_qty) ?? num(row.stock),
+          min: num(row.min_qty) ?? num(row.min),
+        }))
+        .filter(
+          (item): item is LowStockItem =>
+            item.name !== "" && item.stock !== null && item.min !== null,
+        );
+      if (items.length === 0) return null;
+      return {
+        kind: "low_stock",
+        title: widgetTitle("low_stock"),
+        size: "half",
+        data: { items },
+      };
+    }
     default:
       return null;
   }

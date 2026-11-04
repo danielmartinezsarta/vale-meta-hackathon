@@ -1014,6 +1014,40 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
         </section>
       );
     case "good_job":
+      return null;
+    case "shopping":
+      return (
+        <section className={sheet("aw-sheet aw-sens-sheet")} role="dialog" aria-label="Shopping list">
+          <Grab />
+          <SheetHead title={widget.title} />
+          {widget.data.items.length === 0 ? (
+            <p>The list is empty.</p>
+          ) : (
+            <div className="aw-fields">
+              {widget.data.items.map((item, index) => (
+                <div className="aw-field aw-field--wide" key={`${item}-${index}`}>
+                  <b>{item}</b>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      );
+    case "low_stock":
+      return (
+        <section className={sheet("aw-sheet aw-sens-sheet")} role="dialog" aria-label="Low stock">
+          <Grab />
+          <SheetHead title={widget.title} />
+          <div className="aw-fields">
+            {widget.data.items.map((item) => (
+              <div className="aw-field aw-field--wide" key={item.name}>
+                <small>{`${item.stock} left · min ${item.min}`}</small>
+                <b>{item.name}</b>
+              </div>
+            ))}
+          </div>
+        </section>
+      );
     case "confirm":
       return null;
     default:
