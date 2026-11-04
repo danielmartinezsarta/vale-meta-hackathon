@@ -10,7 +10,7 @@ import {
   sanitizeClientId,
   type WakeVerdict,
 } from "./wake";
-import { ASR_ENCODING, ASR_MODEL, ASR_URL } from "./asr";
+import { ASR_ENCODING, ASR_KEYWORDS, ASR_MODEL, ASR_URL } from "./asr";
 import { emitTurnLog, estimateCost, modelElapsedMs, vlog } from "./turn-log";
 import { isMutedJunkTurn, saveTurnWav } from "./turn-audio";
 import {
@@ -1342,6 +1342,7 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
             mode: "PUSH_TO_TALK",
             // Pin listening to the screen language (names, not tags).
             languageBias: [turnLanguage === "es" ? "Spanish" : "English"],
+            keywords: ASR_KEYWORDS,
           }),
         );
       } catch {
