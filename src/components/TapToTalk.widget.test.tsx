@@ -239,6 +239,8 @@ describe("sheet flows", () => {
           extras: [],
           suggested: 24,
           charged: 24,
+          earned: null,
+          stdMinutes: null,
           timeTotal: "11m",
           timeParts: [],
           costs: [],

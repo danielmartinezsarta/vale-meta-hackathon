@@ -14,7 +14,7 @@ import type {
   SessionSummaryData,
   Widget,
 } from "@/lib/widget";
-import { formatDay, formatVisit, initials, usdWhole } from "@/lib/widget";
+import { formatDay, formatVisit, initials, usdExact, usdWhole } from "@/lib/widget";
 
 /** The lock tag: sensitive data stays on screen, never spoken. */
 function LockTag() {
@@ -752,18 +752,18 @@ function SummaryBody({ data }: { data: SessionSummaryData }) {
         data.charged !== null) && (
         <section className="aw-sum__block">
           <h3>Service and extras</h3>
-          {data.service !== null && row("service", data.service.name, usdWhole(data.service.price))}
+          {data.service !== null && row("service", data.service.name, usdExact(data.service.price))}
           {data.extras.map((extra, index) =>
-            row(`extra-${index}`, `${extra.label}`, usdWhole(extra.amount), "aw-sum__row--sub"),
+            row(`extra-${index}`, `${extra.label}`, usdExact(extra.amount), "aw-sum__row--sub"),
           )}
           {data.suggested !== null &&
-            row("suggested", "Suggested price", usdWhole(data.suggested), "aw-sum__row--total")}
+            row("suggested", "Suggested price", usdExact(data.suggested), "aw-sum__row--total")}
           {data.charged !== null && (
             <div className="aw-sum__row aw-sum__row--paid">
               <span>
                 {CHECK_ICON}Charged
               </span>
-              <b>{usdWhole(data.charged)}</b>
+              <b>{usdExact(data.charged)}</b>
             </div>
           )}
         </section>
@@ -791,6 +791,7 @@ function SummaryBody({ data }: { data: SessionSummaryData }) {
           <h3>How the price was calculated</h3>
           {data.costs.map((cost) => row(`cost-${cost.label}`, cost.label, usdWhole(cost.amount)))}
           {data.fixedDetail !== null && <p className="aw-sum__fixed">Fixed costs: {data.fixedDetail}</p>}
+          {data.earned !== null && <p className="aw-sum__fixed">Earned {usdExact(data.earned)}</p>}
         </section>
       )}
     </div>
@@ -907,7 +908,7 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
             rows={[
               { label: "Service", value: widget.data.service },
               ...(widget.data.extras === null ? [] : [{ label: "Extras", value: usdWhole(widget.data.extras) }]),
-              { label: "Suggested", value: usdWhole(widget.data.suggested), wide: true },
+              { label: "Suggested", value: usdExact(widget.data.suggested), wide: true },
             ]}
           />
           <AcceptReject onAccept={onAccept} onReject={onReject} />

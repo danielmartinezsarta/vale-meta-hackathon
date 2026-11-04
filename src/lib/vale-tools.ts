@@ -493,29 +493,27 @@ export function closeSession(db: ValeDb, args: { products_used?: unknown }, lang
   const started = db.prepare("SELECT started_at FROM sessions WHERE id = ?").get(open.id) as { started_at: string };
   const durationS = Math.max(0, Math.round((Date.parse(endedAt) - Date.parse(started.started_at)) / 1000));
   const minutes = Math.max(1, Math.round(durationS / 60));
-  const service = db.prepare("SELECT id, name FROM services WHERE id = ?").get(open.service_id) as { id: number; name: string };
-  // The same breakdown the quote sheet shows, extras included: the summary
-  // sheet reads it off the close data instead of recomputing it.
-  const quoted = computeQuoteWithSessionExtras(db, service.id, minutes, open.id);
-  const earned = "error" in quoted ? 0 : quoted.breakdown.marginEarned;
+  const service = db.prepare("SELECT id, name, duration_min FROM services WHERE id = ?").get(open.service_id) as {
+    id: number;
+    name: string;
+    duration_min: number;
+  };
+  // The suggested prices the standard duration; the earned line prices the
+  // real one: suggested minus what this session actually cost. The goal
+  // column keeps the rounding margin of the real quote, unchanged.
+  const stdQuoted = computeQuoteWithSessionExtras(db, service.id, service.duration_min, open.id);
+  const realQuoted = computeQuoteWithSessionExtras(db, service.id, minutes, open.id);
+  const base = quotePrice(PRICING, service.duration_min, recipeForService(db, service.id).map(toQuoteSupply)).finalPrice;
+  const loggedExtras = "error" in stdQuoted ? [] : sessionExtras(db, service.id, open.id);
+  const extrasTotal = loggedExtras.reduce((sum, extra) => sum + extra.amount, 0);
+  const suggested = "error" in stdQuoted ? null : base + extrasTotal;
+  const actualSubtotal = "error" in realQuoted ? null : realQuoted.breakdown.subtotal;
+  const earned = "error" in realQuoted ? 0 : realQuoted.breakdown.marginEarned;
   db.prepare("UPDATE sessions SET ended_at = ?, duration_s = ?, margin_earned = ? WHERE id = ?").run(endedAt, durationS, earned, open.id);
   logWrite(db, "session_close", "sessions", open.id, { supplies: recordedIds });
   // The private brief follows the record in the background;
   // the voice never waits for it.
   refreshClientBriefInBackground(db, open.client_id);
-  const loggedExtras = (
-    "error" in quoted
-      ? []
-      : quoted.lines.filter((line) =>
-          db
-            .prepare("SELECT 1 FROM session_supplies WHERE session_id = ? AND supply_id = ?")
-            .get(open.id, line.supply_id),
-        )
-  ).map((line) => ({
-    name: line.name,
-    qty: line.qty,
-    amount: line.qty * line.price_per_product_usd * (line.content_per_product > 0 ? 1 / line.content_per_product : 0),
-  }));
   // The full summary sheet reads the payment off this session, if any.
   const paid = db.prepare("SELECT COALESCE(SUM(amount_usd), 0) AS total FROM payments WHERE session_id = ?").get(open.id) as { total: number };
   const lasted = language === "en" ? `It lasted ${minutes} minute${minutes === 1 ? "" : "s"}.` : `Duró ${minutes} minuto${minutes === 1 ? "" : "s"}.`;
@@ -534,16 +532,20 @@ export function closeSession(db: ValeDb, args: { products_used?: unknown }, lang
       client: clientLabel(db, open.client_id),
       paid_amount_usd: paid.total,
       extras: loggedExtras,
+      base_price_usd: "error" in stdQuoted ? null : base,
+      std_minutes: service.duration_min,
+      suggested_price_usd: suggested,
+      earned_usd: suggested === null || actualSubtotal === null ? null : suggested - actualSubtotal,
       breakdown:
-        "error" in quoted
+        "error" in stdQuoted
           ? null
           : {
-              supplies_cost: quoted.breakdown.suppliesCost,
-              time_cost: quoted.breakdown.timeCost,
-              fixed_share: quoted.breakdown.fixedShare,
-              margin_pct: quoted.breakdown.marginPct,
-              final_price: quoted.breakdown.finalPrice,
-              margin_earned: quoted.breakdown.marginEarned,
+              supplies_cost: stdQuoted.breakdown.suppliesCost,
+              time_cost: stdQuoted.breakdown.timeCost,
+              fixed_share: stdQuoted.breakdown.fixedShare,
+              margin_pct: stdQuoted.breakdown.marginPct,
+              final_price: stdQuoted.breakdown.finalPrice,
+              margin_earned: stdQuoted.breakdown.marginEarned,
             },
     },
   };
@@ -1226,6 +1228,10 @@ export interface QuoteData {
   margin_pct: number;
   final_price_usd: number;
   margin_earned_usd: number;
+  /** Rounded service base the suggested starts from. */
+  base_price_usd: number;
+  /** Logged extras priced flat at qty x unit, on top of the base. */
+  extras: { name: string; qty: number; amount: number }[];
   /** accept: a yes registers the suggested total; amount: name it instead. */
   awaiting: "accept" | "amount";
 }
@@ -1304,6 +1310,53 @@ function computeQuoteWithSessionExtras(
       })),
     ),
     lines,
+  };
+}
+
+/**
+ * Extras logged in a session: session supplies outside the service
+ * recipe, priced flat at qty x unit. Recipe lines relogged at close stay
+ * out, so the sheet never counts them twice.
+ */
+function sessionExtras(
+  db: ValeDb,
+  serviceId: number,
+  sessionId: number,
+): { name: string; qty: number; amount: number }[] {
+  const recipeIds = new Set(recipeForService(db, serviceId).map((line) => line.supply_id));
+  const rows = db
+    .prepare(
+      `SELECT ss.supply_id, s.name, ss.qty, s.price_per_product_usd, s.content_per_product
+       FROM session_supplies ss JOIN supplies s ON s.id = ss.supply_id
+       WHERE ss.session_id = ?`,
+    )
+    .all(sessionId) as {
+    supply_id: number;
+    name: string;
+    qty: number;
+    price_per_product_usd: number;
+    content_per_product: number;
+  }[];
+  return rows
+    .filter((row) => !recipeIds.has(row.supply_id))
+    .map((row) => ({
+      name: row.name,
+      qty: row.qty,
+      amount:
+        row.qty * row.price_per_product_usd * (row.content_per_product > 0 ? 1 / row.content_per_product : 0),
+    }));
+}
+
+/** One recipe line as quote math input. */
+function toQuoteSupply(line: RecipeLine): {
+  qty: number;
+  pricePerProductUsd: number;
+  contentPerProduct: number;
+} {
+  return {
+    qty: line.qty,
+    pricePerProductUsd: line.price_per_product_usd,
+    contentPerProduct: line.content_per_product,
   };
 }
 
@@ -1415,25 +1468,33 @@ export function quoteSession(
     name: string;
     duration_min: number;
   };
-  let minutes = resolved.duration_min;
-  if (open && open.service_id === resolved.id) {
-    const started = db.prepare("SELECT started_at FROM sessions WHERE id = ?").get(open.id) as { started_at: string };
-    minutes = Math.max(1, Math.round((Date.now() - Date.parse(started.started_at)) / 60000));
-  }
-  const computed =
-    Array.isArray(args.supply_names) && args.supply_names.length > 0
-      ? computeQuote(db, resolved.id, minutes, args.supply_names)
-      : computeQuoteWithSessionExtras(db, resolved.id, minutes, open?.id ?? null);
+  // The suggested always prices the standard duration from the seed: a
+  // session that runs long or short still quotes the same service price,
+  // so the sheet adds up the same way every time.
+  const stdMinutes = resolved.duration_min;
+  const override = Array.isArray(args.supply_names) && args.supply_names.length > 0;
+  const computed = override
+    ? computeQuote(db, resolved.id, stdMinutes, args.supply_names)
+    : computeQuoteWithSessionExtras(db, resolved.id, stdMinutes, open?.id ?? null);
   if ("error" in computed) return { ok: false, message: computed.error };
+  // Base plus flat extras: the service recipe rounded to tens, then each
+  // logged extra at qty x unit on top, exact. An explicit supply override
+  // stays a full custom recompute.
+  const base = quotePrice(PRICING, stdMinutes, recipeForService(db, resolved.id).map(toQuoteSupply)).finalPrice;
+  const extras = !override && open ? sessionExtras(db, resolved.id, open.id) : [];
+  const extrasTotal = extras.reduce((sum, extra) => sum + extra.amount, 0);
+  const suggested = override ? computed.breakdown.finalPrice : base + extrasTotal;
   const data: QuoteData = {
     service: serviceDisplay || resolved.name,
-    minutes,
+    minutes: stdMinutes,
     supplies_cost: computed.breakdown.suppliesCost,
     time_cost: computed.breakdown.timeCost,
     fixed_share: computed.breakdown.fixedShare,
     margin_pct: computed.breakdown.marginPct,
-    final_price_usd: computed.breakdown.finalPrice,
-    margin_earned_usd: computed.breakdown.marginEarned,
+    final_price_usd: suggested,
+    margin_earned_usd: suggested - computed.breakdown.subtotal,
+    base_price_usd: base,
+    extras,
     awaiting: "accept",
   };
   return {
@@ -1444,7 +1505,7 @@ export function quoteSession(
         ? "The quote is on screen."
         : "La cotización está en pantalla.",
     data,
-    pendingAccept: open ? { amount: computed.breakdown.finalPrice, session_id: open.id } : undefined,
+    pendingAccept: open ? { amount: suggested, session_id: open.id } : undefined,
   };
 }
 
