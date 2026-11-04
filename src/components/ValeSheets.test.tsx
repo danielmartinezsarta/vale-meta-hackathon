@@ -192,6 +192,8 @@ describe("ValeSheets (sheet per kind)", () => {
         extras: [{ label: "+ Gold foil ×1", amount: 7, qty: 1 }],
         suggested: 35,
         charged: 35,
+        earned: null,
+        stdMinutes: null,
         timeTotal: "1h 12m",
         timeParts: [{ label: "Apply", time: "20m" }],
         costs: [{ label: "Supplies", amount: 4 }],
@@ -211,37 +213,41 @@ describe("ValeSheets (sheet per kind)", () => {
       data: {
         client: "Ana",
         date: "Nov 3, 2026",
-        service: { name: "Gel removal", price: 2 },
+        service: { name: "Gel removal", price: 30 },
         extras: [
           { label: "+ Gold foil ×1", amount: 4, qty: 1 },
           { label: "+ Crystals ×3", amount: 4.5, qty: 3 },
         ],
-        suggested: 20,
+        suggested: 38.5,
         charged: 25,
+        earned: 20.82,
+        stdMinutes: 30,
         timeTotal: "1m",
         timeParts: [],
         costs: [
           { label: "Supplies", amount: 17.32 },
-          { label: "Time (1 min)", amount: 1.63 },
-          { label: "Fixed costs", amount: 0.82 },
-          { label: "Margin (15%)", amount: 3 },
+          { label: "Time (30 min)", amount: 7.44 },
+          { label: "Fixed costs", amount: 3.27 },
+          { label: "Margin (30%)", amount: 10.47 },
         ],
-        fixedDetail: "$0.82 of this service",
+        fixedDetail: "$3.27 of this service",
       },
     });
     const dialog = screen.getByRole("dialog", { name: "Session summary" });
     expect(dialog.querySelector(".aw-sum__avatar")?.textContent).toBe("A");
-    // Service and extras block: service row plus one row per extra.
+    // Service and extras block: base plus flat extras equal the suggested.
     expect(screen.getByText("Service and extras")).toBeTruthy();
     expect(screen.getByText("+ Gold foil ×1")).toBeTruthy();
     expect(screen.getByText("+ Crystals ×3")).toBeTruthy();
+    expect(screen.getByText("$38.50")).toBeTruthy();
     expect(dialog.querySelector(".aw-sum__row--paid")).toBeTruthy();
     // Time block: total only, no phase rows.
     expect(screen.getByText("Time")).toBeTruthy();
     expect(screen.getByText("1m")).toBeTruthy();
-    // Cost breakdown block with the fixed-costs line.
+    // Cost breakdown block with the fixed-costs and earned lines.
     expect(screen.getByText("How the price was calculated")).toBeTruthy();
-    expect(screen.getByText("Fixed costs: $0.82 of this service")).toBeTruthy();
+    expect(screen.getByText("Fixed costs: $3.27 of this service")).toBeTruthy();
+    expect(screen.getByText("Earned $20.82")).toBeTruthy();
   });
 
   it("renders the summary in design markup with rows and a close button", () => {
@@ -259,6 +265,8 @@ describe("ValeSheets (sheet per kind)", () => {
             extras: [{ label: "+ Gold foil ×1", amount: 7, qty: 1 }],
             suggested: 35,
             charged: 35,
+            earned: null,
+            stdMinutes: null,
             timeTotal: "1h 12m",
             timeParts: [{ label: "Apply", time: "20m" }],
             costs: [{ label: "Supplies", amount: 4 }],
@@ -331,7 +339,7 @@ describe("ValeSheets (sheet per kind)", () => {
       { kind: "final_photo_confirm", title: "Save final photo", size: "full", data: { photo: null } },
       { kind: "final_result", title: "Final result", size: "full", data: { photo: null, description: null } },
       { kind: "booked", title: "Appointment booked", size: "half", data: { client: "David", service: "Manicure", day: "2026-11-27", time: "15:00" } },
-      { kind: "session_summary", title: "Session summary", size: "full", data: { client: "David", date: "Nov 2, 2026", service: { name: "Gel removal", price: 24 }, extras: [], suggested: 24, charged: 24, timeTotal: "11m", timeParts: [], costs: [], fixedDetail: null } },
+      { kind: "session_summary", title: "Session summary", size: "full", data: { client: "David", date: "Nov 2, 2026", service: { name: "Gel removal", price: 24 }, extras: [], suggested: 24, charged: 24, earned: null, stdMinutes: null, timeTotal: "11m", timeParts: [], costs: [], fixedDetail: null } },
     ];
     for (const widget of sheets) {
       const { container, unmount } = renderSheet(widget);

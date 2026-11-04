@@ -164,6 +164,8 @@ export interface SessionSummaryData {
   extras: { label: string; amount: number; qty: number }[];
   suggested: number | null;
   charged: number | null;
+  earned: number | null;
+  stdMinutes: number | null;
   timeTotal: string | null;
   timeParts: { label: string; time: string }[];
   costs: { label: string; amount: number }[];
@@ -217,6 +219,12 @@ function dataOf(data: unknown): Record<string, unknown> {
 /** Whole dollars, design style ($28, $2,000). */
 export function usdWhole(value: number): string {
   return `$${Math.round(value).toLocaleString("en-US")}`;
+}
+
+/** Whole dollars when exact, two decimals otherwise ($28, $4.50). */
+export function usdExact(value: number): string {
+  if (Number.isInteger(value)) return usdWhole(value);
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /** "2026-11-27" renders "Friday, November 27" (UTC, no local shift). */
@@ -415,17 +423,17 @@ function buildSummary(
 ): Widget {
   const seconds = num(info.duration_s);
   const last = lastSessionOf(db);
-  const minutes = num(info.minutes);
+  const stdMinutes = num(info.std_minutes);
   const breakdown = (info.breakdown ?? null) as CloseBreakdown | null;
   const closeExtras = Array.isArray(info.extras) ? (info.extras as CloseExtra[]) : [];
   const charged = num(info.paid_amount_usd);
-  // The service row carries everything but the logged extras, so service
-  // plus extras always add up to the subtotal the margin applies to.
-  const extrasTotal = closeExtras.reduce((sum, extra) => sum + extra.amount, 0);
-  const servicePrice =
-    breakdown === null
-      ? null
-      : breakdown.supplies_cost + breakdown.time_cost + breakdown.fixed_share - extrasTotal;
+  // Base plus flat extras: the service row is the rounded recipe base, the
+  // extras ride on top, and the suggested is their exact sum. The margin
+  // plugs to the suggested, so earned is suggested minus the real cost.
+  const basePrice = num(info.base_price_usd);
+  const suggested = num(info.suggested_price_usd);
+  const subtotal =
+    breakdown === null ? null : breakdown.supplies_cost + breakdown.time_cost + breakdown.fixed_share;
   return {
     kind: "session_summary",
     title: widgetTitle("session_summary"),
@@ -434,31 +442,31 @@ function buildSummary(
       client: last.client,
       date: last.date,
       service:
-        last.service === null || servicePrice === null
-          ? null
-          : { name: last.service, price: servicePrice },
+        last.service === null || basePrice === null ? null : { name: last.service, price: basePrice },
       extras: closeExtras.map((extra) => ({
         label: `+ ${extra.name} ×${extra.qty}`,
         amount: extra.amount,
         qty: extra.qty,
       })),
-      suggested: breakdown === null ? null : breakdown.final_price,
+      suggested,
       charged: charged === null || charged <= 0 ? null : charged,
+      earned: num(info.earned_usd),
+      stdMinutes,
       timeTotal: seconds === null ? null : formatMinutes(seconds / 60),
       timeParts: [],
       costs:
-        breakdown === null
+        breakdown === null || subtotal === null || suggested === null
           ? []
           : [
               { label: "Supplies", amount: breakdown.supplies_cost },
               {
-                label: `Time${minutes === null ? "" : ` (${minutes} min)`}`,
+                label: `Time${stdMinutes === null ? "" : ` (${stdMinutes} min)`}`,
                 amount: breakdown.time_cost,
               },
               { label: "Fixed costs", amount: breakdown.fixed_share },
               {
                 label: `Margin${breakdown.margin_pct === 0 ? "" : ` (${breakdown.margin_pct}%)`}`,
-                amount: breakdown.margin_earned,
+                amount: suggested - subtotal,
               },
             ],
       fixedDetail:
