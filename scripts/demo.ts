@@ -187,6 +187,28 @@ async function main(): Promise<void> {
       // Warm-up: the typed sender wires up with the mic session, which
       // takes a couple of seconds after wake. Sending earlier is lost.
       await page.waitForTimeout(4000);
+      // Measure the chrome once: pill, side buttons and orb boxes decide
+      // the pill width, not guesses from screenshots.
+      const rects = await page.evaluate(() => {
+        const box = (el: Element | null) => {
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width) };
+        };
+        const pill = document.querySelector("[aria-label='Replay controls']");
+        const btn = (name: string) =>
+          document.querySelector(`button[aria-label="${name}"]`);
+        return JSON.stringify({
+          viewport: { w: window.innerWidth, h: window.innerHeight },
+          pill: box(pill),
+          mute: box(btn("Mute microphone") ?? btn("Unmute microphone")),
+          sleep: box(btn("Put Vale to sleep")),
+          pillButtons: pill
+            ? Array.from(pill.querySelectorAll("button")).length
+            : 0,
+        });
+      });
+      console.log(`[demo] rects ${rects}`);
       // Same browser id the app stored, so the demo reads the same cursor
       // the pill shows. It survives a reload, which keeps recovery exact.
       const clientId =
@@ -253,7 +275,10 @@ async function main(): Promise<void> {
             await seen.waitFor({ timeout: 90000, state: "attached" });
           } catch {
             await page.screenshot({ path: join(shots, `miss-${turn.turn}.png`) });
-            console.log(`[demo] miss ${turn.turn} url=${page.url()}`);
+            const tail = (
+              (await page.evaluate(() => document.body.innerText)) as string
+            ).slice(-400);
+            console.log(`[demo] miss ${turn.turn} url=${page.url()} tail=${tail}`);
             throw new Error(`reply never showed for ${turn.turn}`);
           }
         }
