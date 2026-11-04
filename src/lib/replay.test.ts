@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { buildReplayRun, parseReplayRun } from "./replay";
+import { buildReplayRun, parseReplayRun, stampReplayScenes } from "./replay";
 
 const WIDGET = {
   kind: "client_card",
@@ -158,5 +158,21 @@ describe("parseReplayRun", () => {
     expect(parseReplayRun(JSON.stringify(run))).toEqual({ ...run, recordedAt: run.recordedAt });
     expect(() => parseReplayRun("{}")).toThrow();
     expect(() => parseReplayRun(JSON.stringify({ version: 1, turns: [{ turn: 7 }] }))).toThrow();
+  });
+
+  it("defaults a missing scene to the unlabeled run", () => {
+    const run = buildReplayRun(LINES);
+    const withoutScene = JSON.parse(JSON.stringify(run)) as typeof run;
+    delete (withoutScene.turns[0] as Partial<(typeof run.turns)[number]>).scene;
+    expect(parseReplayRun(JSON.stringify(withoutScene)).turns[0].scene).toBe("");
+  });
+});
+
+describe("stampReplayScenes", () => {
+  it("names every turn in order and rejects a short list", () => {
+    const run = buildReplayRun(LINES);
+    const stamped = stampReplayScenes(run, ["Daily agenda"]);
+    expect(stamped.turns[0].scene).toBe("Daily agenda");
+    expect(() => stampReplayScenes(run, [])).toThrow();
   });
 });

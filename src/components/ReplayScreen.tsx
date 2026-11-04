@@ -65,10 +65,11 @@ export function ReplayScreen({ stepMs = 6000 }: { stepMs?: number }) {
   const board = [...visible].reverse().find((turn) => turn.board !== null)?.board ?? null;
   const language = visible.length > 0 ? visible[visible.length - 1].language : "en";
   const done = shown >= run.turns.length;
+  const scene = visible.length > 0 ? visible[visible.length - 1].scene : "";
 
   return (
     <main aria-label="Replay">
-      <p>Replay: recorded run</p>
+      <p>{scene !== "" ? `Replay: ${scene}` : "Replay: recorded run"}</p>
       <p>
         Turn {Math.min(shown + (done ? 0 : 1), run.turns.length)} of {run.turns.length}
       </p>

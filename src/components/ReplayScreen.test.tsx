@@ -24,6 +24,7 @@ const RUN = {
       widget: null,
       board: { session: null, card: null, list: ["Acetone"] },
       costUsd: 0.004,
+      scene: "Daily agenda",
     },
     {
       turn: "t902",
@@ -35,6 +36,7 @@ const RUN = {
       widget: { kind: "goal", title: "Monthly goal", size: "half", data: { name: null, goal: 2500, earned: 1360 } },
       board: { session: null, card: null, list: ["Acetone"] },
       costUsd: 0.005,
+      scene: "Goals",
     },
   ],
 };
@@ -61,11 +63,12 @@ describe("ReplayScreen (VALE_REPLAY=1)", () => {
     );
     render(<ReplayScreen stepMs={20} />);
     await waitFor(() => {
-      expect(screen.getByText("Replay: recorded run")).toBeTruthy();
+      expect(screen.getByText("Replay: Daily agenda")).toBeTruthy();
     });
     await waitFor(() => {
       expect(screen.getByText("Today: David at 3 PM.")).toBeTruthy();
       expect(screen.getByText("Here is your goal.")).toBeTruthy();
+      expect(screen.getByText("Replay: Goals")).toBeTruthy();
     });
     // The agent-to-voice path: each recorded reply reaches speak once.
     expect(mockSpeak).toHaveBeenCalledWith("Today: David at 3 PM.", "en");

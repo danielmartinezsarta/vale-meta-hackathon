@@ -2,13 +2,15 @@
 //   npm run replay:from-logs -- --since <ISO time> [--until <ISO time>]
 //
 // Reads data/logs/*.jsonl (voice and typed turns alike), keeps the rows in
-// the window, and writes the same replay shape the recorder produces.
-// Pure file fold: no Meta calls, and replies ride through verbatim — never
-// hand-edit replay content, rebuild the run instead.
+// the window, and writes the same replay shape the recorder produces,
+// with scenes from the shared plan (scripts/replay-plan.ts) stamped in
+// turn order. Pure file fold: no Meta calls, and replies ride through
+// verbatim — never hand-edit replay content, rebuild the run instead.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildReplayRun } from "../src/lib/replay";
+import { buildReplayRun, stampReplayScenes } from "../src/lib/replay";
+import { replayPlanScenes } from "./replay-plan";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
@@ -18,7 +20,7 @@ function argValue(name: string): string | null {
 }
 
 function usage(): never {
-  console.error("usage: replay:from-logs --since <ISO time> [--until <ISO time>] [--logs <dir>] [--out <file>]");
+  console.error("usage: replay:from-logs --since <ISO time> [--until <ISO time>] [--logs <dir>] [--out <file>] [--scenes a,b,c]");
   process.exit(1);
 }
 
@@ -67,16 +69,26 @@ for (const file of readdirSync(logsDir)) {
   }
 }
 rows.sort((a, b) => a.ts - b.ts);
-const run = buildReplayRun(rows.map((row) => row.line));
+// Scenes ride the shared plan in turn order: --scenes overrides the plan
+// with a comma-separated list when folding a run the plan does not cover.
+const scenesOverride = argValue("--scenes");
+const scenes = scenesOverride ? scenesOverride.split(",").map((scene) => scene.trim()) : replayPlanScenes();
+let run = buildReplayRun(rows.map((row) => row.line));
 if (run.turns.length === 0) {
   console.error("[replay:from-logs] no turns in range; the replay file is untouched");
+  process.exit(1);
+}
+try {
+  run = stampReplayScenes(run, scenes);
+} catch (error) {
+  console.error(`[replay:from-logs] ${error instanceof Error ? error.message : String(error)}; pass --scenes a,b,c`);
   process.exit(1);
 }
 const totalCost = run.turns.reduce((sum, turn) => sum + turn.costUsd, 0);
 console.log(`[replay:from-logs] ${run.turns.length} turns, cost $${totalCost.toFixed(4)}`);
 for (const turn of run.turns) {
   console.log(
-    `  ${turn.turn} tool=${turn.tool ?? "none"} widget=${turn.widget?.kind ?? "none"} $${turn.costUsd.toFixed(4)} :: ${turn.reply.slice(0, 80)}`,
+    `  ${turn.turn} [${turn.scene}] tool=${turn.tool ?? "none"} widget=${turn.widget?.kind ?? "none"} $${turn.costUsd.toFixed(4)} :: ${turn.reply.slice(0, 80)}`,
   );
 }
 const serialized = `${JSON.stringify(run, null, 2)}\n`;

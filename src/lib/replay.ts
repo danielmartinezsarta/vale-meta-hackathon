@@ -18,6 +18,8 @@ export interface ReplayTurn {
   widget: Widget | null;
   board: Board | null;
   costUsd: number;
+  /** Demo scene this turn belongs to (for example "Daily agenda"). */
+  scene: string;
 }
 
 export interface ReplayRun {
@@ -77,6 +79,7 @@ export function buildReplayRun(lines: string[]): ReplayRun {
       widget: null,
       board: null,
       costUsd: 0,
+      scene: "",
     };
     turns.set(tag, fresh);
     return fresh;
@@ -135,6 +138,23 @@ export function buildReplayRun(lines: string[]): ReplayRun {
   };
 }
 
+/**
+ * Stamp demo scenes onto a folded run, in turn order: scenes[i] names
+ * turns[i]. Length must match; the record script owns both lists, so a
+ * mismatch means the plan changed and the script must be updated.
+ */
+export function stampReplayScenes(run: ReplayRun, scenes: string[]): ReplayRun {
+  if (scenes.length !== run.turns.length) {
+    throw new Error(
+      `[replay] ${scenes.length} scenes for ${run.turns.length} turns; update the plan`,
+    );
+  }
+  return {
+    ...run,
+    turns: run.turns.map((turn, index) => ({ ...turn, scene: scenes[index] })),
+  };
+}
+
 /** Parse and validate the committed run file; throws on anything else. */
 export function parseReplayRun(json: string): ReplayRun {
   const parsed = JSON.parse(json) as Partial<ReplayRun>;
@@ -145,6 +165,8 @@ export function parseReplayRun(json: string): ReplayRun {
     if (typeof turn.turn !== "string" || typeof turn.transcript !== "string") {
       throw new Error("[replay] turn without transcript");
     }
+    // Runs recorded before scenes existed carry no scene; they play unlabeled.
+    if (typeof turn.scene !== "string") turn.scene = "";
   }
   return parsed as ReplayRun;
 }

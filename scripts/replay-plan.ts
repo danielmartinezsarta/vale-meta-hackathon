@@ -1,0 +1,54 @@
+// The committed demo run plan: scenes in playback order with their voice
+// turns. Single source of truth for the recorder (record-replay.ts) and
+// the log folder (replay-from-logs.ts): both stamp these scenes in turn
+// order, so a plan change lands in both without hand-editing the run.
+export interface ReplayPlanTurn {
+  scene: string;
+  phrase: string;
+}
+
+export const REPLAY_PLAN: ReplayPlanTurn[] = [
+  // Daily agenda: the day plus the next booking.
+  { scene: "Daily agenda", phrase: "Vale, what do I have today?" },
+  { scene: "Daily agenda", phrase: "Vale, what time is David coming today?" },
+  // Agenda management: create, move, cancel, and a dated reminder. The
+  // confirmations are bare ("Yes"): only that matches the pending yes.
+  { scene: "Agenda management", phrase: "Vale, book Ana for a gel refill on Friday at 6 PM" },
+  { scene: "Agenda management", phrase: "Vale, move Ana's Friday appointment to Saturday at 11 AM" },
+  { scene: "Agenda management", phrase: "Yes" },
+  { scene: "Agenda management", phrase: "Vale, cancel Ana's Saturday appointment" },
+  { scene: "Agenda management", phrase: "Yes" },
+  { scene: "Agenda management", phrase: "Vale, remind me to bring extra towels on Friday" },
+  // Client's card: register, note, health note, card, then the brief.
+  { scene: "Client's card", phrase: "Vale, register a new client Nina" },
+  { scene: "Client's card", phrase: "Vale, save a note for Nina: she likes dark matte colors" },
+  { scene: "Client's card", phrase: "Vale, save a health note for Nina: allergic to acetone" },
+  { scene: "Client's card", phrase: "Vale, show me Nina's card" },
+  { scene: "Client's card", phrase: "Vale, Nina is here, what do I have on her?" },
+  // Work session: open, supply, undo, supply, quote, pay, close.
+  { scene: "Work session", phrase: "Vale, open a session with Nina for a gel refill" },
+  { scene: "Work session", phrase: "Vale, I used top coat" },
+  { scene: "Work session", phrase: "Vale, undo that" },
+  { scene: "Work session", phrase: "Vale, I used lint-free wipes" },
+  { scene: "Work session", phrase: "Vale, how much do I charge?" },
+  // The payment turn is filled in at record time with an amount above the
+  // quoted total; the marker below is replaced, never recorded.
+  { scene: "Work session", phrase: "Vale, Nina paid {AMOUNT}" },
+  { scene: "Work session", phrase: "Vale, close the session" },
+  // Nail photo studio: before, reference, preview, final on David's
+  // seeded appointment reference. Photo uploads ride the real
+  // /api/session-photo endpoint between these turns.
+  { scene: "Nail photo studio", phrase: "Vale, open a session with David" },
+  { scene: "Nail photo studio", phrase: "Vale, show me the before photo" },
+  { scene: "Nail photo studio", phrase: "Vale, show me the reference" },
+  { scene: "Nail photo studio", phrase: "Vale, preview the design on her nails" },
+  { scene: "Nail photo studio", phrase: "Vale, show me the final photo" },
+  { scene: "Nail photo studio", phrase: "Vale, close the session" },
+  // Goals: the month at a glance.
+  { scene: "Goals", phrase: "Vale, how am I doing with my monthly goal?" },
+];
+
+/** Scene per turn, in plan order; stamped onto the folded run. */
+export function replayPlanScenes(): string[] {
+  return REPLAY_PLAN.map((turn) => turn.scene);
+}

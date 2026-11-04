@@ -75,6 +75,28 @@ briefs on server start and after `npm run db:reset` for the clients with
 appointments today; a new note or a closed session regenerates that
 client's brief in the background.
 
+## Replay: watch the recorded demo (no key)
+
+`npm run replay` serves the committed recording from `replay/demo-run.json`
+with no model calls and no key: build once, then play it on port 3222.
+
+```
+npm install
+npm run build
+npm run replay
+```
+
+Then open http://localhost:3222 in a browser. Every scene carries a
+visible `Replay: <scene>` label while its turns play, with the browser
+voice reading Vale's recorded replies. To record a new run, reset an
+isolated database and fold the filtered log (never hand-edit the file):
+
+```
+VALE_DB_PATH=/tmp/vale-replay.db PORT=3222 npm run db:reset
+PORT=3222 VALE_DB_PATH=/tmp/vale-replay.db tsx --env-file=.env server.ts
+REPLAY_BASE=http://localhost:3222 VALE_DB_PATH=/tmp/vale-replay.db npm run replay:record
+```
+
 ## Voice (Seamless, optional)
 
 The demo speaks with the browser voice unless `SEAMLESS_URL` is set. To serve

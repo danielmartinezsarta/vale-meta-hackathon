@@ -119,7 +119,7 @@ describe("npm run replay:from-logs", () => {
     const out = join(dir, "demo-run.json");
     const output = execFileSync(
       "npx",
-      ["tsx", join(root, "scripts", "replay-from-logs.ts"), "--logs", dir, "--since", "2026-11-03T19:59:00Z", "--out", out],
+      ["tsx", join(root, "scripts", "replay-from-logs.ts"), "--logs", dir, "--since", "2026-11-03T19:59:00Z", "--out", out, "--scenes", "Daily agenda,Goals"],
       { timeout: 120000, encoding: "utf8" },
     );
     expect(output).toContain("2 turns");
@@ -141,6 +141,7 @@ describe("npm run replay:from-logs", () => {
     return waitFor(() => {
       expect(screen.getByText("Today: David at 3 PM.")).toBeTruthy();
       expect(screen.getByText("Here is your goal.")).toBeTruthy();
+      expect(screen.getByText("Replay: Goals")).toBeTruthy();
     }).then(() => {
       expect(mockSpeak).toHaveBeenCalledWith("Today: David at 3 PM.", "en");
       expect(mockSpeak).toHaveBeenCalledWith("Here is your goal.", "en");
