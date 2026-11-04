@@ -109,6 +109,15 @@ describe("agent prompt", () => {
     });
   });
 
+  it("drops the quote sheet mapping once the amount is paid", () => {
+    expect(
+      contractWidgetFor("session_quote", {}, { paid_amount_usd: 25 }),
+    ).toBeNull();
+    expect(
+      contractWidgetFor("session_quote", {}, { final_price_usd: 35 }),
+    ).toEqual({ tool: "quote_price", args: {}, data: { final_price_usd: 35 } });
+  });
+
   it("names the wait line for image generation only", () => {
     expect(toolWaitPhrase("photo_preview_design", "en")).toBe(
       "Give me a moment, creating your preview…",
