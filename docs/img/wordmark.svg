@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 100" role="img" aria-label="vale — Just say it.">
+  <title>vale — Just say it.</title>
+  <!-- Wordmark for light backgrounds. Bars and type from the brand brief; navy #14224F text. -->
+  <g>
+    <rect x="0" y="4" width="14" height="72" rx="7" fill="#2F5BFF"/>
+    <rect x="22" y="10" width="14" height="60" rx="7" fill="#2F5BFF"/>
+    <rect x="44" y="16" width="14" height="48" rx="7" fill="#18B8E0"/>
+    <rect x="66" y="10" width="14" height="60" rx="7" fill="#2F5BFF"/>
+    <rect x="88" y="4" width="14" height="72" rx="7" fill="#E6329B"/>
+  </g>
+  <text x="116" y="63" font-family="'Josefin Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-weight="300" font-size="64" letter-spacing="0.6" fill="#14224F">vale</text>
+  <text x="117" y="89" font-family="'Cormorant Garamond', Georgia, serif" font-style="italic" font-weight="300" font-size="20" fill="#14224F">Just say it.</text>
+</svg>
