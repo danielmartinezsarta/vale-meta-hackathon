@@ -42,7 +42,7 @@ cp .env.example .env
 npm run replay
 ```
 
-This plays `replay/demo-run.json` end to end through the real app: every reply spoken with the browser voice, every sheet shown, labeled “Replay: recorded run” with turn counters. No key, no network, no secrets in the file (health notes travel masked). To record a fresh run from live turns: `npm run replay:record`.
+This is the clearly labeled mock-data path: it plays `replay/demo-run.json` end to end through the real app. Every reply spoken with the browser voice, every sheet shown, labeled “Replay: recorded run” with turn counters. No key, no network, no secrets in the file (health notes travel masked). To record a fresh run from live turns: `npm run replay:record`.
 
 ## Tests
 
