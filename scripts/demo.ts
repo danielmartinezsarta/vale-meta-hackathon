@@ -190,25 +190,24 @@ async function main(): Promise<void> {
       await page.waitForTimeout(4000);
       // Measure the chrome once: pill, side buttons and orb boxes decide
       // the pill width, not guesses from screenshots.
-      const rects = await page.evaluate(() => {
-        const box = (el: Element | null) => {
-          if (!el) return null;
-          const r = el.getBoundingClientRect();
-          return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width) };
+      const rects = await page.evaluate(`(() => {
+        const box = (e) => {
+          if (!e) return null;
+          const b = e.getBoundingClientRect();
+          return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width) };
         };
-        const pill = document.querySelector("[aria-label='Replay controls']");
-        const btn = (name: string) =>
-          document.querySelector(`button[aria-label="${name}"]`);
+        const q = (sel) => document.querySelector(sel);
+        const pill = q("[aria-label='Replay controls']");
+        const mute = q('button[aria-label="Mute microphone"]') || q('button[aria-label="Unmute microphone"]');
+        const sleep = q('button[aria-label="Put Vale to sleep"]');
         return JSON.stringify({
           viewport: { w: window.innerWidth, h: window.innerHeight },
           pill: box(pill),
-          mute: box(btn("Mute microphone") ?? btn("Unmute microphone")),
-          sleep: box(btn("Put Vale to sleep")),
-          pillButtons: pill
-            ? Array.from(pill.querySelectorAll("button")).length
-            : 0,
+          mute: box(mute),
+          sleep: box(sleep),
+          pillButtons: pill ? pill.querySelectorAll("button").length : 0,
         });
-      });
+      })()`);
       console.log(`[demo] rects ${rects}`);
       // Same browser id the app stored, so the demo reads the same cursor
       // the pill shows. It survives a reload, which keeps recovery exact.
