@@ -39,6 +39,7 @@ export function SessionScreen({
   onToggleMute,
   onToggleMicMute,
   onSleep,
+  onRetry,
   onOpenWidget,
   onCloseWidget,
   onVote,
@@ -59,6 +60,7 @@ export function SessionScreen({
   onToggleMute: () => void;
   onToggleMicMute?: () => void;
   onSleep: () => void;
+  onRetry?: () => void;
   onOpenWidget: (widget: Widget) => void;
   onCloseWidget: () => void;
   onVote: (vote: "yes" | "no") => void;
@@ -88,6 +90,7 @@ export function SessionScreen({
       onToggleMute={onToggleMute}
       onToggleMicMute={onToggleMicMute}
       onSleep={onSleep}
+      onRetry={onRetry}
       onCloseWidget={onCloseWidget}
       sheetCallbacks={sheetCallbacks}
       onVote={onVote}

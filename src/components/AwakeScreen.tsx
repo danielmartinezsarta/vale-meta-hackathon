@@ -34,6 +34,7 @@ export function AwakeScreen({
   onToggleMute,
   onToggleMicMute,
   onSleep,
+  onRetry,
   onCloseWidget,
   onVote,
   sheetCallbacks,
@@ -52,6 +53,7 @@ export function AwakeScreen({
   onToggleMute: () => void;
   onToggleMicMute?: () => void;
   onSleep: () => void;
+  onRetry?: () => void;
   onCloseWidget: () => void;
   onVote: (vote: "yes" | "no") => void;
   sheetCallbacks?: SheetCallbacks;
@@ -73,6 +75,7 @@ export function AwakeScreen({
       onToggleMute={onToggleMute}
       onToggleMicMute={onToggleMicMute}
       onSleep={onSleep}
+      onRetry={onRetry}
       onCloseWidget={onCloseWidget}
       sheetCallbacks={sheetCallbacks}
       onVote={onVote}

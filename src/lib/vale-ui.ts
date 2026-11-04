@@ -34,6 +34,7 @@ export interface UiStrings {
   browserVoice: string;
   seamlessVoice: string;
   seamlessUnavailable: string;
+  tryAgain: string;
   cardFor: (name: string) => string;
   valeState: (state: ValeStateName) => string;
 }
@@ -73,6 +74,7 @@ const EN: UiStrings = {
   browserVoice: "Browser",
   seamlessVoice: "Seamless (open model)",
   seamlessUnavailable: "Seamless voice is not configured.",
+  tryAgain: "Try again",
   cardFor: (name: string) => `${name}'s card`,
   valeState: (state: ValeStateName) =>
     ({
@@ -117,6 +119,7 @@ const ES: UiStrings = {
   browserVoice: "Navegador",
   seamlessVoice: "Seamless (modelo abierto)",
   seamlessUnavailable: "La voz Seamless no está configurada.",
+  tryAgain: "Inténtalo de nuevo",
   cardFor: (name: string) => `Ficha de ${name}`,
   valeState: (state: ValeStateName) =>
     ({

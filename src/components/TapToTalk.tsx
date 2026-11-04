@@ -2127,6 +2127,16 @@ export function TapToTalk({
         : null;
   const shownAlert = alert ?? startupAlert;
 
+  // Error alert retry: reconnecting restarts the session in place, no
+  // reload. Offered while a fresh tap can start (idle or blocked); a
+  // missing device (error) needs hardware, not another tap.
+  const retrySession = useCallback(() => {
+    if (status !== "idle" && status !== "blocked") return;
+    setAlert(null);
+    void handleTap();
+  }, [status, handleTap]);
+  const onRetry = shownAlert && (status === "idle" || status === "blocked") ? retrySession : undefined;
+
   const session = board?.session ?? null;
   if (session) {
     return (
@@ -2146,6 +2156,7 @@ export function TapToTalk({
         onToggleMute={toggleMute}
         onToggleMicMute={toggleMicMute}
         onSleep={sleep}
+        onRetry={onRetry}
         onOpenWidget={openWidget}
         onCloseWidget={closeWidgetByHand}
         onVote={(vote) => castVoteRef.current(vote)}
@@ -2170,6 +2181,7 @@ export function TapToTalk({
       onToggleMute={toggleMute}
       onToggleMicMute={toggleMicMute}
       onSleep={sleep}
+      onRetry={onRetry}
       onCloseWidget={closeWidgetByHand}
       onVote={(vote) => castVoteRef.current(vote)}
       sheetCallbacks={sheetCallbacks}

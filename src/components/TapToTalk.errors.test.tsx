@@ -128,6 +128,34 @@ describe("plain-language errors (fake-device fallback)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("retries the session from the error alert icon without reloading", async () => {
+    const seen = setupDevice();
+    const fetchMock = noAudioPost();
+
+    render(<TapToTalk autoStart />);
+    await waitFor(() => {
+      expect(seen.length).toBeGreaterThan(0);
+    });
+    expect(mockStartCapture).toHaveBeenCalledTimes(1);
+    burst(seen[0]);
+    liveSocket().serverMessage({
+      type: "error",
+      message: "The connection dropped. Tap to try again.",
+      code: "E-NET",
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/connection dropped/i);
+    const retry = screen.getByRole("button", { name: "Try again" });
+    fireEvent.click(retry);
+
+    await waitFor(() => {
+      expect(mockStartCapture).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("hides the service code when the connection drops (E-NET)", async () => {
     const seen = setupDevice();
     const fetchMock = noAudioPost();
