@@ -156,11 +156,13 @@ function sse(event: string, data: unknown): string {
 // One push-to-talk turn: raw PCM_24KHZ body or JSON transcript; answers an SSE stream.
 export async function POST(request: Request): Promise<Response> {
   const key = process.env.META_API_KEY;
-  // Keyless replay (npm run demo): recorded typed turns need no key; every
-  // other turn still goes through the key gate below.
-  const replayTyped =
-    process.env.VALE_REPLAY === "1" &&
-    (request.headers.get("content-type") ?? "").includes("application/json");
+  // Keyless replay (npm run demo): recorded turns need no key, typed or
+  // audio; every other turn still goes through the key gate below.
+  const replayContent = (request.headers.get("content-type") ?? "").includes(
+    "application/json",
+  );
+  const replayTyped = process.env.VALE_REPLAY === "1" && replayContent;
+  const replayAudio = process.env.VALE_REPLAY === "1" && !replayContent;
   // Closed language from the screen selector; JSON and PCM turns agree.
   const language = parseLanguage(
     new URL(request.url).searchParams.get("language") ?? DEFAULT_LANGUAGE,
@@ -173,7 +175,7 @@ export async function POST(request: Request): Promise<Response> {
   // by design and only ever take the recorded answer path, so the empty
   // fallback below can never reach the model.
   const modelKey = key ?? "";
-  if (!key && !replayTyped) {
+  if (!key && !replayTyped && !replayAudio) {
     // Server-side log only; the key itself is never logged.
     vlog({
       turn: turnTag ?? "-",
