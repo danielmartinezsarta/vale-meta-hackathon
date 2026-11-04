@@ -154,13 +154,22 @@ async function main(): Promise<void> {
         // Force: an open sheet can cover the button; the DOM event is real.
         const sendBtn = page.getByRole("button", { name: "Send message" });
         await sendBtn.click({ force: true, timeout: 30000 });
+        // Match on the reply head: the tail can render across elements.
+        const head = turn.reply.slice(0, 48).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const seen = page.getByText(new RegExp(head)).first();
         try {
-          await page.getByText(turn.reply).first().waitFor({ timeout: 15000 });
+          await seen.waitFor({ timeout: 15000 });
         } catch {
           // Click landed before the sender was ready: the text is still
           // in the box, so click again like a user would.
           if ((await box.inputValue()) !== "") await sendBtn.click({ force: true, timeout: 30000 });
-          await page.getByText(turn.reply).first().waitFor({ timeout: 90000 });
+          try {
+            await seen.waitFor({ timeout: 90000 });
+          } catch {
+            await page.screenshot({ path: join(shots, `miss-${turn.tag}.png`) });
+            console.log(`[demo] miss ${turn.tag} url=${page.url()} body=${((await page.evaluate(() => document.body.innerText)) as string).slice(-300)}`);
+            throw new Error(`reply never showed for ${turn.tag}`);
+          }
         }
         if (turn.widget) await page.waitForTimeout(1500);
         await quiet(page);
