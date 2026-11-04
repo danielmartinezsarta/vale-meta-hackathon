@@ -237,14 +237,55 @@ describe("seamless voice engine", () => {
     vi.stubGlobal("fetch", fetchStub);
     try {
       setVoiceEngine("seamless");
+      // The engine switch warms the container; the reply counts from here.
+      fetchStub.mockClear();
       speak("Hola, soy Vale.", "es");
       await vi.waitFor(() => {
         expect(played).toHaveLength(1);
       });
       const url = String(fetchStub.mock.calls[0][0]);
       expect(url).toContain("/api/seamless-voice");
-      expect(url).toContain("speaker=10");
+      expect(url).toContain("speaker=17");
       expect(url).toContain(encodeURIComponent("Hola, soy Vale."));
+    } finally {
+      setVoiceEngine("browser");
+    }
+  });
+
+  it("warms the container on switch without playing audio", async () => {
+    stubSpeechSynthesis();
+    const { played } = stubAudio();
+    const fetchStub = vi.fn(async (_url: unknown) => new Response(WAV));
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      setVoiceEngine("seamless");
+      await vi.waitFor(() => {
+        expect(fetchStub).toHaveBeenCalledTimes(1);
+      });
+      expect(String(fetchStub.mock.calls[0][0])).toContain("speaker=17");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(played).toHaveLength(0);
+    } finally {
+      setVoiceEngine("browser");
+    }
+  });
+
+  it("plays seamless audio slowed to 0.9 with the same pitch", async () => {
+    stubSpeechSynthesis();
+    const { played, instances } = stubAudio();
+    vi.stubGlobal("fetch", vi.fn(async (_url: unknown) => new Response(WAV)));
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.waitFor(() => {
+        expect(played).toHaveLength(1);
+      });
+      const audio = instances[0] as unknown as {
+        playbackRate: number;
+        preservesPitch: boolean;
+      };
+      expect(audio.playbackRate).toBe(0.9);
+      expect(audio.preservesPitch).toBe(true);
     } finally {
       setVoiceEngine("browser");
     }
@@ -265,6 +306,32 @@ describe("seamless voice engine", () => {
       });
     } finally {
       setVoiceEngine("browser");
+    }
+  });
+
+  it("falls back to the browser voice when the proxy hangs", async () => {
+    const { synth } = stubSpeechSynthesis([fakeVoice("es-CO")]);
+    stubAudio();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: unknown, options?: { signal?: AbortSignal }) =>
+          new Promise<Response>((_resolve, reject) => {
+            options?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError")),
+            );
+          }),
+      ),
+    );
+    vi.useFakeTimers();
+    try {
+      setVoiceEngine("seamless");
+      speak("Hola");
+      await vi.advanceTimersByTimeAsync(22_000);
+      expect(synth.speak).toHaveBeenCalled();
+    } finally {
+      setVoiceEngine("browser");
+      vi.useRealTimers();
     }
   });
 
@@ -311,6 +378,8 @@ describe("seamless voice engine", () => {
     vi.stubGlobal("fetch", fetchStub);
     try {
       setVoiceEngine("seamless");
+      // The engine switch warms the container; the reply counts from here.
+      fetchStub.mockClear();
       speak("Una. Dos.");
       await vi.waitFor(() => {
         expect(played).toHaveLength(1);
@@ -344,6 +413,8 @@ describe("seamless voice engine", () => {
     vi.useFakeTimers();
     try {
       setVoiceEngine("seamless");
+      // The engine switch warms the container; the reply counts from here.
+      fetchStub.mockClear();
       speak("Una. Dos.");
       await vi.advanceTimersByTimeAsync(100);
       expect(played).toHaveLength(1);
@@ -458,6 +529,8 @@ describe("seamless voice engine", () => {
     vi.stubGlobal("fetch", fetchStub);
     try {
       setVoiceEngine("seamless");
+      // The engine switch warms the container; the reply counts from here.
+      fetchStub.mockClear();
       speak("Hola");
       await vi.waitFor(() => {
         expect(fetchStub).toHaveBeenCalledTimes(1);

@@ -42,7 +42,13 @@ const JOKE_VOICES = new Set(
   ].map((name) => name.toLowerCase()),
 );
 const FALLBACK_LANG: Record<ValeLanguage, string> = { es: "es-CO", en: "en-US" };
-export const SEAMLESS_SPEAKER = 10;
+export const SEAMLESS_SPEAKER = 17;
+/** Demo voice slowed to 0.9 with the same pitch, seamless engine only. */
+const SEAMLESS_PLAYBACK_RATE = 0.9;
+/** A warm fetch hanging past this falls back to the browser voice. */
+const SEAMLESS_FETCH_TIMEOUT_MS = 20_000;
+/** Synthesis seconds above this mean the container cold-started. */
+const SEAMLESS_COLD_SECONDS = 10;
 const SEAMLESS_MAX_CHARS = 500;
 const SEAMLESS_CHUNK_CHARS = 400;
 const VOICES_WAIT_MS = 1000;
@@ -261,6 +267,26 @@ export function setVoiceEngine(next: VoiceEngine): void {
     /* private mode: the pick lasts the session */
   }
   stopSeamlessSpeech();
+  if (next === "seamless") warmupSeamless();
+}
+
+/**
+ * Wake the Seamless container: one small synthesis, audio discarded. While
+ * the container is cold the browser voice covers every line, so Vale never
+ * goes mute; a failed or slow warm-up dies quietly on its own.
+ */
+export function warmupSeamless(): void {
+  if (engine !== "seamless" || typeof window === "undefined") return;
+  try {
+    void fetch(
+      `/api/seamless-voice?speaker=${SEAMLESS_SPEAKER}&text=${encodeURIComponent("Vale")}`,
+    ).then(
+      () => undefined,
+      () => undefined,
+    );
+  } catch {
+    /* best-effort; the browser covers every cold line */
+  }
 }
 
 export function voiceEngine(): VoiceEngine {
@@ -549,16 +575,25 @@ async function playSentence(
     return;
   }
   let response: Response;
+  const fetchStarted = Date.now();
+  const controller = new AbortController();
+  const fetchTimer = setTimeout(
+    () => controller.abort(),
+    SEAMLESS_FETCH_TIMEOUT_MS,
+  );
   try {
     response = await fetch(
       `/api/seamless-voice?speaker=${SEAMLESS_SPEAKER}&text=${encodeURIComponent(said.slice(0, SEAMLESS_MAX_CHARS))}`,
+      { signal: controller.signal },
     );
   } catch {
+    clearTimeout(fetchTimer);
     seamlessClean = false;
     sayBrowserFallback(sentence, language, false);
     onDone();
     return;
   }
+  clearTimeout(fetchTimer);
   if (!response.ok || playId !== seamlessPlayId) {
     if (!response.ok && playId === seamlessPlayId) {
       seamlessClean = false;
@@ -566,6 +601,21 @@ async function playSentence(
     }
     onDone();
     return;
+  }
+  try {
+    const synthesis = response.headers.get("X-Synthesis-Seconds");
+    const synthesisSecs = synthesis === null ? NaN : Number(synthesis);
+    const warmth =
+      !Number.isFinite(synthesisSecs)
+        ? "unknown"
+        : synthesisSecs > SEAMLESS_COLD_SECONDS
+          ? "cold"
+          : "warm";
+    console.log(
+      `[voice] engine=seamless speaker=${SEAMLESS_SPEAKER} synthesisS=${synthesis ?? "?"} ${warmth} fetchMs=${Date.now() - fetchStarted}`,
+    );
+  } catch {
+    /* logging must never break speech */
   }
   let clearSentenceAudio = (): void => {};
   try {
@@ -576,6 +626,9 @@ async function playSentence(
     }
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
+    // Demo voice: speaker 17 at 0.9 speed with the same pitch, seamless only.
+    audio.playbackRate = SEAMLESS_PLAYBACK_RATE;
+    audio.preservesPitch = true;
     seamlessAudio = audio;
     let audioDone = false;
     let progressTimer: ReturnType<typeof setInterval> | undefined;
@@ -747,6 +800,17 @@ function queueBrowserSentences(
       }
     }
     const prosody = prosodyForVoice(voice, language);
+    try {
+      const estMs = sentences.reduce(
+        (ms, sentence) => ms + estimateSpeechMs(sentence, prosody.rate),
+        0,
+      );
+      console.log(
+        `[voice] engine=browser voice=${voice?.name ?? "default"} sentences=${sentences.length} estMs=${estMs}`,
+      );
+    } catch {
+      /* logging must never break speech */
+    }
     for (const sentence of sentences) {
       const clean = spokenText(sentence, language);
       if (clean === "") continue;

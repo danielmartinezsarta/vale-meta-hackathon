@@ -25,6 +25,7 @@ import {
   speechSettled,
   stopSpeaking,
   voiceEngine,
+  warmupSeamless,
   type VoiceEngine,
   finishStream,
   speakStream,
@@ -2092,6 +2093,11 @@ export function TapToTalk({
     stopSpeaking("engine-switch");
     setEngine(next);
   }, [engine]);
+  // Seamless active at load: wake the container once; the browser voice
+  // covers every line until it answers, so Vale never goes mute.
+  useEffect(() => {
+    warmupSeamless();
+  }, []);
 
   const mode = useScreenMode();
 
