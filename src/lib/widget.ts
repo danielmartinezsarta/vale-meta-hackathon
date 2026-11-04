@@ -86,6 +86,12 @@ export interface ClientVisit {
   photo: string | null;
 }
 
+/** Private Glimmer brief shown on top of the card, label first. */
+export interface ClientBriefData {
+  label: string;
+  lines: string[];
+}
+
 /** The client card: health first, then notes, then visits. */
 export interface ClientCardData {
   name: string;
@@ -98,6 +104,8 @@ export interface ClientCardData {
   visitsMore: number;
   healthNotes: string[];
   noteTags: string[];
+  /** Present only when the private summary opens the card. */
+  brief?: ClientBriefData | null;
 }
 
 /** Monthly goal: the bar counts to pct, the chip to earned. */
@@ -301,7 +309,7 @@ function healthNotesOf(db: CardStore | undefined, id: number): string[] {
   if (!db) return [];
   try {
     const rows = db
-      .prepare("SELECT text FROM notes WHERE client_id = ? AND kind = 'health' ORDER BY id")
+      .prepare("SELECT text FROM notes WHERE client_id = ? AND kind = 'health_note' ORDER BY id")
       .all(id) as { text?: unknown }[];
     return rows.map((row) => text(row.text)).filter((line) => line !== "");
   } catch {
@@ -363,6 +371,16 @@ function lastSessionOf(
   }
 }
 
+function briefOf(info: Record<string, unknown>): ClientBriefData | null {
+  const brief = dataOf(info.brief);
+  if (text(brief.label) === "") return null;
+  const lines = Array.isArray(brief.lines)
+    ? brief.lines.map((line) => text(line)).filter((line) => line !== "")
+    : [];
+  if (lines.length === 0) return null;
+  return { label: text(brief.label), lines };
+}
+
 function buildCard(
   info: Record<string, unknown>,
   args: Record<string, unknown>,
@@ -371,6 +389,7 @@ function buildCard(
   const id = num(info.id);
   const name = text(info.name) === "" ? text(args.client_name) : text(info.name);
   if (name === "") return null;
+  const brief = briefOf(info);
   const notes = Array.isArray(info.notes) ? info.notes : [];
   const strings = (kind: string): string[] =>
     notes
@@ -398,6 +417,7 @@ function buildCard(
       visitsMore: history.visitsMore,
       healthNotes: health,
       noteTags: strings("general"),
+      ...(brief === null ? {} : { brief }),
     },
   };
 }

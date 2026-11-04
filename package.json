@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:audio": "vitest run asr route capture agent",
     "db:seed": "node scripts/seed.mjs",
-    "db:reset": "node scripts/db-reset.mjs",
+    "db:reset": "node scripts/db-reset.mjs && npx tsx scripts/precompute-briefs.ts",
     "replay:record": "tsx scripts/record-replay.ts",
     "replay:from-logs": "tsx scripts/replay-from-logs.ts"
   },

@@ -22,7 +22,6 @@ import {
   createAppointment,
   createClient,
   createReminder,
-  findClient,
   getToolDetails,
   goalProgress,
   isQuoteAwaiting,
@@ -66,6 +65,7 @@ describe("tool definitions", () => {
         "client_card_show",
         "client_create",
         "client_note_add",
+        "client_summary",
         "goal_show",
         "photo_preview_design",
         "photo_show",
@@ -245,13 +245,12 @@ describe("session_open with only a client (9.5)", () => {
   });
 });
 
-describe("find_client", () => {
-  it("finds by approximate name and asks when ambiguous", () => {
+describe("client lookup", () => {
+  it("finds by approximate name and says when nobody matches", () => {
     const db = freshTestDb();
-    const found = findClient(db, { name: "ana" });
+    const found = showClientCard(db, { name: "ana" });
     expect(found.ok).toBe(true);
-    expect(found.card?.name).toBe("Ana");
-    expect(findClient(db, { name: "nadie" }).ok).toBe(false);
+    expect(showClientCard(db, { name: "nadie" }).ok).toBe(false);
     db.close();
   });
 });
@@ -289,6 +288,92 @@ describe("client_card_show (1.1)", () => {
     const kinds = (card.data as { card: { notes: { kind: string }[] } }).card.notes.map((note) => note.kind);
     expect(kinds[0]).toBe("health_note");
     expect(kinds).toContain("note");
+    db.close();
+  });
+});
+
+describe("client_summary", () => {
+  const SUMMARY_BRIEF = {
+    spoken: "David comes every 3 weeks and likes dark matte. He also has a health note; it's on screen.",
+    summary: ["Prefers dark matte designs", "Hockey fan, ask about the Rangers"],
+    has_health_note: true,
+  };
+
+  function glimmerStub() {
+    return vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify(SUMMARY_BRIEF) } }] }),
+    }));
+  }
+
+  function davidId(db: ReturnType<typeof freshTestDb>): number {
+    return (db.prepare("SELECT id FROM clients WHERE name = ?").get("David") as { id: number }).id;
+  }
+
+  async function storeBrief(db: ReturnType<typeof freshTestDb>) {
+    vi.stubEnv("GLIMMER_URL", "https://glimmer.test");
+    vi.stubEnv("GLIMMER_TOKEN", "secret");
+    const { refreshClientBrief } = await import("./client-briefs");
+    const stored = await refreshClientBrief(db, davidId(db), glimmerStub() as unknown as typeof fetch);
+    vi.unstubAllEnvs();
+    expect(stored?.brief).toEqual(SUMMARY_BRIEF);
+  }
+
+  it("speaks the stored brief and opens the card with the summary on top", async () => {
+    const db = freshTestDb();
+    await storeBrief(db);
+    const result = runValeTool(db, "client_summary", { name: "David" }, "en");
+    expect(result.ok).toBe(true);
+    expect(result.message).toBe(SUMMARY_BRIEF.spoken);
+    const data = result.data as {
+      card: { name: string };
+      brief: { label: string; summary: string[] } | null;
+      needsBrief: boolean;
+    };
+    expect(data.card.name).toBe("David");
+    expect(data.brief?.label).toBe("Prepared privately by Muse Glimmer (open weights)");
+    expect(data.brief?.summary).toEqual(SUMMARY_BRIEF.summary);
+    expect(data.needsBrief).toBe(false);
+    db.close();
+  });
+
+  it("generates on demand when the brief is missing and the model answers", async () => {
+    vi.stubEnv("GLIMMER_URL", "https://glimmer.test");
+    vi.stubEnv("GLIMMER_TOKEN", "secret");
+    const db = freshTestDb();
+    const result = await runValeToolAsync(db, "client_summary", { name: "David" }, "en", glimmerStub() as unknown as typeof fetch);
+    expect(result.ok).toBe(true);
+    expect(result.message).toBe(SUMMARY_BRIEF.spoken);
+    expect((result.data as { brief: { summary: string[] } | null }).brief?.summary).toEqual(
+      SUMMARY_BRIEF.summary,
+    );
+    vi.unstubAllEnvs();
+    db.close();
+  });
+
+  it("falls back to the card without the private model and never sends the record", async () => {
+    const db = freshTestDb();
+    const fetchImpl = glimmerStub();
+    const result = await runValeToolAsync(db, "client_summary", { name: "David" }, "en", fetchImpl as unknown as typeof fetch);
+    expect(result.ok).toBe(true);
+    expect(result.message).toBe(
+      "I don't have a private model set up to read client records, so here's David's card.",
+    );
+    const data = result.data as {
+      card: { name: string };
+      brief: null;
+      needsBrief: boolean;
+    };
+    expect(data.card.name).toBe("David");
+    expect(data.brief).toBeNull();
+    expect(data.needsBrief).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    db.close();
+  });
+
+  it("says when nobody matches", () => {
+    const db = freshTestDb();
+    expect(runValeTool(db, "client_summary", { name: "Nadie" }, "en").ok).toBe(false);
     db.close();
   });
 });
@@ -356,7 +441,7 @@ describe("add_note", () => {
     const result = runValeTool(db, "client_note_add", { client_name: "Ana", text: secret, kind: "health_note" });
     expect(result.ok).toBe(true);
     // Everything this tool hands back toward the model: result + public card.
-    const card = findClient(db, { name: "Ana" });
+    const card = showClientCard(db, { name: "Ana" });
     const modelSees = JSON.stringify({ result, card: card.data });
     expect(modelSees).not.toContain(secret);
     expect(modelSees).not.toContain("onicocriptosis");
@@ -477,7 +562,7 @@ describe("undo_last_write", () => {
     const seededSessions = (db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }).n;
     createClient(db, { name: "Elena Vidal" });
     undoLastWrite(db);
-    expect(findClient(db, { name: "Elena" }).ok).toBe(false);
+    expect(showClientCard(db, { name: "Elena" }).ok).toBe(false);
     openAna(db);
     logSupplyUse(db, { name: "Esmalte verde", confirm_create: true });
     undoLastWrite(db);
@@ -1153,7 +1238,7 @@ describe("error style", () => {
     const errors = [
       openSession(db, { client_name: "Nadie", service_name: "Retiro" }),
       closeSession(db, {}),
-      findClient(db, { name: "Nadie" }),
+      showClientCard(db, { name: "Nadie" }),
       addNote(db, { client_name: "Ana", text: "   " }),
       addToShoppingList(db, { item_name: "cohetes" }),
       createClient(db, { name: "" }),
@@ -1203,6 +1288,7 @@ afterEach(() => {
   if (savedPreviewPhotoDir === undefined) delete process.env.VALE_PHOTO_DIR;
   else process.env.VALE_PHOTO_DIR = savedPreviewPhotoDir;
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   if (previewPhotoDir) {
     rmSync(previewPhotoDir, { recursive: true, force: true });
     previewPhotoDir = "";

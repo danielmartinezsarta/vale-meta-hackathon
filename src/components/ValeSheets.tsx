@@ -499,6 +499,16 @@ function CardBody({ data, onVisit }: { data: ClientCardData; onVisit?: (date: st
           )}
         </div>
       </div>
+      {data.brief && (
+        <div className="aw-cc__block" role="note" aria-label="Private brief">
+          <div className="aw-cc__h">
+            <b>{data.brief.label}</b>
+          </div>
+          {data.brief.lines.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+      )}
       <SexSeg sex={data.sex} />
       {data.phone !== null && (
         <div className="aw-cc__row">

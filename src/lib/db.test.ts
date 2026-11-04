@@ -157,7 +157,15 @@ describe("demo seed (HACK-018)", () => {
         `SELECT c.name AS client, v.photo FROM visits v JOIN clients c ON c.id = v.client_id ORDER BY v.id`,
       )
       .all() as { client: string; photo: string }[];
-    expect(rows.map((row) => row.client).sort()).toEqual(["Ana", "David", "Paola", "Sofia"]);
+    // David's 3-week visit pattern seeds three rows for David.
+    expect(rows.map((row) => row.client).sort()).toEqual([
+      "Ana",
+      "David",
+      "David",
+      "David",
+      "Paola",
+      "Sofia",
+    ]);
     for (const row of rows) expect(row.photo.length).toBeGreaterThan(0);
     db.close();
   });
@@ -245,6 +253,18 @@ describe("conversation turns", () => {
     expect(turns).toEqual([
       { role: "user", text: "Vale, open a session for Emma", tool: null },
       { role: "vale", text: "Which service for Emma?", tool: "client_card_show" },
+    ]);
+    db.close();
+  });
+
+  it("stores only the label for a spoken client summary", () => {
+    const db = freshTestDb();
+    recordTurn(db, "c1", "vale", "David comes every 3 weeks.", "client_summary");
+    recordTurn(db, "c1", "vale", "David's card is on screen.", "client_card_show");
+    const turns = recentTurns(db, "c1", 20);
+    expect(turns).toEqual([
+      { role: "vale", text: "(client summary shown)", tool: "client_summary" },
+      { role: "vale", text: "David's card is on screen.", tool: "client_card_show" },
     ]);
     db.close();
   });

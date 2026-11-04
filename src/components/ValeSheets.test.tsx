@@ -46,6 +46,33 @@ describe("ValeSheets (sheet per kind)", () => {
     expect(screen.getByText("Always on time")).toBeTruthy();
   });
 
+  it("shows the private brief on top of the card with its label", () => {
+    renderSheet({
+      kind: "client_card",
+      title: "Client card",
+      size: "full",
+      data: {
+        name: "David",
+        birthday: null,
+        sex: null,
+        phone: null,
+        email: null,
+        visits: [],
+        visitsMore: 0,
+        healthNotes: [],
+        noteTags: [],
+        brief: {
+          label: "Prepared privately by Muse Glimmer (open weights)",
+          lines: ["Prefers dark matte designs", "Hockey fan"],
+        },
+      },
+    });
+    expect(screen.getByText("Prepared privately by Muse Glimmer (open weights)")).toBeTruthy();
+    expect(screen.getByText("Prefers dark matte designs")).toBeTruthy();
+    expect(screen.getByText("Hockey fan")).toBeTruthy();
+    expect(screen.getByRole("note", { name: "Private brief" })).toBeTruthy();
+  });
+
   it("shows no camera affordance when the visit carries no photo", () => {
     renderSheet({
       kind: "client_card",

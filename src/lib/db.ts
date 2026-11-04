@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import seedData from "./seed-data.json";
-import { resolveSeedDay, seedDay } from "./seed-dates";
+import { resolveSeedDay, seedBirthday, seedDay } from "./seed-dates";
 import { quotePrice, type PricingConfig } from "./quote";
 import { vlog } from "./turn-log";
 
@@ -58,6 +58,17 @@ interface SeedClient {
   phone?: string;
   email?: string;
   birthday?: string;
+  /** Relative birthday: month/day this many days out, fixed year. */
+  birthday_in_days?: number;
+  birthday_year?: number;
+}
+
+/** David's birthday stays this week no matter when the seed runs. */
+function birthdayForSeed(client: SeedClient): string {
+  if (typeof client.birthday_in_days === "number") {
+    return seedBirthday(client.birthday_in_days, client.birthday_year ?? 1990);
+  }
+  return client.birthday ?? "";
 }
 
 interface SeedDemoNote {
@@ -279,7 +290,7 @@ export function seedDatabase(db: ValeDb): void {
       client.sex ?? "",
       client.phone ?? "",
       client.email ?? "",
-      client.birthday ?? "",
+      birthdayForSeed(client),
     );
     const row = db.prepare("SELECT id FROM clients WHERE name = ?").get(client.name) as { id: number };
     clientIds.set(client.name, row.id);
@@ -397,9 +408,10 @@ function seedDemoNotes(db: ValeDb, notes: SeedDemoNote[], clientIds: Map<string,
     const clientId = clientIds.get(note.client);
     if (clientId === undefined) continue;
     const kind = note.kind === "health_note" || note.kind === "health" ? "health_note" : "note";
+    // Dedup on the full row so one client can seed several notes.
     const existing = db
-      .prepare("SELECT id FROM notes WHERE client_id = ? AND kind = ?")
-      .get(clientId, kind) as { id: number } | undefined;
+      .prepare("SELECT id FROM notes WHERE client_id = ? AND kind = ? AND text = ?")
+      .get(clientId, kind, note.text) as { id: number } | undefined;
     if (existing) continue;
     addNote.run(clientId, note.text, kind, note.private === true || kind === "health_note" ? 1 : 0);
   }
@@ -537,10 +549,15 @@ export function recordTurn(
     });
     return;
   }
+  // The spoken brief never reaches the history fed back to the cloud
+  // model. Only its label is stored; the brief itself stays in the
+  // private store and on the screen that showed it.
+  const storedText =
+    role === "vale" && tool === "client_summary" ? "(client summary shown)" : text;
   db.prepare("INSERT INTO turns (client_key, role, text, tool) VALUES (?, ?, ?, ?)").run(
     clientKey,
     role,
-    text,
+    storedText,
     tool,
   );
   db.prepare(
