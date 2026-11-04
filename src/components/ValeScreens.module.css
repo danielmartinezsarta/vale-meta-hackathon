@@ -239,6 +239,27 @@ border in the accent color, never the native outline. */
   gap: 6px;
   list-style: none;
   padding: 0;
+  flex-shrink: 1;
+  overflow-y: auto;
+}
+
+/* Session error alert: text wraps, retry icon stays inline at the right,
+so the row fits the column with no page scroll. */
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.alertText {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.alert .abtn {
+  flex: none;
 }
 
 .msg {

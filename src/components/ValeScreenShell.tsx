@@ -238,8 +238,8 @@ export function ValeScreenShell({
       {notice && <p role="status">{notice}</p>}
 
       {alert && (
-        <div role="alert">
-          {alert}
+        <div role="alert" className={styles.alert}>
+          <span className={styles.alertText}>{alert}</span>
           {onRetry && (
             <button
               className={styles.abtn}

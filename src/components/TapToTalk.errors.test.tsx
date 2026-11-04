@@ -147,6 +147,10 @@ describe("plain-language errors (fake-device fallback)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toMatch(/connection dropped/i);
     const retry = screen.getByRole("button", { name: "Try again" });
+    // Alert row: wrapping text first, retry icon inline at its right.
+    expect(retry.previousElementSibling?.textContent).toMatch(
+      /connection dropped/i,
+    );
     fireEvent.click(retry);
 
     await waitFor(() => {
