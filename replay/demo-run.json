@@ -1,10 +1,11 @@
 {
   "version": 1,
-  "recordedAt": "2026-11-03T19:47:42.612Z",
+  "recordedAt": "2026-11-04T19:21:55.119Z",
   "turns": [
     {
       "turn": "t901",
       "transcript": "Vale, what do I have today?",
+      "language": "en",
       "tool": "agenda_show",
       "toolArgs": {
         "range": "today"
@@ -21,6 +22,18 @@
               "kind": "health_note",
               "text": null,
               "masked": true
+            },
+            {
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
             }
           ]
         },
@@ -30,42 +43,71 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.00447,
-      "language": "en"
+      "costUsd": 0.00566325,
+      "scene": "Daily agenda"
     },
     {
       "turn": "t902",
-      "transcript": "Vale, David is on his way. Show me his card.",
-      "tool": "client_card_show",
-      "toolArgs": {
-        "name": "David"
-      },
-      "reply": "Here's David's card on screen, Demo. He's booked today at 3 PM.",
-      "widget": {
-        "kind": "client_card",
-        "title": "Client card",
-        "size": "full",
-        "data": {
+      "transcript": "Vale, who is my next client today?",
+      "language": "en",
+      "tool": null,
+      "toolArgs": null,
+      "reply": "Your next client today is David at 3 PM for semi-permanent.",
+      "widget": null,
+      "board": {
+        "session": null,
+        "card": {
           "name": "David",
-          "birthday": "1990-04-17",
-          "sex": null,
-          "phone": "+1-555-0101",
-          "email": "david@example.com",
-          "visits": [
+          "notes": [
             {
-              "date": "2026-11-02",
-              "service": "Gel refill",
-              "photo": null
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
             },
             {
-              "date": "2026-11-01",
-              "service": "Semi-permanent manicure",
-              "photo": null
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
             }
-          ],
-          "visitsMore": 0,
-          "healthNotes": [],
-          "noteTags": []
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0057855,
+      "scene": "Daily agenda"
+    },
+    {
+      "turn": "t903",
+      "transcript": "Vale, book Ana for a gel refill on Friday at 6 PM",
+      "language": "en",
+      "tool": "agenda_create_appointment",
+      "toolArgs": {
+        "client_name": "Ana",
+        "service_name": "gel refill",
+        "when": "Friday at 6 PM"
+      },
+      "reply": "Booked: Ana Friday the 6th at 6 PM for Gel refill. It is off hours.",
+      "widget": {
+        "kind": "booked",
+        "title": "Appointment booked",
+        "size": "half",
+        "data": {
+          "client": "Ana",
+          "service": "Gel refill",
+          "day": "2026-11-06",
+          "time": "18:00"
         }
       },
       "board": {
@@ -78,6 +120,18 @@
               "kind": "health_note",
               "text": null,
               "masked": true
+            },
+            {
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
             }
           ]
         },
@@ -87,12 +141,1116 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.0092635,
-      "language": "en"
+      "costUsd": 0.01198575,
+      "scene": "Agenda management"
     },
     {
-      "turn": "t903",
+      "turn": "t904",
+      "transcript": "Vale, move Ana's Friday appointment to Saturday at 11 AM",
+      "language": "en",
+      "tool": "agenda_move_appointment",
+      "toolArgs": {
+        "client_name": "Ana",
+        "day": "2026-11-06",
+        "new_day": "2026-11-07",
+        "new_time": "11:00"
+      },
+      "reply": "Moved: Ana Saturday the 7th at 11 AM.",
+      "widget": {
+        "kind": "notice",
+        "title": "Appointment moved",
+        "size": "half",
+        "data": {
+          "text": "Moved: Ana Saturday the 7th at 11 AM."
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            },
+            {
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.00619225,
+      "scene": "Agenda management"
+    },
+    {
+      "turn": "t905",
+      "transcript": "Vale, cancel Ana's Saturday appointment",
+      "language": "en",
+      "tool": "agenda_cancel_appointment",
+      "toolArgs": {
+        "client_name": "Ana",
+        "day": "2026-11-07"
+      },
+      "reply": "Cancelled: Ana Saturday the 7th at 11 AM.",
+      "widget": {
+        "kind": "notice",
+        "title": "Appointment cancelled",
+        "size": "half",
+        "data": {
+          "text": "Cancelled: Ana Saturday the 7th at 11 AM."
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            },
+            {
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.00585575,
+      "scene": "Agenda management"
+    },
+    {
+      "turn": "t906",
+      "transcript": "Vale, remind me to bring extra towels on Friday",
+      "language": "en",
+      "tool": "agenda_create_reminder",
+      "toolArgs": {
+        "day": "2026-11-06",
+        "text": "bring extra towels"
+      },
+      "reply": "Reminder saved.",
+      "widget": {
+        "kind": "notice",
+        "title": "Reminder saved",
+        "size": "half",
+        "data": {
+          "text": "Reminder saved. bring extra towels"
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            },
+            {
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0061265,
+      "scene": "Agenda management"
+    },
+    {
+      "turn": "t907",
+      "transcript": "Vale, register a new client Nina",
+      "language": "en",
+      "tool": "client_create",
+      "toolArgs": {
+        "name": "Nina"
+      },
+      "reply": "Nina registered.",
+      "widget": null,
+      "board": {
+        "session": null,
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            },
+            {
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0058285,
+      "scene": "Client's card"
+    },
+    {
+      "turn": "t908",
+      "transcript": "Vale, save a note for Nina: she likes dark matte colors",
+      "language": "en",
+      "tool": "client_note_add",
+      "toolArgs": {
+        "client_name": "Nina",
+        "kind": "note",
+        "text": "she likes dark matte colors"
+      },
+      "reply": "Note saved on Nina's card.",
+      "widget": {
+        "kind": "note",
+        "title": "Note saved",
+        "size": "half",
+        "data": {
+          "text": "she likes dark matte colors",
+          "client": "Nina"
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.00604,
+      "scene": "Client's card"
+    },
+    {
+      "turn": "t909",
+      "transcript": "Vale, save a health note for Nina: allergic to acetone",
+      "language": "en",
+      "tool": "client_note_add",
+      "toolArgs": {
+        "client_name": "Nina",
+        "kind": "health_note",
+        "text": "allergic to acetone"
+      },
+      "reply": "Private note saved.",
+      "widget": {
+        "kind": "health_note",
+        "title": "Health note",
+        "size": "half",
+        "data": {
+          "text": "allergic to acetone",
+          "client": "Nina"
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0061655,
+      "scene": "Client's card"
+    },
+    {
+      "turn": "t910",
+      "transcript": "Vale, show me Nina's card",
+      "language": "en",
+      "tool": "client_card_show",
+      "toolArgs": {
+        "name": "Nina"
+      },
+      "reply": "Nina's card is on screen.",
+      "widget": {
+        "kind": "client_card",
+        "title": "Client card",
+        "size": "full",
+        "data": {
+          "name": "Nina",
+          "birthday": null,
+          "sex": null,
+          "phone": null,
+          "email": null,
+          "visits": [],
+          "visitsMore": 0,
+          "healthNotes": [
+            "allergic to acetone"
+          ],
+          "noteTags": [
+            "she likes dark matte colors"
+          ]
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.00604725,
+      "scene": "Client's card"
+    },
+    {
+      "turn": "t911",
+      "transcript": "Vale, give me the private brief on Nina",
+      "language": "en",
+      "tool": "client_summary",
+      "toolArgs": {
+        "name": "Nina"
+      },
+      "reply": "No prior visits on record, and she likes dark matte colors. He also has a health note; it's on screen.",
+      "widget": {
+        "kind": "client_card",
+        "title": "Client card",
+        "size": "full",
+        "data": {
+          "name": "Nina",
+          "birthday": null,
+          "sex": null,
+          "phone": null,
+          "email": null,
+          "visits": [],
+          "visitsMore": 0,
+          "healthNotes": [
+            "allergic to acetone"
+          ],
+          "noteTags": [
+            "she likes dark matte colors"
+          ],
+          "brief": {
+            "label": "Prepared privately by Muse Glimmer (open weights)",
+            "lines": [
+              "No prior visits on record",
+              "Likes dark matte colors",
+              "No upcoming appointments"
+            ]
+          }
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.006013,
+      "scene": "Client's card"
+    },
+    {
+      "turn": "t912",
+      "transcript": "Vale, open a session with Nina for a gel refill",
+      "language": "en",
+      "tool": "session_open",
+      "toolArgs": {
+        "client_name": "Nina",
+        "service_name": "gel refill"
+      },
+      "reply": "Session open. Don't forget the before photo.",
+      "widget": null,
+      "board": {
+        "session": {
+          "id": 7,
+          "clientName": "Nina",
+          "serviceName": "Gel refill",
+          "startedAt": "2026-11-04T19:20:03.569Z"
+        },
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0059785,
+      "scene": "Work session"
+    },
+    {
+      "turn": "t913",
+      "transcript": "Vale, I used top coat",
+      "language": "en",
+      "tool": "session_log_supply",
+      "toolArgs": {
+        "name": "top coat"
+      },
+      "reply": "Top coat logged for the session.",
+      "widget": null,
+      "board": {
+        "session": {
+          "id": 7,
+          "clientName": "Nina",
+          "serviceName": "Gel refill",
+          "startedAt": "2026-11-04T19:20:03.569Z"
+        },
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0065875,
+      "scene": "Work session"
+    },
+    {
+      "turn": "t914",
+      "transcript": "Vale, undo that",
+      "language": "en",
+      "tool": "undo_last",
+      "toolArgs": null,
+      "reply": "Undone: logged supply.",
+      "widget": null,
+      "board": {
+        "session": {
+          "id": 7,
+          "clientName": "Nina",
+          "serviceName": "Gel refill",
+          "startedAt": "2026-11-04T19:20:03.569Z"
+        },
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.005906,
+      "scene": "Work session"
+    },
+    {
+      "turn": "t915",
+      "transcript": "Vale, I used lint-free wipes",
+      "language": "en",
+      "tool": "session_log_supply",
+      "toolArgs": {
+        "name": "lint-free wipes"
+      },
+      "reply": "Lint-free wipes logged for the session.",
+      "widget": null,
+      "board": {
+        "session": {
+          "id": 7,
+          "clientName": "Nina",
+          "serviceName": "Gel refill",
+          "startedAt": "2026-11-04T19:20:03.569Z"
+        },
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.005976,
+      "scene": "Work session"
+    },
+    {
+      "turn": "t916",
+      "transcript": "Vale, how much do I charge?",
+      "language": "en",
+      "tool": "session_quote",
+      "toolArgs": null,
+      "reply": "The quote is on screen.",
+      "widget": {
+        "kind": "price",
+        "title": "Price",
+        "size": "half",
+        "data": {
+          "service": "Gel refill",
+          "extras": null,
+          "suggested": 50
+        }
+      },
+      "board": {
+        "session": {
+          "id": 7,
+          "clientName": "Nina",
+          "serviceName": "Gel refill",
+          "startedAt": "2026-11-04T19:20:03.569Z"
+        },
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.005883,
+      "scene": "Work session"
+    },
+    {
+      "turn": "t917",
+      "transcript": "Vale, Nina paid 55",
+      "language": "en",
+      "tool": "session_quote",
+      "toolArgs": {
+        "amount": 55
+      },
+      "reply": "Payment registered.",
+      "widget": null,
+      "board": {
+        "session": {
+          "id": 7,
+          "clientName": "Nina",
+          "serviceName": "Gel refill",
+          "startedAt": "2026-11-04T19:20:03.569Z"
+        },
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0063195,
+      "scene": "Work session"
+    },
+    {
+      "turn": "t918",
+      "transcript": "Vale, close the session",
+      "language": "en",
+      "tool": "session_close",
+      "toolArgs": null,
+      "reply": "Session closed. It lasted 1 minute.",
+      "widget": {
+        "kind": "session_summary",
+        "title": "Session summary",
+        "size": "full",
+        "data": {
+          "client": "Nina",
+          "date": "Nov 4, 2026",
+          "service": {
+            "name": "Gel refill",
+            "price": 50
+          },
+          "extras": [],
+          "suggested": 50,
+          "charged": 55,
+          "earned": 40.656190476190474,
+          "stdMinutes": 75,
+          "timeTotal": "0m",
+          "timeParts": [],
+          "costs": [
+            {
+              "label": "Supplies",
+              "amount": 8.986666666666666
+            },
+            {
+              "label": "Time (75 min)",
+              "amount": 18.601190476190478
+            },
+            {
+              "label": "Fixed costs",
+              "amount": 8.18452380952381
+            },
+            {
+              "label": "Margin (30%)",
+              "amount": 14.227619047619044
+            }
+          ],
+          "fixedDetail": "$8.18 of this service"
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.00620525,
+      "scene": "Work session"
+    },
+    {
+      "turn": "t919",
+      "transcript": "Vale, open a session with David",
+      "language": "en",
+      "tool": "session_open",
+      "toolArgs": {
+        "client_name": "David"
+      },
+      "reply": "Session open. Don't forget the before photo.",
+      "widget": null,
+      "board": {
+        "session": {
+          "id": 8,
+          "clientName": "David",
+          "serviceName": "Semi-permanent manicure",
+          "startedAt": "2026-11-04T19:20:21.704Z"
+        },
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            },
+            {
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0058655,
+      "scene": "Nail photo studio"
+    },
+    {
+      "turn": "t920",
+      "transcript": "Vale, show me the before photo",
+      "language": "en",
+      "tool": "photo_show",
+      "toolArgs": null,
+      "reply": "Here are David's session photos on screen.",
+      "widget": {
+        "kind": "photos",
+        "title": "Photos",
+        "size": "full",
+        "data": {
+          "before": "/api/photos?file=pre_8.jpg",
+          "reference": "/api/photos?file=seed-assets/david-appointment-reference.jpg",
+          "expected": "/api/photos?file=preview_8.png",
+          "final": "/api/photos?file=post_8.jpg"
+        }
+      },
+      "board": {
+        "session": {
+          "id": 8,
+          "clientName": "David",
+          "serviceName": "Semi-permanent manicure",
+          "startedAt": "2026-11-04T19:20:21.704Z"
+        },
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            },
+            {
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0118755,
+      "scene": "Nail photo studio"
+    },
+    {
+      "turn": "t921",
+      "transcript": "Vale, show me the reference",
+      "language": "en",
+      "tool": "photo_show",
+      "toolArgs": null,
+      "reply": "Here are the stored photos on screen.",
+      "widget": {
+        "kind": "photos",
+        "title": "Photos",
+        "size": "full",
+        "data": {
+          "before": "/api/photos?file=pre_8.jpg",
+          "reference": "/api/photos?file=seed-assets/david-appointment-reference.jpg",
+          "expected": "/api/photos?file=preview_8.png",
+          "final": "/api/photos?file=post_8.jpg"
+        }
+      },
+      "board": {
+        "session": {
+          "id": 8,
+          "clientName": "David",
+          "serviceName": "Semi-permanent manicure",
+          "startedAt": "2026-11-04T19:20:21.704Z"
+        },
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            },
+            {
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.011918,
+      "scene": "Nail photo studio"
+    },
+    {
+      "turn": "t922",
+      "transcript": "Vale, preview the design on her nails",
+      "language": "en",
+      "tool": "photo_preview_design",
+      "toolArgs": null,
+      "reply": "Here is how it would look. The preview is on screen.",
+      "widget": {
+        "kind": "photos",
+        "title": "Photos",
+        "size": "full",
+        "data": {
+          "before": "/api/photos?file=pre_8.jpg",
+          "reference": "/api/photos?file=seed-assets/david-appointment-reference.jpg",
+          "expected": "/api/photos?file=preview_8.png",
+          "final": null
+        }
+      },
+      "board": {
+        "session": {
+          "id": 8,
+          "clientName": "David",
+          "serviceName": "Semi-permanent manicure",
+          "startedAt": "2026-11-04T19:20:21.704Z"
+        },
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            },
+            {
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.00600725,
+      "scene": "Nail photo studio"
+    },
+    {
+      "turn": "t923",
+      "transcript": "Vale, show me the final photo",
+      "language": "en",
+      "tool": "photo_show",
+      "toolArgs": null,
+      "reply": "Here are the stored photos on screen.",
+      "widget": {
+        "kind": "photos",
+        "title": "Photos",
+        "size": "full",
+        "data": {
+          "before": "/api/photos?file=pre_8.jpg",
+          "reference": "/api/photos?file=seed-assets/david-appointment-reference.jpg",
+          "expected": "/api/photos?file=preview_8.png",
+          "final": "/api/photos?file=post_8.jpg"
+        }
+      },
+      "board": {
+        "session": {
+          "id": 8,
+          "clientName": "David",
+          "serviceName": "Semi-permanent manicure",
+          "startedAt": "2026-11-04T19:20:21.704Z"
+        },
+        "card": {
+          "name": "David",
+          "notes": [
+            {
+              "id": 1,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            },
+            {
+              "id": 2,
+              "kind": "note",
+              "text": "Prefers dark matte designs",
+              "masked": false
+            },
+            {
+              "id": 3,
+              "kind": "note",
+              "text": "Hockey fan, ask about the Rangers",
+              "masked": false
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.0118575,
+      "scene": "Nail photo studio"
+    },
+    {
+      "turn": "t924",
+      "transcript": "Vale, close the session",
+      "language": "en",
+      "tool": "session_close",
+      "toolArgs": null,
+      "reply": "Session closed. It lasted 1 minute.",
+      "widget": {
+        "kind": "session_summary",
+        "title": "Session summary",
+        "size": "full",
+        "data": {
+          "client": "David",
+          "date": "Nov 4, 2026",
+          "service": {
+            "name": "Semi-permanent manicure",
+            "price": 40
+          },
+          "extras": [],
+          "suggested": 40,
+          "charged": null,
+          "earned": 30.92285714285714,
+          "stdMinutes": 60,
+          "timeTotal": "1m",
+          "timeParts": [],
+          "costs": [
+            {
+              "label": "Supplies",
+              "amount": 8.72
+            },
+            {
+              "label": "Time (60 min)",
+              "amount": 14.880952380952381
+            },
+            {
+              "label": "Fixed costs",
+              "amount": 6.5476190476190474
+            },
+            {
+              "label": "Margin (30%)",
+              "amount": 9.85142857142857
+            }
+          ],
+          "fixedDetail": "$6.55 of this service"
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.00584575,
+      "scene": "Nail photo studio"
+    },
+    {
+      "turn": "t925",
       "transcript": "Vale, how am I doing with my monthly goal?",
+      "language": "en",
       "tool": "goal_show",
       "toolArgs": null,
       "reply": "Here's your goal on screen.",
@@ -103,16 +1261,22 @@
         "data": {
           "name": null,
           "goal": 2500,
-          "earned": 112.6
+          "earned": 134.18
         }
       },
       "board": {
         "session": null,
         "card": {
-          "name": "David",
+          "name": "Nina",
           "notes": [
             {
-              "id": 1,
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
               "kind": "health_note",
               "text": null,
               "masked": true
@@ -125,34 +1289,44 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.00879375,
-      "language": "en"
+      "costUsd": 0.01179625,
+      "scene": "Goals"
     },
     {
-      "turn": "t904",
-      "transcript": "Vale, how much is a semi-permanent manicure?",
-      "tool": "session_quote",
+      "turn": "t926",
+      "transcript": "Vale, add rhinestones to the shopping list",
+      "language": "en",
+      "tool": "shopping_add",
       "toolArgs": {
-        "service_name": "semi-permanent manicure"
+        "item_name": "rhinestones"
       },
-      "reply": "The quote for Semi-permanent manicure is on screen, with Accept and Reject.",
+      "reply": "Rhinestones added to the list.",
       "widget": {
-        "kind": "price",
-        "title": "Price",
+        "kind": "shopping",
+        "title": "Shopping list",
         "size": "half",
         "data": {
-          "service": "Semi-permanent manicure",
-          "extras": null,
-          "suggested": 40
+          "items": [
+            "Acetone",
+            "Foil wraps",
+            "Cotton pads",
+            "Rhinestones"
+          ]
         }
       },
       "board": {
         "session": null,
         "card": {
-          "name": "David",
+          "name": "Nina",
           "notes": [
             {
-              "id": 1,
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
               "kind": "health_note",
               "text": null,
               "masked": true
@@ -162,161 +1336,47 @@
         "list": [
           "Acetone",
           "Foil wraps",
-          "Cotton pads"
+          "Cotton pads",
+          "Rhinestones"
         ]
       },
-      "costUsd": 0.00509975,
-      "language": "en"
+      "costUsd": 0.00595275,
+      "scene": "Shopping list"
     },
     {
-      "turn": "t905",
-      "transcript": "Vale, open a session with David",
-      "tool": "session_open",
+      "turn": "t927",
+      "transcript": "Vale, remove rhinestones from the shopping list",
+      "language": "en",
+      "tool": "shopping_remove",
       "toolArgs": {
-        "client_name": "David"
+        "item_name": "rhinestones"
       },
-      "reply": "Session open with David.",
-      "widget": null,
-      "board": {
-        "session": {
-          "id": 7,
-          "clientName": "David",
-          "serviceName": "Semi-permanent manicure",
-          "startedAt": "2026-11-03T19:47:31.071Z"
-        },
-        "card": {
-          "name": "David",
-          "notes": [
-            {
-              "id": 1,
-              "kind": "health_note",
-              "text": null,
-              "masked": true
-            }
-          ]
-        },
-        "list": [
-          "Acetone",
-          "Foil wraps",
-          "Cotton pads"
-        ]
-      },
-      "costUsd": 0.00447925,
-      "language": "en"
-    },
-    {
-      "turn": "t906",
-      "transcript": "Vale, show me the photos",
-      "tool": "photo_show",
-      "toolArgs": null,
-      "reply": "Here's David's photos on screen.",
+      "reply": "Rhinestones removed from the list.",
       "widget": {
-        "kind": "photos",
-        "title": "Photos",
-        "size": "full",
+        "kind": "shopping",
+        "title": "Shopping list",
+        "size": "half",
         "data": {
-          "before": null,
-          "reference": "/api/photos?file=seed-assets/david-appointment-reference.jpg",
-          "expected": null,
-          "final": null
-        }
-      },
-      "board": {
-        "session": {
-          "id": 7,
-          "clientName": "David",
-          "serviceName": "Semi-permanent manicure",
-          "startedAt": "2026-11-03T19:47:31.071Z"
-        },
-        "card": {
-          "name": "David",
-          "notes": [
-            {
-              "id": 1,
-              "kind": "health_note",
-              "text": null,
-              "masked": true
-            }
+          "items": [
+            "Acetone",
+            "Foil wraps",
+            "Cotton pads"
           ]
-        },
-        "list": [
-          "Acetone",
-          "Foil wraps",
-          "Cotton pads"
-        ]
-      },
-      "costUsd": 0.0093005,
-      "language": "en"
-    },
-    {
-      "turn": "t907",
-      "transcript": "Vale, what do I need to buy?",
-      "tool": "widget_show",
-      "toolArgs": {
-        "name": "shopping"
-      },
-      "reply": "Here's your shopping list on screen, Demo.",
-      "widget": null,
-      "board": {
-        "session": {
-          "id": 7,
-          "clientName": "David",
-          "serviceName": "Semi-permanent manicure",
-          "startedAt": "2026-11-03T19:47:31.071Z"
-        },
-        "card": {
-          "name": "David",
-          "notes": [
-            {
-              "id": 1,
-              "kind": "health_note",
-              "text": null,
-              "masked": true
-            }
-          ]
-        },
-        "list": [
-          "Acetone",
-          "Foil wraps",
-          "Cotton pads"
-        ]
-      },
-      "costUsd": 0.0099315,
-      "language": "en"
-    },
-    {
-      "turn": "t908",
-      "transcript": "Vale, close the session",
-      "tool": "session_close",
-      "toolArgs": null,
-      "reply": "Session closed. It lasted 1 minute.",
-      "widget": {
-        "kind": "session_summary",
-        "title": "Session summary",
-        "size": "full",
-        "data": {
-          "client": "David",
-          "date": "Nov 3, 2026",
-          "service": {
-            "name": "Semi-permanent manicure",
-            "price": 0
-          },
-          "extras": [],
-          "suggested": null,
-          "charged": null,
-          "timeTotal": "0m",
-          "timeParts": [],
-          "costs": [],
-          "fixedDetail": null
         }
       },
       "board": {
         "session": null,
         "card": {
-          "name": "David",
+          "name": "Nina",
           "notes": [
             {
-              "id": 1,
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
               "kind": "health_note",
               "text": null,
               "masked": true
@@ -329,8 +1389,104 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.004609,
-      "language": "en"
+      "costUsd": 0.0059025,
+      "scene": "Shopping list"
+    },
+    {
+      "turn": "t928",
+      "transcript": "Vale, show me my shopping list",
+      "language": "en",
+      "tool": "shopping_show",
+      "toolArgs": null,
+      "reply": "Here is your shopping list on screen.",
+      "widget": {
+        "kind": "shopping",
+        "title": "Shopping list",
+        "size": "half",
+        "data": {
+          "items": [
+            "Acetone",
+            "Foil wraps",
+            "Cotton pads"
+          ]
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.01213775,
+      "scene": "Shopping list"
+    },
+    {
+      "turn": "t929",
+      "transcript": "Vale, what is running low on stock?",
+      "language": "en",
+      "tool": "stock_show_low",
+      "toolArgs": null,
+      "reply": "Here is what is running low on screen.",
+      "widget": {
+        "kind": "low_stock",
+        "title": "Low stock",
+        "size": "half",
+        "data": {
+          "items": [
+            {
+              "name": "Top coat",
+              "stock": 5,
+              "min": 5
+            }
+          ]
+        }
+      },
+      "board": {
+        "session": null,
+        "card": {
+          "name": "Nina",
+          "notes": [
+            {
+              "id": 4,
+              "kind": "note",
+              "text": "she likes dark matte colors",
+              "masked": false
+            },
+            {
+              "id": 5,
+              "kind": "health_note",
+              "text": null,
+              "masked": true
+            }
+          ]
+        },
+        "list": [
+          "Acetone",
+          "Foil wraps",
+          "Cotton pads"
+        ]
+      },
+      "costUsd": 0.01196275,
+      "scene": "Low stock suggestions"
     }
   ]
 }

@@ -22,7 +22,7 @@ export const REPLAY_PLAN: ReplayPlanTurn[] = [
   { scene: "Client's card", phrase: "Vale, save a note for Nina: she likes dark matte colors" },
   { scene: "Client's card", phrase: "Vale, save a health note for Nina: allergic to acetone" },
   { scene: "Client's card", phrase: "Vale, show me Nina's card" },
-  { scene: "Client's card", phrase: "Vale, Nina is here, what do I have on her?" },
+  { scene: "Client's card", phrase: "Vale, give me the private brief on Nina" },
   // Work session: open, supply, undo, supply, quote, pay, close.
   { scene: "Work session", phrase: "Vale, open a session with Nina for a gel refill" },
   { scene: "Work session", phrase: "Vale, I used top coat" },
