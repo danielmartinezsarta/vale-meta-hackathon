@@ -4,6 +4,7 @@ import { GET } from "./route";
 
 beforeEach(() => {
   vi.stubEnv("SEAMLESS_URL", "https://seamless.test/speak");
+  vi.stubEnv("SEAMLESS_TOKEN", "test-token");
 });
 
 afterEach(() => {
@@ -152,6 +153,18 @@ describe("seamless-voice proxy", () => {
     );
     const unreachable = await GET(new Request("http://test/api/seamless-voice?text=Hola"));
     expect(unreachable.status).toBe(502);
+  });
+
+  it("sends the shell token to the private endpoint", async () => {
+    const fetchMock = vi.fn(async (..._args: unknown[]) => wavResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await GET(new Request("http://test/api/seamless-voice?text=Hola"));
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: "Bearer test-token" }),
+      }),
+    );
   });
 
   it("answers 503 without calling upstream when SEAMLESS_URL is missing", async () => {
