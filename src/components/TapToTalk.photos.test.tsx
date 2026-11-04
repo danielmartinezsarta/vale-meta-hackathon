@@ -231,6 +231,25 @@ describe("session photo flows (mocked fetch, no network)", () => {
     expect(img?.getAttribute("src")).toBe("/api/photos?file=pre_7.jpg");
   });
 
+  it("mounts the picker in the document so iOS opens it, then removes it", async () => {
+    vi.stubGlobal("fetch", stubRoutes({ photos: () => false, upload: UPLOAD_OK }));
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} })),
+    );
+    const created = capturePicker();
+    await openSessionScreen();
+    fireEvent.click(screen.getByRole("button", { name: "Open camera" }));
+    fireEvent.click(screen.getByText("Before"));
+    expect(created).toHaveLength(1);
+    expect(document.body.contains(created[0])).toBe(true);
+    pickFile(created[0]);
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Photos" })).toBeTruthy();
+    });
+    expect(document.body.contains(created[0])).toBe(false);
+  });
+
   it("uploads final, confirms, and shows the final photo result", async () => {
     vi.stubGlobal("fetch", stubRoutes({ photos: () => false, upload: UPLOAD_OK }));
     const created = capturePicker();
