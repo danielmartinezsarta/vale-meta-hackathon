@@ -12,13 +12,13 @@ const DATA: HomeData = {
   supplies: [{ name: "Base coat", qty: 2 }],
 };
 
-function renderHome(overrides: Partial<HomeData> = {}) {
+function renderHome(overrides: Partial<HomeData> = {}, language: "en" | "es" = "en") {
   const onLanguageChange = vi.fn();
   const onWake = vi.fn();
   render(
     <HomeScreen
       data={{ ...DATA, ...overrides }}
-      language="en"
+      language={language}
       onLanguageChange={onLanguageChange}
       onWake={onWake}
     />,
@@ -55,5 +55,18 @@ describe("HomeScreen (Vale asleep)", () => {
     const { onWake } = renderHome();
     fireEvent.click(screen.getByRole("button", { name: "Wake Vale" }));
     expect(onWake).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the frame in Spanish with language es", () => {
+    renderHome({}, "es");
+    const greetings = ["Buenos días", "Buenas tardes", "Buenas noches"];
+    expect(greetings.some((greeting) => screen.queryByText(greeting, { exact: false }))).toBe(true);
+    expect(screen.getByText("Hoy", { exact: false })).toBeTruthy();
+    expect(screen.getByText("Materiales por comprar")).toBeTruthy();
+    expect(screen.getByText("Meta mensual")).toBeTruthy();
+    expect(screen.getByText("noviembre")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+    expect(screen.getByText("Fichas de clientes")).toBeTruthy();
+    expect(screen.getByText("Metas")).toBeTruthy();
   });
 });

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { BRAND } from "@/lib/brand-tokens";
+import { uiStrings } from "@/lib/vale-ui";
 import { homeVars } from "@/lib/vale-theme";
 import { PhoneFrame } from "@/components/PhoneFrame";
 import { ManageScreensHost } from "@/components/screens/ManageScreensHost";
@@ -138,10 +139,22 @@ export const MENU_ITEMS = [
   },
 ];
 
-function monthLabel(month: string): string {
+function monthLabel(month: string, language: ValeLanguage): string {
   const date = new Date(`${month}-01T00:00:00`);
-  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-US", { month: "long" });
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString(language === "es" ? "es" : "en-US", { month: "long" });
 }
+
+const MENU_LABELS: Record<string, "menuAgenda" | "menuClientFiles" | "menuServices" | "menuSuppliesStock" | "shoppingList" | "menuPayments" | "menuGoals" | "menuPreferences"> = {
+  Agenda: "menuAgenda",
+  "Client files": "menuClientFiles",
+  Services: "menuServices",
+  "Supplies & stock": "menuSuppliesStock",
+  "Shopping list": "shoppingList",
+  Payments: "menuPayments",
+  Goals: "menuGoals",
+  Preferences: "menuPreferences",
+};
 
 export function HomeScreen({
   data,
@@ -177,11 +190,13 @@ export function HomeScreen({
     return () => document.removeEventListener("keydown", onKey);
   }, [menuOpen]);
 
+  const ui = uiStrings(language);
+  const menuLabel = (name: string): string => ui[MENU_LABELS[name] ?? "menuAgenda"] ?? name;
   const now = new Date();
   const hour = now.getHours();
   const greeting =
-    hour < 12 ? "Good morning" : hour < 19 ? "Good afternoon" : "Good evening";
-  const dateLine = now.toLocaleDateString("en-US", {
+    hour < 12 ? ui.greetingMorning : hour < 19 ? ui.greetingAfternoon : ui.greetingEvening;
+  const dateLine = now.toLocaleDateString(language === "es" ? "es" : "en-US", {
     weekday: "long",
     month: "long",
     day: "numeric",
@@ -215,17 +230,17 @@ export function HomeScreen({
         </button>
       </div>
 
-      <section className={styles.card} aria-label="Today">
+      <section className={styles.card} aria-label={ui.homeToday}>
         <h2 className={styles.h}>
-          <b>Today</b>, {dateLine}
+          <b>{ui.homeToday}</b>, {dateLine}
         </h2>
         {data === null ? (
           <div className={styles.row}>
-            <span>Loading…</span>
+            <span>{ui.homeLoading}</span>
           </div>
         ) : data.today.length === 0 ? (
           <div className={styles.row}>
-            <span>Nothing on the books.</span>
+            <span>{ui.homeEmptyToday}</span>
           </div>
         ) : (
           data.today.map((appt) => (
@@ -239,15 +254,15 @@ export function HomeScreen({
         )}
       </section>
 
-      <section className={styles.card} aria-label="Supplies to buy">
-        <h2 className={styles.h}>Supplies to buy</h2>
+      <section className={styles.card} aria-label={ui.homeSupplies}>
+        <h2 className={styles.h}>{ui.homeSupplies}</h2>
         {data === null ? (
           <div className={styles.row}>
-            <span>Loading…</span>
+            <span>{ui.homeLoading}</span>
           </div>
         ) : data.supplies.length === 0 ? (
           <div className={styles.row}>
-            <span>The list is empty.</span>
+            <span>{ui.emptyList}</span>
           </div>
         ) : (
           data.supplies.map((item) => (
@@ -259,11 +274,11 @@ export function HomeScreen({
         )}
       </section>
 
-      <section className={styles.goal} aria-label="Monthly goal">
+      <section className={styles.goal} aria-label={ui.homeMonthlyGoal}>
         <div className={styles.goaltop}>
           <div>
-            <h2>Monthly goal</h2>
-            <p>{data?.goal ? monthLabel(data.goal.month) : ""}</p>
+            <h2>{ui.homeMonthlyGoal}</h2>
+            <p>{data?.goal ? monthLabel(data.goal.month, language) : ""}</p>
           </div>
           <div className={styles.pct}>
             {pct}
@@ -348,7 +363,7 @@ export function HomeScreen({
                       </g>
                     </svg>
                   </span>
-                  <span className={styles.lb}>{item.name}</span>
+                  <span className={styles.lb}>{menuLabel(item.name)}</span>
                   <svg className={styles.chev} viewBox="0 0 24 24" aria-hidden="true">
                     <path
                       d="M9 6l6 6-6 6"

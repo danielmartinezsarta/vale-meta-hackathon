@@ -234,7 +234,7 @@
 
 .fab {
   position: absolute;
-  bottom: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   margin-left: -35px;
   width: 70px;

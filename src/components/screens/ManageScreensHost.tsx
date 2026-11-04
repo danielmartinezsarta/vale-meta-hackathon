@@ -39,7 +39,7 @@ export function ManageScreensHost({
     case "Payments":
       return <PaymentsScreen onBack={onBack} />;
     case "Goals":
-      return <GoalsScreen onBack={onBack} />;
+      return <GoalsScreen onBack={onBack} language={language} />;
     case "Preferences":
       return (
         <PreferencesScreen
