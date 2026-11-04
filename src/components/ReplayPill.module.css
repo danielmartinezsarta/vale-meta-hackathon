@@ -1,0 +1,105 @@
+.pill {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 320px;
+  background: rgba(17, 19, 28, 0.92);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 8px 12px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 6px 20px rgba(10, 18, 48, 0.35);
+  transition:
+    max-width 0.35s ease,
+    padding 0.35s ease;
+}
+
+.pill:focus-visible {
+  outline: 2px solid var(--aw-link);
+  outline-offset: 2px;
+}
+
+.shut {
+  max-width: 230px;
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--aw-ok);
+}
+
+.shut .dot {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.bar {
+  flex: 1 1 40px;
+  min-width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+}
+
+.bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--aw-user);
+  transition: width 0.3s ease;
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.buttons button {
+  background: none;
+  border: 0;
+  color: #fff;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+}
+
+.buttons button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.buttons button:focus-visible {
+  outline: 2px solid var(--aw-link);
+  outline-offset: 1px;
+}
+
+.buttons svg {
+  width: 16px;
+  height: 16px;
+}
+
+.shut .optional {
+  display: none;
+}

@@ -38,9 +38,92 @@ import {
 
 export const runtime = "nodejs";
 
-// Replay cursors per client: with VALE_REPLAY=1 each typed turn is
-// answered from the committed run in order, no model involved.
-const replayCursors = new Map<string, number>();
+// Replay state per client: with VALE_REPLAY=1 each typed turn is
+// answered from the committed run in order, no model involved. The pill
+// and the demo share it through GET /api/voice?replay=...&client=....
+interface ReplayState {
+  cursor: number;
+  paused: boolean;
+}
+const replayStates = new Map<string, ReplayState>();
+function replayState(clientKey: string): ReplayState {
+  const existing = replayStates.get(clientKey);
+  if (existing) return existing;
+  const fresh: ReplayState = { cursor: 0, paused: false };
+  replayStates.set(clientKey, fresh);
+  return fresh;
+}
+
+interface ReplayScene {
+  name: string;
+  start: number;
+  count: number;
+}
+
+function replaySceneList(run: ReplayRun): ReplayScene[] {
+  const scenes: ReplayScene[] = [];
+  for (let i = 0; i < run.turns.length; i += 1) {
+    const last = scenes[scenes.length - 1];
+    if (last && last.name === run.turns[i].scene) last.count += 1;
+    else scenes.push({ name: run.turns[i].scene, start: i, count: 1 });
+  }
+  return scenes;
+}
+
+// Replay controls for the pill and the demo (VALE_REPLAY=1 only):
+// GET /api/voice?replay=state&client=... reads; replay=pause|resume|stop|
+// prev|next writes. Stop parks at turn 0 paused; next from the last scene
+// finishes the run. Nothing here touches the live turn path.
+export async function GET(request: Request): Promise<Response> {
+  if (process.env.VALE_REPLAY !== "1") {
+    return Response.json({ replay: false }, { status: 404 });
+  }
+  const params = new URL(request.url).searchParams;
+  const state = replayState(requestClientId(request));
+  let run: ReplayRun;
+  try {
+    run = parseReplayRun(readFileSync(join(process.cwd(), "replay", "demo-run.json"), "utf8"));
+  } catch {
+    return Response.json({ replay: true, error: "no run" }, { status: 500 });
+  }
+  const scenes = replaySceneList(run);
+  const atScene = (): number => {
+    if (state.cursor >= run.turns.length) return scenes.length - 1;
+    const found = scenes.findIndex(
+      (s) => state.cursor >= s.start && state.cursor < s.start + s.count,
+    );
+    return found < 0 ? 0 : found;
+  };
+  const action = params.get("replay");
+  if (action === "pause") state.paused = true;
+  else if (action === "resume") state.paused = false;
+  else if (action === "stop") {
+    state.cursor = 0;
+    state.paused = true;
+  } else if (action === "prev") {
+    state.cursor = atScene() <= 0 ? 0 : scenes[atScene() - 1].start;
+  } else if (action === "next") {
+    state.cursor =
+      atScene() >= scenes.length - 1 ? run.turns.length : scenes[atScene() + 1].start;
+  }
+  const done = state.cursor >= run.turns.length;
+  const scene = done ? null : scenes[atScene()];
+  return Response.json({
+    replay: true,
+    cursor: state.cursor,
+    total: run.turns.length,
+    paused: state.paused,
+    done,
+    scenes,
+    current: scene
+      ? {
+          scene: scene.name,
+          indexInScene: state.cursor - scene.start + 1,
+          sceneCount: scene.count,
+        }
+      : null,
+  });
+}
 
 // One voice socket: the browser dials /voice, served by server.ts
 // (plain ws upgrade, no platform helpers). This route keeps the POST
@@ -250,11 +333,31 @@ export async function POST(request: Request): Promise<Response> {
         } catch {
           return false;
         }
-        const taken = replayCursors.get(clientKey) ?? 0;
-        if (taken >= run.turns.length) return false;
-        const turn = run.turns[taken];
-        if (turn.transcript !== transcript || aborted) return false;
-        replayCursors.set(clientKey, taken + 1);
+        const state = replayState(clientKey);
+        // Pause holds the turn until resume; the demo waits on the reply.
+        while (state.paused && !aborted) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        if (aborted) return false;
+        // Normal path: the next turn in order. A jump or stop can land the
+        // cursor elsewhere while a turn is in flight; then answer the
+        // matching turn anywhere in the run without moving the cursor.
+        let idx = state.cursor;
+        let advance = true;
+        if (idx >= run.turns.length || run.turns[idx].transcript !== transcript) {
+          advance = false;
+          idx = -1;
+          for (let k = 0; k < run.turns.length; k += 1) {
+            const j = (state.cursor + k) % run.turns.length;
+            if (run.turns[j].transcript === transcript) {
+              idx = j;
+              break;
+            }
+          }
+          if (idx < 0) return false;
+        }
+        const turn = run.turns[idx];
+        if (advance) state.cursor = idx + 1;
         recordTurn(getDb(), clientKey, "user", transcript);
         const half = Math.ceil(turn.reply.length / 2);
         if (turn.reply !== "") {

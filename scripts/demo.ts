@@ -129,21 +129,42 @@ async function main(): Promise<void> {
         deviceScaleFactor: 2,
       });
       const page = await context.newPage();
-      await page.goto(`http://localhost:${port}/`, { waitUntil: "networkidle", timeout: 60000 });
-      await page.getByRole("button", { name: "Wake Vale" }).click({ timeout: 30000 });
-      await page.getByRole("button", { name: "Mute microphone" }).click({ timeout: 30000 });
-      // Warm-up: the typed sender wires up with the mic session, which
-      // takes a couple of seconds after wake. Clicking earlier is lost.
-      await page.waitForTimeout(4000);
+      const wakeUp = async () => {
+        await page.goto(`http://localhost:${port}/`, { waitUntil: "networkidle", timeout: 60000 });
+        await page.getByRole("button", { name: "Wake Vale" }).click({ timeout: 30000 });
+        await page.getByRole("button", { name: "Mute microphone" }).click({ timeout: 30000 });
+        // Warm-up: the typed sender wires up with the mic session, which
+        // takes a couple of seconds after wake. Clicking earlier is lost.
+        await page.waitForTimeout(4000);
+      };
+      await wakeUp();
+      // Same browser id the app stored, so the demo reads the same cursor
+      // the pill shows. It survives a reload, which keeps recovery exact.
+      const clientId =
+        (await page.evaluate(() => window.localStorage.getItem("vale-client"))) ?? "";
+      const readState = async (): Promise<{
+        cursor: number;
+        total: number;
+        paused: boolean;
+        done: boolean;
+      }> => {
+        const response = await fetch(
+          `http://localhost:${port}/api/voice?replay=state&client=${encodeURIComponent(clientId)}`,
+        );
+        return (await response.json()) as {
+          cursor: number;
+          total: number;
+          paused: boolean;
+          done: boolean;
+        };
+      };
       const shots = join(root, "replay", "shots");
       mkdirSync(shots, { recursive: true });
       const shotTaken = new Set<string>();
-      for (const [index, turn] of run.turns.entries()) {
+      const playTurn = async (turn: (typeof run.turns)[number], index: number) => {
         console.log(`[demo] scene: ${turn.scene} (${index + 1}/${run.turns.length})`);
         const box = page.getByRole("textbox", { name: "Type to Vale" });
         await box.fill(turn.transcript, { timeout: 30000 });
-        // Wait for the send to enable, then Enter: an open sheet can cover
-        // the button, and the form submits on Enter like the manual flow.
         await page.waitForFunction(
           () =>
             !(
@@ -154,8 +175,8 @@ async function main(): Promise<void> {
           undefined,
           { timeout: 30000 },
         );
-        // Click, not Enter: the form only submits via the send button.
-        // Force: an open sheet can cover the button; the DOM event is real.
+        // Click: the form only submits via the send button. Force: an
+        // open sheet can cover the button; the DOM event is real.
         const sendBtn = page.getByRole("button", { name: "Send message" });
         await sendBtn.click({ force: true, timeout: 30000 });
         // Match on the reply head: the tail can render across elements.
@@ -191,6 +212,34 @@ async function main(): Promise<void> {
         if ((await closer.count()) > 0) await closer.first().click({ timeout: 5000 });
         await page.keyboard.press("Escape");
         await page.waitForTimeout(500);
+      };
+      // The pill owns the cursor: pause holds, stop and jumps move it, and
+      // the demo types whatever turn the cursor points at, one at a time.
+      let guard = 0;
+      for (;;) {
+        if (guard++ > run.turns.length * 3) {
+          throw new Error("replay looped: the cursor never reached the end");
+        }
+        const state = await readState();
+        if (state.done) break;
+        if (state.paused) {
+          console.log(`[demo] paused at turn ${state.cursor + 1}/${state.total}`);
+          await page.waitForTimeout(3000);
+          continue;
+        }
+        const turn = run.turns[state.cursor];
+        try {
+          await playTurn(turn, state.cursor);
+        } catch {
+          // A confirm sheet can park the session mid-run: reload keeps the
+          // same client and cursor, wake again, and retry the turn once.
+          console.log(`[demo] retry ${turn.turn} after reload`);
+          await page.reload({ waitUntil: "networkidle", timeout: 60000 });
+          await page.getByRole("button", { name: "Wake Vale" }).click({ timeout: 30000 });
+          await page.getByRole("button", { name: "Mute microphone" }).click({ timeout: 30000 });
+          await page.waitForTimeout(4000);
+          await playTurn(turn, state.cursor);
+        }
       }
       console.log(`[demo] complete: ${run.turns.length} turns, one voice at a time`);
       await browser.close();

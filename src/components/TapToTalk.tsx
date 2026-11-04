@@ -12,6 +12,7 @@ import type {
   UtteranceStats,
 } from "@/lib/capture";
 import type { Board } from "@/lib/board";
+import { getValeClientId } from "@/lib/client-id";
 import { hasVisibleContent, type Turn } from "@/lib/turn-view";
 import { parseSseStream } from "@/lib/sse";
 import { isCloseSheetIntent } from "@/lib/wake";
@@ -124,23 +125,7 @@ export function TapToTalk({
   // Stable per-browser id so slots, pending actions and chain lanes survive
   // retaps even behind one shared IP; generated once, then reused.
   const convSocketRef = useRef<WebSocket | null>(null);
-  const [clientId] = useState<string>(() => {
-    if (typeof window === "undefined") return "unknown";
-    try {
-      const stored = window.localStorage.getItem("vale-client");
-      if (stored !== null && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(stored)) {
-        return stored;
-      }
-      const fresh =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `c${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
-      window.localStorage.setItem("vale-client", fresh);
-      return fresh;
-    } catch {
-      return "unknown";
-    }
-  });
+  const [clientId] = useState<string>(getValeClientId);
   const lastLevelRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);

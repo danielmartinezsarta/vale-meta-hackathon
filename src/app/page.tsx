@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { SplashScreen } from "@/components/SplashScreen";
 import { HomeScreen } from "@/components/HomeScreen";
 import { KeyStatusBanner } from "@/components/KeyStatusBanner";
+import { ReplayPill } from "@/components/ReplayPill";
 import { TapToTalk } from "@/components/TapToTalk";
 import { useValeLanguage } from "@/components/useValeLanguage";
 import type { HomeData } from "@/lib/home-data";
@@ -40,6 +41,7 @@ export default function Home() {
     return (
       <>
         <KeyStatusBanner language={language} />
+        <ReplayPill />
         <TapToTalk autoStart onSleep={() => setScreen("home")} />
       </>
     );
@@ -47,6 +49,7 @@ export default function Home() {
   return (
     <main>
       <KeyStatusBanner language={language} />
+      <ReplayPill />
       <HomeScreen
         data={homeData}
         language={language}
