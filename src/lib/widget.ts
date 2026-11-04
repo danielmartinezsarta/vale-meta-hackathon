@@ -439,6 +439,13 @@ function buildSummary(
   const breakdown = (info.breakdown ?? null) as CloseBreakdown | null;
   const closeExtras = Array.isArray(info.extras) ? (info.extras as CloseExtra[]) : [];
   const charged = num(info.paid_amount_usd);
+  // The service row carries everything but the logged extras, so service
+  // plus extras always add up to the subtotal the margin applies to.
+  const extrasTotal = closeExtras.reduce((sum, extra) => sum + extra.amount, 0);
+  const servicePrice =
+    breakdown === null
+      ? null
+      : breakdown.supplies_cost + breakdown.time_cost + breakdown.fixed_share - extrasTotal;
   return {
     kind: "session_summary",
     title: widgetTitle("session_summary"),
@@ -447,9 +454,9 @@ function buildSummary(
       client: last.client,
       date: last.date,
       service:
-        last.service === null || breakdown === null
+        last.service === null || servicePrice === null
           ? null
-          : { name: last.service, price: breakdown.time_cost },
+          : { name: last.service, price: servicePrice },
       extras: closeExtras.map((extra) => ({
         label: `+ ${extra.name} ×${extra.qty}`,
         amount: extra.amount,
