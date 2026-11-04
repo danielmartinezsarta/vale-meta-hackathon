@@ -142,21 +142,42 @@ async function main(): Promise<void> {
         window.localStorage.setItem("vale-theme", "dark");
       });
       const page = await context.newPage();
+      const realClick = async (name: string | RegExp) => {
+        // A real mouse click: audio only unlocks from a gesture.
+        const button = page.getByRole("button", { name });
+        await button.waitFor({ timeout: 30000 });
+        const at = await button.evaluate((el) => {
+          const box = el.getBoundingClientRect();
+          return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        });
+        await page.mouse.click(at.x, at.y);
+      };
       await page.goto(`http://localhost:${port}/`, { waitUntil: "networkidle", timeout: 60000 });
-      // A real mouse click: the session only starts from a gesture.
-      const wakeBtn = page.getByRole("button", { name: "Wake Vale" });
-      await wakeBtn.waitFor({ timeout: 30000 });
-      const at = await wakeBtn.evaluate((el) => {
-        const box = el.getBoundingClientRect();
-        return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-      });
-      await page.mouse.click(at.x, at.y);
+      await realClick("Wake Vale");
       // Mute the instant the button exists, before capture checks the
-      // context (~1 s after wake): muting stops capture, so the blocked
-      // alert never fires, and the typed field shows for every turn.
+      // context (~1 s after wake): the typed field shows for every turn.
       const muteBtn = page.getByRole("button", { name: "Mute microphone" });
       await muteBtn.waitFor({ state: "visible", timeout: 30000 });
       await muteBtn.click({ timeout: 30000 });
+      // The first session starts from an effect, outside the wake gesture,
+      // so its context may stay suspended and raise the blocked alert. The
+      // retry button re-taps in a real gesture, which unlocks audio: take
+      // it when it shows, then re-mute, and the run stays clean.
+      const retryBtn = page.getByRole("button", { name: "Try again" });
+      const retryShown = await retryBtn
+        .waitFor({ state: "visible", timeout: 10000 })
+        .then(() => true)
+        .catch(() => false);
+      if (retryShown) {
+        await realClick("Try again");
+        await page.waitForTimeout(2000);
+        const unmuted = page.getByRole("button", { name: "Mute microphone" });
+        const needsMute = await unmuted
+          .waitFor({ state: "visible", timeout: 10000 })
+          .then(() => true)
+          .catch(() => false);
+        if (needsMute) await unmuted.click({ timeout: 30000 });
+      }
       // Warm-up: the typed sender wires up with the mic session, which
       // takes a couple of seconds after wake. Sending earlier is lost.
       await page.waitForTimeout(4000);
