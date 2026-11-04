@@ -82,6 +82,10 @@ async function quiet(page: Page): Promise<void> {
 
 async function main(): Promise<void> {
   const run = parseReplayRun(readFileSync(join(root, "replay", "demo-run.json"), "utf8"));
+  // The server runs the production build, so rebuild first: the demo must
+  // play the current code, never a stale .next.
+  console.log("[demo] building the app...");
+  execSync("npm run build", { cwd: root, stdio: "inherit" });
   const port = await freePort(3222);
   // Throwaway database: the recorded answers never touch a real DB, and
   // each run starts clean. Never the main checkout data/.
@@ -142,21 +146,31 @@ async function main(): Promise<void> {
       // the pill shows. It survives a reload, which keeps recovery exact.
       const clientId =
         (await page.evaluate(() => window.localStorage.getItem("vale-client"))) ?? "";
+      // The route answers HTML or empty while Next compiles: retry
+      // until it returns JSON, up to 60 s.
       const readState = async (): Promise<{
         cursor: number;
         total: number;
         paused: boolean;
         done: boolean;
       }> => {
-        const response = await fetch(
-          `http://localhost:${port}/api/voice?replay=state&client=${encodeURIComponent(clientId)}`,
-        );
-        return (await response.json()) as {
-          cursor: number;
-          total: number;
-          paused: boolean;
-          done: boolean;
-        };
+        const deadline = Date.now() + 60000;
+        for (;;) {
+          try {
+            const response = await fetch(
+              `http://localhost:${port}/api/voice?replay=state&client=${encodeURIComponent(clientId)}`,
+            );
+            return (await response.json()) as {
+              cursor: number;
+              total: number;
+              paused: boolean;
+              done: boolean;
+            };
+          } catch {
+            if (Date.now() > deadline) throw new Error("replay state never came up");
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        }
       };
       const shots = join(root, "replay", "shots");
       mkdirSync(shots, { recursive: true });
