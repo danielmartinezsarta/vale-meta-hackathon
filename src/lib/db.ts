@@ -223,6 +223,7 @@ function ensureColumn(db: ValeDb, table: string, column: string, definition: str
 export function migrateDatabase(db: ValeDb): void {
   ensureColumn(db, "sessions", "photo_path", "TEXT");
   ensureColumn(db, "session_supplies", "qty", "REAL NOT NULL DEFAULT 1");
+  ensureColumn(db, "reminders", "done", "INTEGER NOT NULL DEFAULT 0");
 }
 
 /** Create tables and insert the invented seed. Idempotent. */

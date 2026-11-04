@@ -385,7 +385,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
     type: "function",
     name: "agenda_move_appointment",
     description:
-      "Move a client's appointment to a new day and time. The first call asks for confirmation; repeat it with confirm_move true to move it. Pass day and time as YYYY-MM-DD and HH:MM, or natural words with new_when; a date with no time keeps the booking's time. Resolved on the America/Bogota calendar.",
+      "Move a client's appointment to a new day and time, at once. Pass day and time as YYYY-MM-DD and HH:MM, or natural words with new_when; a date with no time keeps the booking's time. Resolved on the America/Bogota calendar.",
     parameters: {
       type: "object",
       properties: {
@@ -394,7 +394,6 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
         new_day: { type: "string", description: "New date as YYYY-MM-DD." },
         new_time: { type: "string", description: "New time as HH:MM, 24 hours." },
         new_when: { type: "string", description: "Natural new date and time in English, for example tomorrow at 3 PM. Overrides new_day and new_time." },
-        confirm_move: { type: "boolean", description: "Repeat a confirmed move with true." },
       },
       required: ["client_name"],
     },
@@ -403,14 +402,27 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
     type: "function",
     name: "agenda_cancel_appointment",
     description:
-      "Cancel a client's appointment. The first call asks for confirmation; repeat it with confirm_cancel true to cancel it. With appointment_id no client name is needed.",
+      "Cancel a client's appointment, at once. With appointment_id no client name is needed.",
     parameters: {
       type: "object",
       properties: {
         client_name: { type: "string", description: "Client name, approximate is fine." },
         day: { type: "string", description: "Which booking when several: date as YYYY-MM-DD." },
-        appointment_id: { type: "number", description: "Booking id from a confirm question." },
-        confirm_cancel: { type: "boolean", description: "Repeat a confirmed cancel with true." },
+        appointment_id: { type: "number", description: "Booking id." },
+      },
+      required: [],
+    },
+  },
+  {
+    type: "function",
+    name: "agenda_complete_reminder",
+    description:
+      "Mark an open reminder done: it leaves the agenda and the Agenda screen. Pass reminder_id, or the text to match one open reminder.",
+    parameters: {
+      type: "object",
+      properties: {
+        reminder_id: { type: "number", description: "Reminder id." },
+        text: { type: "string", description: "Words from the reminder text to match one open reminder." },
       },
       required: [],
     },
@@ -1025,10 +1037,66 @@ export function createReminder(
     linkItem.run(id, listRow.id);
   }
   logWrite(db, "agenda_create_reminder", "reminders", id);
+  const savedMessage = language === "en" ? "Reminder saved." : "Recordatorio guardado.";
   return {
     ok: true,
-    message: language === "en" ? "Reminder saved." : "Recordatorio guardado.",
-    data: { reminder_id: id },
+    message: savedMessage,
+    data: { reminder_id: id, notice: { title: "Reminder saved", text: `${savedMessage} ${text}` } },
+  };
+}
+
+/**
+ * agenda_complete_reminder: a bought errand leaves the list. Done
+ * reminders stop showing in agenda_show and on the Agenda screen;
+ * undo_last brings the reminder back.
+ */
+export function completeReminder(
+  db: ValeDb,
+  args: { reminder_id?: unknown; text?: unknown },
+  language: ValeLanguage = "es",
+): ToolResult {
+  const direct = typeof args.reminder_id === "number" ? args.reminder_id : null;
+  let id = direct;
+  if (id === null) {
+    const wanted = typeof args.text === "string" ? args.text.trim().replace(/\s+/g, " ") : "";
+    if (wanted === "") {
+      return { ok: false, message: language === "en" ? "Which reminder?" : "¿Qué recordatorio?" };
+    }
+    const rows = db
+      .prepare("SELECT id, text FROM reminders WHERE done = 0 ORDER BY id")
+      .all() as { id: number; text: string }[];
+    const lowered = wanted.toLowerCase();
+    const matches = rows.filter((row) => row.text.toLowerCase().includes(lowered));
+    if (matches.length === 0) {
+      return { ok: false, message: language === "en" ? "No open reminder matches that." : "Ningún recordatorio abierto coincide." };
+    }
+    if (matches.length > 1) {
+      return {
+        ok: false,
+        message:
+          language === "en"
+            ? `Which one: ${matches.map((row) => row.text).join(" or ")}?`
+            : `¿Cuál: ${matches.map((row) => row.text).join(" o ")}?`,
+      };
+    }
+    id = matches[0].id;
+  }
+  const row = db.prepare("SELECT id, text, done FROM reminders WHERE id = ?").get(id) as
+    | { id: number; text: string; done: number }
+    | undefined;
+  if (!row) {
+    return { ok: false, message: language === "en" ? "That reminder is gone." : "Ese recordatorio ya no existe." };
+  }
+  if (row.done !== 0) {
+    return { ok: false, message: language === "en" ? "That reminder is already done." : "Ese recordatorio ya está listo." };
+  }
+  db.prepare("UPDATE reminders SET done = 1 WHERE id = ?").run(row.id);
+  logWrite(db, "agenda_complete_reminder", "reminders", row.id, { prev_done: 0 });
+  const doneMessage = language === "en" ? `Done: ${row.text}.` : `Listo: ${row.text}.`;
+  return {
+    ok: true,
+    message: doneMessage,
+    data: { reminder_id: row.id, notice: { title: "Reminder done", text: doneMessage } },
   };
 }
 
@@ -1182,6 +1250,7 @@ export function undoLastWrite(db: ValeDb, language: ValeLanguage = "es"): ToolRe
         auto_created?: boolean;
         prev_day?: string;
         prev_time?: string;
+        prev_done?: number;
         prev_qty?: number;
         prev_name?: string;
         prev_photo?: string;
@@ -1283,6 +1352,12 @@ export function undoLastWrite(db: ValeDb, language: ValeLanguage = "es"): ToolRe
       db.prepare("DELETE FROM reminder_items WHERE reminder_id = ?").run(entry.row_id);
       db.prepare("DELETE FROM reminders WHERE id = ?").run(entry.row_id);
       break;
+    case "agenda_complete_reminder": {
+      const prevDone = typeof extra.prev_done === "number" ? extra.prev_done : null;
+      if (prevDone === null) return { ok: false, message: "No se puede deshacer." };
+      db.prepare("UPDATE reminders SET done = ? WHERE id = ?").run(prevDone, entry.row_id);
+      break;
+    }
     case "session_quote_accept":
       db.prepare("DELETE FROM payments WHERE id = ?").run(entry.row_id);
       break;
@@ -2286,7 +2361,7 @@ function appointmentToMove(
 
 export function moveAppointment(
   db: ValeDb,
-  args: { client_name?: unknown; new_day?: unknown; new_time?: unknown; new_when?: unknown; day?: unknown; confirm_move?: unknown },
+  args: { client_name?: unknown; new_day?: unknown; new_time?: unknown; new_when?: unknown; day?: unknown },
   language: ValeLanguage = "es",
 ): ToolResult {
   const clientName = typeof args.client_name === "string" ? args.client_name : "";
@@ -2318,20 +2393,7 @@ export function moveAppointment(
   if ("error" in resolved) return { ok: false, message: resolved.error };
   const calendar = checkCalendarDay(resolved.day, language);
   if (calendar) return { ok: false, message: calendar };
-  // Moves ask first (decision 2): the refusal carries the question and a
-  // yes runs the same call with confirm_move true.
-  if (args.confirm_move !== true) {
-    const natural = formatNaturalDateTime(resolved.day, resolved.time);
-    return {
-      ok: false,
-      message:
-        language === "en"
-          ? `Move ${current.client} to ${natural}? Say yes to confirm.`
-          : `¿Muevo a ${current.client} a ${natural}? Di que sí para confirmar.`,
-      pendingMove: { client_name: client.row.name, new_day: resolved.day, new_time: resolved.time },
-      data: { pending_move: true },
-    };
-  }
+  // Moves act at once, like bookings: undo_last reverts a wrong move.
   db.prepare("UPDATE appointments SET day = ?, time = ? WHERE id = ?").run(
     resolved.day,
     resolved.time,
@@ -2339,47 +2401,44 @@ export function moveAppointment(
   );
   logWrite(db, "agenda_move_appointment", "appointments", current.id, { prev_day: current.day, prev_time: current.time });
   const natural = formatNaturalDateTime(resolved.day, resolved.time);
+  const movedMessage =
+    language === "en" ? `Moved: ${current.client} ${natural}.` : `Movida: ${current.client} ${natural}.`;
   return {
     ok: true,
-    message: language === "en" ? `Moved: ${current.client} ${natural}.` : `Movida: ${current.client} ${natural}.`,
+    message: movedMessage,
     data: {
       appointment_id: current.id,
       client: current.client,
       service: current.service,
       day: resolved.day,
       time: resolved.time,
+      notice: { title: "Appointment moved", text: movedMessage },
     },
   };
 }
 
 export function cancelAppointment(
   db: ValeDb,
-  args: { client_name?: unknown; day?: unknown; confirm_cancel?: unknown; appointment_id?: unknown },
+  args: { client_name?: unknown; day?: unknown; appointment_id?: unknown },
   language: ValeLanguage = "es",
 ): ToolResult {
-  // A confirmed yes names the booking directly: no client needed.
+  // Naming the booking directly needs no client.
   if (typeof args.appointment_id === "number") {
     const row = db.prepare("SELECT id FROM appointments WHERE id = ?").get(args.appointment_id) as { id: number } | undefined;
     if (!row) {
       return { ok: false, message: language === "en" ? "That booking is gone." : "Esa cita ya no existe." };
-    }
-    if (args.confirm_cancel !== true) {
-      return {
-        ok: false,
-        message: language === "en" ? "Say yes to confirm." : "Di que sí para confirmar.",
-        pendingCancel: { appointment_id: row.id },
-        data: { pending_cancel: true },
-      };
     }
     const current = listAppointments(db, "WHERE a.id = ?", row.id)[0];
     const full = db.prepare("SELECT * FROM appointments WHERE id = ?").get(row.id) as Record<string, unknown>;
     db.prepare("DELETE FROM appointments WHERE id = ?").run(row.id);
     logWrite(db, "agenda_cancel_appointment", "appointments", row.id, { row: full });
     const natural = formatNaturalDateTime(current.day, current.time);
+    const cancelledMessage =
+      language === "en" ? `Cancelled: ${current.client} ${natural}.` : `Cancelada: ${current.client} ${natural}.`;
     return {
       ok: true,
-      message: language === "en" ? `Cancelled: ${current.client} ${natural}.` : `Cancelada: ${current.client} ${natural}.`,
-      data: { appointment_id: row.id },
+      message: cancelledMessage,
+      data: { appointment_id: row.id, notice: { title: "Appointment cancelled", text: cancelledMessage } },
     };
   }
   const clientName = typeof args.client_name === "string" ? args.client_name : "";
@@ -2402,27 +2461,17 @@ export function cancelAppointment(
     };
   }
   const current = picked[0];
-  // Deletes ask first (decision 2): a yes runs the same call confirmed.
-  if (args.confirm_cancel !== true) {
-    const natural = formatNaturalDateTime(current.day, current.time);
-    return {
-      ok: false,
-      message:
-        language === "en"
-          ? `Cancel ${current.client} ${natural}? Say yes to confirm.`
-          : `¿Cancelo a ${current.client} ${natural}? Di que sí para confirmar.`,
-      pendingCancel: { appointment_id: current.id },
-      data: { pending_cancel: true },
-    };
-  }
+  // Deletes act at once, like bookings: undo_last restores the booking.
   const full = db.prepare("SELECT * FROM appointments WHERE id = ?").get(current.id) as Record<string, unknown>;
   db.prepare("DELETE FROM appointments WHERE id = ?").run(current.id);
   logWrite(db, "agenda_cancel_appointment", "appointments", current.id, { row: full });
   const natural = formatNaturalDateTime(current.day, current.time);
+  const cancelledMessage =
+    language === "en" ? `Cancelled: ${current.client} ${natural}.` : `Cancelada: ${current.client} ${natural}.`;
   return {
     ok: true,
-    message: language === "en" ? `Cancelled: ${current.client} ${natural}.` : `Cancelada: ${current.client} ${natural}.`,
-    data: { appointment_id: current.id },
+    message: cancelledMessage,
+    data: { appointment_id: current.id, notice: { title: "Appointment cancelled", text: cancelledMessage } },
   };
 }
 
@@ -2467,8 +2516,9 @@ export function showAgenda(
     };
   }
   const appointments = listAppointments(db, "WHERE a.day >= ? AND a.day <= ?", start, end);
+  // Done reminders leave the agenda: undo brings them back instead.
   const reminders = db
-    .prepare("SELECT id, text, kind FROM reminders WHERE day >= ? AND day <= ? ORDER BY day, id")
+    .prepare("SELECT id, text, kind FROM reminders WHERE done = 0 AND day >= ? AND day <= ? ORDER BY day, id")
     .all(start, end) as { id: number; text: string; kind: string }[];
   const said = appointments.map(
     (row) => `${row.client} at ${hour12(row.time)} for ${row.service}`,
@@ -2596,6 +2646,8 @@ export function runValeTool(db: ValeDb, name: string, args: Record<string, unkno
       return cancelAppointment(db, args, language);
     case "agenda_create_reminder":
       return createReminder(db, args, language);
+    case "agenda_complete_reminder":
+      return completeReminder(db, args, language);
     case "goal_show":
       return goalProgress(db);
     case "stock_set":

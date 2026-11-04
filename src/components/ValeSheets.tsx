@@ -1000,6 +1000,23 @@ export function ValeSheets({ widget, ...callbacks }: { widget: Widget } & SheetC
           </div>
         </section>
       );
+    case "notice":
+      return (
+        <section className={sheet("aw-sheet aw-booked")} role="status" aria-label={widget.title}>
+          <Grab />
+          <div className="aw-sheet__head">
+            <span className="aw-booked__check" aria-hidden="true">
+              {CHECK_ICON}
+            </span>
+            <h2 className="aw-sheet__title">{widget.title}</h2>
+          </div>
+          <div className="aw-fields">
+            <div className="aw-field aw-field--wide">
+              <b>{widget.data.text}</b>
+            </div>
+          </div>
+        </section>
+      );
     case "session_summary":
       return (
         <section className={sheet("aw-sheet aw-summary-sheet")} role="dialog" aria-label="Session summary">

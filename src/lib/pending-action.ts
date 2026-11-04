@@ -87,17 +87,6 @@ export function pendingConfirmTitle(
   if (accept) {
     return en ? "Register the payment?" : "¿Registro el pago?";
   }
-  const move = find("agenda_move_appointment");
-  if (move) {
-    const client = clean(move.client_name);
-    if (client !== undefined) {
-      return en ? `Move ${client}'s appointment?` : `¿Muevo la cita de ${client}?`;
-    }
-  }
-  const cancel = find("agenda_cancel_appointment");
-  if (cancel) {
-    return en ? "Cancel the appointment?" : "¿Cancelo la cita?";
-  }
   return en ? "Should I save it?" : "¿Lo guardo?";
 }
 
@@ -205,35 +194,6 @@ export function buildPendingActions(
       const name = clean(toolResult.pendingCreate);
       if (name !== undefined && getOpenSession(db) !== null) {
         return [{ tool: "session_log_supply", args: { name, confirm_create: true } }];
-      }
-      return undefined;
-    }
-    if (toolName === "agenda_move_appointment") {
-      const pending = toolResult.pendingMove as
-        | { client_name?: unknown; new_day?: unknown; new_time?: unknown }
-        | undefined;
-      const client = clean(pending?.client_name);
-      const day = clean(pending?.new_day);
-      const time = clean(pending?.new_time);
-      if (client !== undefined && day !== undefined && time !== undefined) {
-        return [
-          {
-            tool: "agenda_move_appointment",
-            args: { client_name: client, new_day: day, new_time: time, confirm_move: true },
-          },
-        ];
-      }
-      return undefined;
-    }
-    if (toolName === "agenda_cancel_appointment") {
-      const pending = toolResult.pendingCancel as { appointment_id?: unknown } | undefined;
-      if (typeof pending?.appointment_id === "number") {
-        return [
-          {
-            tool: "agenda_cancel_appointment",
-            args: { appointment_id: pending.appointment_id, confirm_cancel: true },
-          },
-        ];
       }
       return undefined;
     }

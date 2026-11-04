@@ -420,7 +420,7 @@ export function TapToTalk({
         doneTimerRef.current = 0;
         settleToListening();
       }, 1500);
-      if (next.kind === "booked" || next.kind === "note" || next.kind === "health_note") {
+      if (next.kind === "booked" || next.kind === "note" || next.kind === "health_note" || next.kind === "notice") {
         widgetTimerRef.current = window.setTimeout(() => {
           widgetTimerRef.current = 0;
           closeWidgetByHand();

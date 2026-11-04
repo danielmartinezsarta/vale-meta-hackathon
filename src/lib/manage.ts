@@ -72,10 +72,10 @@ export function listAgenda(db: ValeDb, day: string): AgendaDay {
     )
     .all(day) as unknown as AgendaDay["appointments"];
   const reminders = db
-    .prepare("SELECT id, text, kind, day FROM reminders WHERE day = ? ORDER BY id")
+    .prepare("SELECT id, text, kind, day FROM reminders WHERE done = 0 AND day = ? ORDER BY id")
     .all(day) as unknown as AgendaDay["reminders"];
   const undated = db
-    .prepare("SELECT id, text, kind, day FROM reminders WHERE day = '' ORDER BY id")
+    .prepare("SELECT id, text, kind, day FROM reminders WHERE done = 0 AND day = '' ORDER BY id")
     .all() as unknown as AgendaDay["undated"];
   return { appointments, reminders, undated };
 }
@@ -111,8 +111,8 @@ export function saveAppointment(
 
 export function deleteAppointment(db: ValeDb, id: number): ToolResult {
   // The screen already confirmed ("Cancel appointment" is the confirm step),
-  // so the voice two-step runs here with its confirmed intent at once.
-  return cancelAppointment(db, { appointment_id: id, confirm_cancel: true }, en);
+  // so the voice call runs with its confirmed intent at once.
+  return cancelAppointment(db, { appointment_id: id }, en);
 }
 
 export function saveReminder(

@@ -38,9 +38,9 @@ const SPOKEN_BASE = [
   "Keep every reply to about 25 words at most: direct, no filler, and never end with a question unless you are asking for confirmation or for missing information.",
   "You can: open sessions with a timer, save notes on the client card (health notes stay private), keep the shopping list, register clients and supplies, quote prices and keep the agenda. Use them to act.",
   "Never invent names, prices or addresses, and never claim a write happened without calling its tool. Say it is done only after the tool succeeds.",
-  "Some tools show a screen card: goal_show, agenda_show, client_card_show, client_note_add, agenda_create_appointment, session_quote, session_close and widget_show. When a screen card shows, say one short line pointing at it (for example Here's your goal on screen.) and never read its numbers aloud. Money, health notes and the goal stay on the screen only: the voice only says the card is on screen.",
+  "Some tools show a screen card: goal_show, agenda_show, client_card_show, client_note_add, agenda_create_appointment, agenda_move_appointment, agenda_cancel_appointment, agenda_create_reminder, agenda_complete_reminder, session_quote, session_close and widget_show. When a screen card shows, say one short line pointing at it (for example Here's your goal on screen.) and never read its numbers aloud. Money, health notes and the goal stay on the screen only: the voice only says the card is on screen.",
   "Reads (agenda_show, client_card_show, goal_show, widget_show, tool_get_details) run at once.",
-  "Book directly and save notes, sessions, supplies and shopping at once: the booking saves even off hours, and undo_last fixes a wrong write. Only the quote and what moves or deletes ask first: a yes registers the payment, moves the booking or cancels it.",
+  "Book, move, cancel and remind at once: every agenda write saves even off hours, shows a notice card with what changed, and undo_last fixes a wrong write. Only the quote asks first: a yes registers the payment.",
   "A client alone opens their session: Start a session with David calls session_open with the client, and today's appointment names the service. Resolve natural dates (next Friday at 5 PM) with the agenda tools on the America/Bogota calendar; never invent one, and when the user corrects only the date, keep the original time.",
   "Only ask first when in doubt: unknown or ambiguous names, unknown supplies. Then say what you would do in one sentence and ask the confirmation question (Should I save it?), and wait for the user to say yes before calling.",
   "Greet briefly and varied when there is no request, without asking for data. When the client or service is missing, ask briefly and naturally, naming what you already have.",
@@ -251,12 +251,15 @@ export function contractWidgetFor(
         data: null,
       };
     case "agenda_move_appointment":
-      if (typeof info.appointment_id !== "number") return null;
-      return {
-        tool: "move_appointment",
-        args: { client_name: info.client, service_name: info.service, day: info.day, time: info.time },
-        data: null,
-      };
+    case "agenda_cancel_appointment":
+    case "agenda_create_reminder":
+    case "agenda_complete_reminder": {
+      const notice = info.notice as { title?: unknown; text?: unknown } | undefined;
+      const title = typeof notice?.title === "string" ? notice.title : "";
+      const text = typeof notice?.text === "string" ? notice.text : "";
+      if (title === "" || text === "") return null;
+      return { tool: "notice", args: {}, data: { title, text } };
+    }
     case "session_close":
       return { tool: "close_session", args: {}, data };
     default:

@@ -29,6 +29,7 @@ export type WidgetKind =
   | "good_job"
   | "shopping"
   | "low_stock"
+  | "notice"
   | "confirm";
 
 /** Fixed sheet size per kind; good_job is a screen state, never a sheet. */
@@ -47,6 +48,7 @@ export const WIDGET_SIZE: Record<WidgetKind, WidgetSize> = {
   good_job: "full",
   shopping: "half",
   low_stock: "half",
+  notice: "half",
   confirm: "half",
 };
 
@@ -83,6 +85,8 @@ export function widgetTitle(kind: WidgetKind): string {
       return "Low stock";
     case "confirm":
       return "Confirm";
+    case "notice":
+      return "Done";
   }
 }
 
@@ -210,6 +214,11 @@ export interface LowStockData {
 /** Touch fallback for proposals with no widget of their own. */
 export type ConfirmData = Record<string, never>;
 
+/** One-line notice of a finished write; the title names what changed. */
+export interface NoticeData {
+  text: string;
+}
+
 export type Widget =
   | { kind: "client_card"; title: string; size: "full"; data: ClientCardData }
   | { kind: "goal"; title: string; size: "half"; data: GoalData }
@@ -225,6 +234,7 @@ export type Widget =
   | { kind: "good_job"; title: string; size: "full"; data: GoodJobData }
   | { kind: "shopping"; title: string; size: "half"; data: ShoppingData }
   | { kind: "low_stock"; title: string; size: "half"; data: LowStockData }
+  | { kind: "notice"; title: string; size: "half"; data: NoticeData }
   | { kind: "confirm"; title: string; size: "half"; data: ConfirmData };
 
 /** Read-only store for card and summary enrichment; columns may be absent. */
@@ -674,6 +684,17 @@ export function buildWidget(
         title: widgetTitle("low_stock"),
         size: "half",
         data: { items },
+      };
+    }
+    case "notice": {
+      const title = text(info.title);
+      const body = text(info.text);
+      if (title === "" || body === "") return null;
+      return {
+        kind: "notice",
+        title,
+        size: "half",
+        data: { text: body },
       };
     }
     default:

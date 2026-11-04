@@ -61,6 +61,7 @@ describe("tool definitions", () => {
     expect(names).toEqual(
       [
         "agenda_cancel_appointment",
+        "agenda_complete_reminder",
         "agenda_create_appointment",
         "agenda_create_reminder",
         "agenda_move_appointment",
@@ -912,7 +913,7 @@ describe("appointments", () => {
     bookToday(db, "Ana", "10:00");
     const moved = moveAppointment(
       db,
-      { client_name: "Ana", new_day: localDay(), new_time: "12:00", confirm_move: true },
+      { client_name: "Ana", new_day: localDay(), new_time: "12:00" },
     );
     expect(moved.ok).toBe(true);
     expect(moved.message).toContain("12 PM");
@@ -923,14 +924,16 @@ describe("appointments", () => {
     db.close();
   });
 
-  it("asks first on a move, then moves on yes (decision 2)", () => {
+  it("moves at once with a notice, no question first", () => {
     const db = freshTestDb();
     db.prepare("DELETE FROM appointments").run();
     bookToday(db, "Ana", "10:00");
-    const asked = moveAppointment(db, { client_name: "Ana", new_day: localDay(), new_time: "12:00" });
-    expect(asked.ok).toBe(false);
-    expect(asked.pendingMove).toEqual({ client_name: "Ana", new_day: localDay(), new_time: "12:00" });
-    expect(listToday(db).message).toContain("10:00");
+    const moved = moveAppointment(db, { client_name: "Ana", new_day: localDay(), new_time: "12:00" });
+    expect(moved.ok).toBe(true);
+    expect(listToday(db).message).toContain("12:00");
+    const notice = (moved.data as { notice: { title: string; text: string } }).notice;
+    expect(notice.title).toBe("Appointment moved");
+    expect(notice.text).toContain("12 PM");
     db.close();
   });
 
@@ -938,29 +941,26 @@ describe("appointments", () => {
     const db = freshTestDb();
     db.prepare("DELETE FROM appointments").run();
     bookToday(db, "Ana", "10:00");
-    const asked = runValeTool(db, "agenda_move_appointment", {
-      client_name: "Ana",
-      new_day: localDay(),
-      new_time: "12:00",
-    });
-    expect(asked.ok).toBe(false);
     const moved = runValeTool(db, "agenda_move_appointment", {
       client_name: "Ana",
       new_day: localDay(),
       new_time: "12:00",
-      confirm_move: true,
     });
     expect(moved.ok).toBe(true);
     expect(listToday(db).message).toContain("12:00");
+    const notice = (moved.data as { notice: { title: string; text: string } }).notice;
+    expect(notice.title).toBe("Appointment moved");
     const logged = db
       .prepare("SELECT action FROM write_log WHERE action = 'agenda_move_appointment'")
       .get() as { action: string } | undefined;
     expect(logged?.action).toBe("agenda_move_appointment");
-    const askCancel = runValeTool(db, "agenda_cancel_appointment", { client_name: "Ana" });
-    expect(askCancel.ok).toBe(false);
-    const cancelled = runValeTool(db, "agenda_cancel_appointment", { client_name: "Ana", confirm_cancel: true });
+    const cancelled = runValeTool(db, "agenda_cancel_appointment", { client_name: "Ana" });
     expect(cancelled.ok).toBe(true);
     expect(listToday(db).message).toBe("No tienes nada hoy.");
+    const cancelNotice = (cancelled.data as { notice: { title: string; text: string } }).notice;
+    expect(cancelNotice.title).toBe("Appointment cancelled");
+    expect(undoLastWrite(db).ok).toBe(true);
+    expect(listToday(db).message).toContain("12:00");
     const reminded = runValeTool(db, "agenda_create_reminder", { text: "Buy acetone" });
     expect(reminded.ok).toBe(true);
     const row = db.prepare("SELECT text FROM reminders WHERE text = 'Buy acetone'").get() as
@@ -975,15 +975,7 @@ describe("appointments", () => {
     createClient(db, { name: "Vera" });
     createAppointment(db, { client_name: "Vera", service_name: "retiro", day: localDay(), time: "10:00" });
     // "no, it's for next Friday": the date moves, the 10:00 stays.
-    const corrected = moveAppointment(db, { client_name: "Vera", new_when: "next Friday" }, "en");
-    expect(corrected.ok).toBe(false);
-    expect(corrected.pendingMove?.new_time).toBe("10:00");
-    expect(corrected.pendingMove?.new_day).not.toBe(localDay());
-    const saved = moveAppointment(
-      db,
-      { client_name: "Vera", new_when: "next Friday", confirm_move: true },
-      "en",
-    );
+    const saved = moveAppointment(db, { client_name: "Vera", new_when: "next Friday" }, "en");
     expect(saved.ok).toBe(true);
     expect((saved.data as { time: string }).time).toBe("10:00");
     db.close();
@@ -1082,24 +1074,60 @@ describe("agenda_create_reminder", () => {
 });
 
 describe("agenda_cancel_appointment", () => {
-  it("asks first, then cancels and undoes", () => {
+  it("cancels at once with a notice, then undoes", () => {
     const db = freshTestDb();
     const seeded = (db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number }).n;
-    const asked = cancelAppointment(db, { client_name: "Ana" }, "en");
-    expect(asked.ok).toBe(false);
-    expect(typeof asked.pendingCancel?.appointment_id).toBe("number");
-    const done = cancelAppointment(
-      db,
-      { appointment_id: asked.pendingCancel?.appointment_id, confirm_cancel: true },
-      "en",
-    );
+    const done = cancelAppointment(db, { client_name: "Ana" }, "en");
     expect(done.ok).toBe(true);
     expect(done.message).toContain("Cancelled");
+    const notice = (done.data as { notice: { title: string; text: string } }).notice;
+    expect(notice.title).toBe("Appointment cancelled");
     const count = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
     expect(count.n).toBe(seeded - 1);
     expect(undoLastWrite(db).ok).toBe(true);
     const back = db.prepare("SELECT COUNT(*) AS n FROM appointments").get() as { n: number };
     expect(back.n).toBe(seeded);
+    db.close();
+  });
+});
+
+describe("agenda_complete_reminder", () => {
+  function openReminder(db: ReturnType<typeof freshTestDb>): number {
+    const saved = runValeTool(db, "agenda_create_reminder", { text: "Buy acetone" });
+    expect(saved.ok).toBe(true);
+    return (saved.data as { reminder_id: number }).reminder_id;
+  }
+
+  it("completes by id with a notice and hides the reminder", () => {
+    const db = freshTestDb();
+    const id = openReminder(db);
+    const shown = showAgenda(db, { range: "today" });
+    expect((shown.data as { reminders: { id: number }[] }).reminders.map((item) => item.id)).toContain(id);
+    const done = runValeTool(db, "agenda_complete_reminder", { reminder_id: id });
+    expect(done.ok).toBe(true);
+    const notice = (done.data as { notice: { title: string; text: string } }).notice;
+    expect(notice.title).toBe("Reminder done");
+    const after = showAgenda(db, { range: "today" });
+    expect((after.data as { reminders: { id: number }[] }).reminders.map((item) => item.id)).not.toContain(id);
+    expect(undoLastWrite(db).ok).toBe(true);
+    const back = showAgenda(db, { range: "today" });
+    expect((back.data as { reminders: { id: number }[] }).reminders.map((item) => item.id)).toContain(id);
+    db.close();
+  });
+
+  it("matches one open reminder by text and asks on ambiguity", () => {
+    const db = freshTestDb();
+    openReminder(db);
+    runValeTool(db, "agenda_create_reminder", { text: "Buy more acetone" });
+    const ambiguous = runValeTool(db, "agenda_complete_reminder", { text: "acetone" }, "en");
+    expect(ambiguous.ok).toBe(false);
+    expect(ambiguous.message).toContain("Which one");
+    const done = runValeTool(db, "agenda_complete_reminder", { text: "more acetone" });
+    expect(done.ok).toBe(true);
+    expect(runValeTool(db, "agenda_complete_reminder", { text: "foil" }).ok).toBe(true);
+    expect(runValeTool(db, "agenda_complete_reminder", { text: "acetone" }).ok).toBe(true);
+    expect(runValeTool(db, "agenda_complete_reminder", {}).ok).toBe(false);
+    expect(runValeTool(db, "agenda_complete_reminder", { reminder_id: 999001 }).ok).toBe(false);
     db.close();
   });
 });

@@ -207,6 +207,19 @@ describe("buildWidget (typed payloads per kind)", () => {
     });
   });
 
+  it("builds the notice payload with the caller title", () => {
+    expect(
+      buildWidget("notice", {}, { title: "Appointment moved", text: "Moved: David Friday." }, NO_DB),
+    ).toEqual({
+      kind: "notice",
+      title: "Appointment moved",
+      size: "half",
+      data: { text: "Moved: David Friday." },
+    });
+    expect(buildWidget("notice", {}, { title: "", text: "x" }, NO_DB)).toBeNull();
+    expect(buildWidget("notice", {}, { title: "T", text: "" }, NO_DB)).toBeNull();
+  });
+
   it("builds the booked payload from the call args", () => {
     const data = { appointment_id: 7, off_hours: false };
     const args = {

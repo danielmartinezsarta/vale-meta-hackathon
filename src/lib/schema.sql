@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS reminders (
   text TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'general' CHECK (kind IN ('general', 'shopping', 'call')),
   day TEXT NOT NULL DEFAULT '',
+  done INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE TABLE IF NOT EXISTS reminder_items (
