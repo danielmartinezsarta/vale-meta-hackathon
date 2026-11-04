@@ -114,7 +114,7 @@ describe("sessions", () => {
     const db = freshTestDb();
     const opened = openSession(db, { client_name: "ana", service_name: "retiro" });
     expect(opened.ok).toBe(true);
-    expect(opened.message).toContain("Ana");
+    expect(opened.message).toContain("foto de antes");
     const closed = closeSession(db, { products_used: ["Acetona", "Algodon"] });
     expect(closed.ok).toBe(true);
     expect(closed.message).toMatch(/Duró \d+ minutos?/);
@@ -126,6 +126,14 @@ describe("sessions", () => {
     expect(row.duration_s).toBeGreaterThanOrEqual(0);
     const links = db.prepare("SELECT COUNT(*) AS n FROM session_supplies").get() as { n: number };
     expect(links.n).toBe(2);
+    db.close();
+  });
+
+  it("reminds the before photo when opening a session", () => {
+    const db = freshTestDb();
+    const opened = openSession(db, { client_name: "Ana", service_name: "Gel removal" }, "en");
+    expect(opened.ok).toBe(true);
+    expect(opened.message).toBe("Session open. Don't forget the before photo.");
     db.close();
   });
 
@@ -223,7 +231,7 @@ describe("session_open with only a client (9.5)", () => {
     // "my client David is getting near": the client alone is enough.
     const opened = openSession(db, { client_name: "David" });
     expect(opened.ok).toBe(true);
-    expect(opened.message).toContain("David");
+    expect(opened.message).toContain("foto de antes");
     const session = db
       .prepare(
         `SELECT s.name AS service FROM sessions

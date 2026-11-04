@@ -467,7 +467,16 @@ export function openSession(db: ValeDb, args: { client_name?: unknown; service_n
     .prepare("INSERT INTO sessions (client_id, service_id, started_at) VALUES (?, ?, ?)")
     .run(client.row.id, service.row.id, startedAt);
   logWrite(db, "session_open", "sessions", Number(result.lastInsertRowid));
-  return { ok: true, message: language === "en" ? `Session open with ${client.row.name}.` : `Sesión abierta con ${client.row.name}.`, data: { session_id: Number(result.lastInsertRowid) } };
+  // A new session never has a before photo yet, so opening always reminds
+  // to take it; the name already rides the sheet, never the voice.
+  return {
+    ok: true,
+    message:
+      language === "en"
+        ? "Session open. Don't forget the before photo."
+        : "Sesión abierta. No olvides la foto de antes.",
+    data: { session_id: Number(result.lastInsertRowid) },
+  };
 }
 
 export function closeSession(db: ValeDb, args: { products_used?: unknown }, language: ValeLanguage = "es"): ToolResult {

@@ -394,7 +394,7 @@ describe("agent turn with tools", () => {
 
     expect(bodies).toHaveLength(1);
     expect(result.toolUsed).toBe("session_open");
-    expect(result.text).toBe("Sesión abierta con Ana.");
+    expect(result.text).toBe("Sesión abierta. No olvides la foto de antes.");
     db.close();
   });
 
