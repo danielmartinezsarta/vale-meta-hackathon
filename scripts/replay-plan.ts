@@ -12,12 +12,10 @@ export const REPLAY_PLAN: ReplayPlanTurn[] = [
   { scene: "Daily agenda", phrase: "Vale, what do I have today?" },
   { scene: "Daily agenda", phrase: "Vale, what time is David coming today?" },
   // Agenda management: create, move, cancel, and a dated reminder. The
-  // confirmations are bare ("Yes"): only that matches the pending yes.
+  // tools write at once with notice cards since #22, so no confirm turns.
   { scene: "Agenda management", phrase: "Vale, book Ana for a gel refill on Friday at 6 PM" },
   { scene: "Agenda management", phrase: "Vale, move Ana's Friday appointment to Saturday at 11 AM" },
-  { scene: "Agenda management", phrase: "Yes" },
   { scene: "Agenda management", phrase: "Vale, cancel Ana's Saturday appointment" },
-  { scene: "Agenda management", phrase: "Yes" },
   { scene: "Agenda management", phrase: "Vale, remind me to bring extra towels on Friday" },
   // Client's card: register, note, health note, card, then the brief.
   { scene: "Client's card", phrase: "Vale, register a new client Nina" },
@@ -46,6 +44,14 @@ export const REPLAY_PLAN: ReplayPlanTurn[] = [
   { scene: "Nail photo studio", phrase: "Vale, close the session" },
   // Goals: the month at a glance.
   { scene: "Goals", phrase: "Vale, how am I doing with my monthly goal?" },
+  // Shopping list: add, remove, show. Provisional: the model cannot call
+  // the internal shopping tools yet, so these turns are unproven until
+  // the tools are exposed; the run below is NOT re-recorded with them.
+  { scene: "Shopping list", phrase: "Vale, add rhinestones to the shopping list" },
+  { scene: "Shopping list", phrase: "Vale, remove rhinestones from the shopping list" },
+  { scene: "Shopping list", phrase: "Vale, show me my shopping list" },
+  // Low stock suggestions: provisional for the same reason.
+  { scene: "Low stock suggestions", phrase: "Vale, what is running low on stock?" },
 ];
 
 /** Scene per turn, in plan order; stamped onto the folded run. */
