@@ -62,7 +62,7 @@ describe("microphone permission", () => {
     const callbacks = vi.mocked(startCapture).mock.calls[0][1];
     callbacks.onBlocked?.();
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/no arrancó|did not start/i);
+    expect(alert.textContent).toMatch(/no arrancó|didn't start/i);
   });
 
   it("shows how to re-enable the mic when denied, with no prompt loop", async () => {

@@ -524,7 +524,7 @@ describe("POST /api/voice", () => {
     const text = await POST(request).then((response) => response.text());
     expect(text).toContain("event: final");
     expect(text).toContain("hello, book a gel refill");
-    expect(text).toContain("Sorry, I had a problem.");
+    expect(text).toContain("Something went wrong.");
     expect(text).toContain('"code":"E-MODEL"');
     const turns = loggedTurns();
     expect(turns).toHaveLength(1);
@@ -548,7 +548,7 @@ describe("POST /api/voice", () => {
       },
     );
     const text = await POST(request).then((response) => response.text());
-    expect(text).toContain("Perdón, tuve un problema.");
+    expect(text).toContain("Tuve un problema.");
     expect(text).toContain('"code":"E-MODEL"');
     vi.unstubAllGlobals();
   });
