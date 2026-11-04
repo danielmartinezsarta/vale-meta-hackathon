@@ -153,45 +153,6 @@ describe("pending action", () => {
     db.close();
   });
 
-  it("stores the confirmed move behind a move doubt (9.2)", () => {
-    const db = freshTestDb();
-    expect(
-      buildPendingActions(
-        db,
-        "agenda_move_appointment",
-        { client_name: "Ana" },
-        {
-          ok: false,
-          pendingMove: { client_name: "Ana", new_day: "2026-11-14", new_time: "17:00" },
-        },
-      ),
-    ).toEqual([
-      {
-        tool: "agenda_move_appointment",
-        args: { client_name: "Ana", new_day: "2026-11-14", new_time: "17:00", confirm_move: true },
-      },
-    ]);
-    db.close();
-  });
-
-  it("stores the confirmed cancel behind a cancel doubt (9.2)", () => {
-    const db = freshTestDb();
-    expect(
-      buildPendingActions(
-        db,
-        "agenda_cancel_appointment",
-        { client_name: "Ana" },
-        { ok: false, pendingCancel: { appointment_id: 9 } },
-      ),
-    ).toEqual([
-      {
-        tool: "agenda_cancel_appointment",
-        args: { appointment_id: 9, confirm_cancel: true },
-      },
-    ]);
-    db.close();
-  });
-
   it("never stores an appointment proposal: booking asks nothing (decision 2)", () => {
     const db = freshTestDb();
     expect(
@@ -199,6 +160,17 @@ describe("pending action", () => {
     ).toBeUndefined();
     expect(
       buildPendingActions(db, "agenda_create_appointment", { client_name: "Ana" }, { ok: false }),
+    ).toBeUndefined();
+    db.close();
+  });
+
+  it("never stores move or cancel proposals: both act at once", () => {
+    const db = freshTestDb();
+    expect(
+      buildPendingActions(db, "agenda_move_appointment", { client_name: "Ana" }, { ok: true }),
+    ).toBeUndefined();
+    expect(
+      buildPendingActions(db, "agenda_cancel_appointment", { client_name: "Ana" }, { ok: true }),
     ).toBeUndefined();
     db.close();
   });
@@ -296,18 +268,6 @@ describe("pending action", () => {
         "en",
       ),
     ).toBe("Register the payment?");
-    expect(
-      pendingConfirmTitle(
-        [{ tool: "agenda_move_appointment", args: { client_name: "Ana" } }],
-        "en",
-      ),
-    ).toBe("Move Ana's appointment?");
-    expect(
-      pendingConfirmTitle(
-        [{ tool: "agenda_cancel_appointment", args: { appointment_id: 9 } }],
-        "en",
-      ),
-    ).toBe("Cancel the appointment?");
     expect(pendingConfirmTitle([], "en")).toBe("Should I save it?");
   });
 

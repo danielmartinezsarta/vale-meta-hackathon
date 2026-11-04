@@ -223,6 +223,17 @@ describe("ValeSheets (sheet per kind)", () => {
     expect(screen.getByText("David")).toBeTruthy();
   });
 
+  it("renders the notice sheet with its title and text", () => {
+    renderSheet({
+      kind: "notice",
+      title: "Appointment moved",
+      size: "half",
+      data: { text: "Moved: David Friday." },
+    });
+    expect(screen.getByText("Appointment moved")).toBeTruthy();
+    expect(screen.getByText("Moved: David Friday.")).toBeTruthy();
+  });
+
   it("renders the summary with service, time, and cost blocks", () => {
     renderSheet({
       kind: "session_summary",

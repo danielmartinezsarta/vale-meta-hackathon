@@ -116,6 +116,38 @@ describe("agent prompt", () => {
     });
   });
 
+  it("maps agenda writes to notice cards with what changed", () => {
+    expect(
+      contractWidgetFor("agenda_move_appointment", {}, { notice: { title: "Appointment moved", text: "Moved: Ana Friday." } }),
+    ).toEqual({
+      tool: "notice",
+      args: {},
+      data: { title: "Appointment moved", text: "Moved: Ana Friday." },
+    });
+    expect(
+      contractWidgetFor("agenda_cancel_appointment", {}, { notice: { title: "Appointment cancelled", text: "Cancelled: Ana." } }),
+    ).toEqual({
+      tool: "notice",
+      args: {},
+      data: { title: "Appointment cancelled", text: "Cancelled: Ana." },
+    });
+    expect(
+      contractWidgetFor("agenda_create_reminder", {}, { notice: { title: "Reminder saved", text: "Reminder saved. Buy acetone" } }),
+    ).toEqual({
+      tool: "notice",
+      args: {},
+      data: { title: "Reminder saved", text: "Reminder saved. Buy acetone" },
+    });
+    expect(
+      contractWidgetFor("agenda_complete_reminder", {}, { notice: { title: "Reminder done", text: "Done: Buy acetone." } }),
+    ).toEqual({
+      tool: "notice",
+      args: {},
+      data: { title: "Reminder done", text: "Done: Buy acetone." },
+    });
+    expect(contractWidgetFor("agenda_move_appointment", {}, {})).toBeNull();
+  });
+
   it("drops the quote sheet mapping once the amount is paid", () => {
     expect(
       contractWidgetFor("session_quote", {}, { paid_amount_usd: 25 }),
