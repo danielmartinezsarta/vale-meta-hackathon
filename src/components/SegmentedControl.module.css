@@ -3,7 +3,9 @@
    screens each define their own pair), so both switches look alike. */
 
 .seg {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
+  max-width: 100%;
   gap: 2px;
   padding: 3px;
   border-radius: 999px;
@@ -11,12 +13,18 @@
 }
 
 .opt {
+  flex: 1 0 auto;
+  min-width: 0;
   border: 0;
   background: transparent;
   border-radius: 999px;
-  padding: 6px 18px;
+  padding: 6px 10px;
   font: inherit;
+  font-size: 0.85rem;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--vs-muted, var(--aw-muted));
   cursor: pointer;
 }
