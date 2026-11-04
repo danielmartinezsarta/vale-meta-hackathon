@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { freshTestDb } from "./db";
 import {
+  clientSummaryAsync,
+  showClientSummary,
+  type ClientSummaryData,
+} from "./vale-tools";
+import {
   BRIEF_LABEL,
   briefSourceHash,
   briefSourceRecord,
@@ -75,6 +80,32 @@ describe("client briefs store", () => {
     expect(await refreshClientBrief(db, davidId(db), fetchImpl as unknown as typeof fetch)).toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(getStoredBrief(db, davidId(db))).toBeNull();
+    db.close();
+  });
+
+  it("opens the card with no brief and no fetch when the model is not wired", async () => {
+    vi.stubEnv("GLIMMER_URL", "");
+    vi.stubEnv("GLIMMER_TOKEN", "");
+    const db = freshTestDb();
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("must not fetch without Glimmer env");
+    });
+    const sync = showClientSummary(db, { name: "David" }, "en");
+    expect(sync.ok).toBe(true);
+    const syncData = sync.data as ClientSummaryData;
+    expect(syncData.card.name).toBe("David");
+    expect(syncData.brief).toBeNull();
+    const asyncResult = await clientSummaryAsync(
+      db,
+      { name: "David" },
+      "en",
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(asyncResult.ok).toBe(true);
+    const asyncData = asyncResult.data as ClientSummaryData;
+    expect(asyncData.card.name).toBe("David");
+    expect(asyncData.brief).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
     db.close();
   });
 
