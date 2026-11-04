@@ -177,17 +177,20 @@ async function main(): Promise<void> {
         });
         await page.mouse.click(at.x, at.y);
       };
-      await page.goto(`http://localhost:${port}/`, { waitUntil: "networkidle", timeout: 60000 });
-      await realClick("Wake Vale");
-      // Mute the instant the button exists, before capture checks the
-      // context (~1 s after wake): the typed field shows for every turn.
-      // The app raises no mic alert while muted; unmuting resumes capture.
-      const muteBtn = page.getByRole("button", { name: "Mute microphone" });
-      await muteBtn.waitFor({ state: "visible", timeout: 30000 });
-      await muteBtn.click({ timeout: 30000 });
-      // Warm-up: the typed sender wires up with the mic session, which
-      // takes a couple of seconds after wake. Sending earlier is lost.
-      await page.waitForTimeout(4000);
+      const startVoice = async () => {
+        await page.goto(`http://localhost:${port}/`, { waitUntil: "networkidle", timeout: 60000 });
+        await realClick("Wake Vale");
+        // Mute the instant the button exists, before capture checks the
+        // context (~1 s after wake): the typed field shows for every turn.
+        // The app raises no mic alert while muted; unmuting resumes capture.
+        const muteBtn = page.getByRole("button", { name: "Mute microphone" });
+        await muteBtn.waitFor({ state: "visible", timeout: 30000 });
+        await muteBtn.click({ timeout: 30000 });
+        // Warm-up: the typed sender wires up with the mic session, which
+        // takes a couple of seconds after wake. Sending earlier is lost.
+        await page.waitForTimeout(4000);
+      };
+      await startVoice();
       // Measure the chrome once: pill, side buttons and orb boxes decide
       // the pill width, not guesses from screenshots.
       const rects = await page.evaluate(`(() => {
@@ -335,7 +338,17 @@ async function main(): Promise<void> {
           await page.waitForTimeout(3000);
           continue;
         }
-        await typeTurn(run.turns[state.cursor], state.cursor);
+        try {
+          await typeTurn(run.turns[state.cursor], state.cursor);
+        } catch (error) {
+          // The sender can go deaf mid-run (a lost submit posts nothing
+          // and the cursor never moves). A fresh page rewires it: same
+          // client and cursor, so the turn simply runs again, once.
+          console.log(`[demo] retry ${run.turns[state.cursor].turn} after reload: ${(error as Error).message}`);
+          await page.reload({ waitUntil: "networkidle", timeout: 60000 });
+          await startVoice();
+          await typeTurn(run.turns[state.cursor], state.cursor);
+        }
       }
       const flashes = await page
         .evaluate(
