@@ -94,8 +94,12 @@ isolated database and fold the filtered log (never hand-edit the file):
 ```
 VALE_DB_PATH=/tmp/vale-replay.db PORT=3222 npm run db:reset
 PORT=3222 VALE_DB_PATH=/tmp/vale-replay.db tsx --env-file=.env server.ts
-REPLAY_BASE=http://localhost:3222 VALE_DB_PATH=/tmp/vale-replay.db npm run replay:record
+REPLAY_BASE=http://localhost:3222 VALE_DB_PATH=/tmp/vale-replay.db REPLAY_BANNED_WORDS=... npm run replay:record
 ```
+
+`REPLAY_BANNED_WORDS` is an optional comma-separated blocklist (kept in
+the shell, never committed): the recording fails if a reply contains one
+of those words.
 
 ## Voice (Seamless, optional)
 

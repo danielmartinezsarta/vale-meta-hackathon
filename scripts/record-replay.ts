@@ -247,9 +247,16 @@ async function main(): Promise<void> {
     if (serialized.includes("data/audio") || serialized.includes('"wav"')) {
       throw new Error("audio leaked into the replay file");
     }
-    for (const banned of ["ali", "claude"]) {
-      if (new RegExp(`\\b${banned}\\b`, "i").test(serialized)) {
-        throw new Error(`banned word in the replay file: ${banned}`);
+    // Content guard: REPLAY_BANNED_WORDS carries the comma-separated
+    // blocklist in the shell (never committed); the run fails if the
+    // recorded replies name anyone or anything outside the demo.
+    const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    for (const word of (process.env.REPLAY_BANNED_WORDS ?? "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry !== "")) {
+      if (new RegExp(`\\b${escapeRegExp(word)}\\b`, "i").test(serialized)) {
+        throw new Error("banned word in the replay file");
       }
     }
     mkdirSync(join(root, "replay"), { recursive: true });
