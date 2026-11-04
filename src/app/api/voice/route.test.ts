@@ -252,6 +252,41 @@ describe("POST /api/voice", () => {
     vi.unstubAllGlobals();
   });
 
+  it("answers recorded typed turns in order with no key and no model", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { parseReplayRun } = await import("@/lib/replay");
+    const run = parseReplayRun(readFileSync(join(process.cwd(), "replay", "demo-run.json"), "utf8"));
+    vi.stubEnv("VALE_REPLAY", "1");
+    vi.stubEnv("META_API_KEY", "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("no model calls in replay mode");
+      }),
+    );
+    for (const turn of run.turns.slice(0, 2)) {
+      const request = new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "replay-order-1",
+        },
+        body: JSON.stringify({ transcript: turn.transcript, typed: true }),
+      });
+      const response = await POST(request);
+      const text = await response.text();
+      expect(response.status).toBe(200);
+      expect(text).toContain("event: final");
+      expect(text).toContain(turn.reply.slice(0, 40));
+      expect(text).toContain("event: done");
+      expect(text).not.toContain("event: error");
+    }
+    vi.unstubAllGlobals();
+    vi.stubEnv("VALE_REPLAY", "");
+    vi.stubEnv("META_API_KEY", "test-key");
+  });
+
   it("narrates image generation at once, before the tool finishes", async () => {
     const costLog = join(process.cwd(), "data", "preview-cost.jsonl");
     let costBefore = "";

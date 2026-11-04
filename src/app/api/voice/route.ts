@@ -25,6 +25,9 @@ import { ASR_MODEL, openAsrConnection } from "@/lib/asr";
 import { emitTurnLog, estimateCost, modelElapsedMs, vlog } from "@/lib/turn-log";
 import { saveTurnWav } from "@/lib/turn-audio";
 import { attachVoiceBridge, parseTurnTag } from "@/lib/voice-bridge";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parseReplayRun, type ReplayRun } from "@/lib/replay";
 import {
   DEFAULT_LANGUAGE,
   declineText,
@@ -34,6 +37,10 @@ import {
 } from "@/lib/vale-language";
 
 export const runtime = "nodejs";
+
+// Replay cursors per client: with VALE_REPLAY=1 each typed turn is
+// answered from the committed run in order, no model involved.
+const replayCursors = new Map<string, number>();
 
 // One voice socket: the browser dials /voice, served by server.ts
 // (plain ws upgrade, no platform helpers). This route keeps the POST
@@ -66,6 +73,11 @@ function sse(event: string, data: unknown): string {
 // One push-to-talk turn: raw PCM_24KHZ body or JSON transcript; answers an SSE stream.
 export async function POST(request: Request): Promise<Response> {
   const key = process.env.META_API_KEY;
+  // Keyless replay (npm run demo): recorded typed turns need no key; every
+  // other turn still goes through the key gate below.
+  const replayTyped =
+    process.env.VALE_REPLAY === "1" &&
+    (request.headers.get("content-type") ?? "").includes("application/json");
   // Closed language from the screen selector; JSON and PCM turns agree.
   const language = parseLanguage(
     new URL(request.url).searchParams.get("language") ?? DEFAULT_LANGUAGE,
@@ -74,7 +86,11 @@ export async function POST(request: Request): Promise<Response> {
   const turnTag = parseTurnTag(new URL(request.url).searchParams.get("turn"));
   // Slots and pending proposals live per client, like the wake window.
   const clientKey = requestClientId(request);
-  if (!key) {
+  // The live path below is always keyed; replay typed turns carry no key
+  // by design and only ever take the recorded answer path, so the empty
+  // fallback below can never reach the model.
+  const modelKey = key ?? "";
+  if (!key && !replayTyped) {
     // Server-side log only; the key itself is never logged.
     vlog({
       turn: turnTag ?? "-",
@@ -220,6 +236,66 @@ export async function POST(request: Request): Promise<Response> {
         closeStream();
       };
       request.signal.addEventListener("abort", abort);
+
+      // Replay mode (VALE_REPLAY=1): the normal typed pipeline answers each
+      // turn from the committed run in order — transcript, reply, card —
+      // with no ASR and no model. The client runs its real turn path:
+      // wake, listening, thinking, speaking, sheets, back to idle.
+      const answerRecordedTurn = async (transcript: string): Promise<boolean> => {
+        if (process.env.VALE_REPLAY !== "1") return false;
+        let run: ReplayRun | null = null;
+        try {
+          const raw = readFileSync(join(process.cwd(), "replay", "demo-run.json"), "utf8");
+          run = parseReplayRun(raw);
+        } catch {
+          return false;
+        }
+        const taken = replayCursors.get(clientKey) ?? 0;
+        if (taken >= run.turns.length) return false;
+        const turn = run.turns[taken];
+        if (turn.transcript !== transcript || aborted) return false;
+        replayCursors.set(clientKey, taken + 1);
+        recordTurn(getDb(), clientKey, "user", transcript);
+        const half = Math.ceil(turn.reply.length / 2);
+        if (turn.reply !== "") {
+          send("reply-delta", { text: turn.reply.slice(0, half) });
+          send("reply-delta", { text: turn.reply.slice(half) });
+        }
+        send("reply", { text: turn.reply });
+        recordTurn(getDb(), clientKey, "vale", turn.reply, turn.tool);
+        noteAttention(clientKey);
+        if (turn.board) send("board", { board: turn.board });
+        else sendBoard();
+        if (turn.widget) sendWidget(turn.widget);
+        const stored = getSlots(clientKey);
+        logTurn({
+          language,
+          ts: new Date().toISOString(),
+          transcript,
+          ttftMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          audioSeconds: 0,
+          tool: turn.tool,
+          modelSkipped: true,
+          error: null,
+          ignored: false,
+          chain: "none",
+          key: clientKey,
+          slots: stored.client !== undefined || stored.service !== undefined ? stored : null,
+          gate: "typed",
+          sinceReplyS: null,
+          totalMs: 0,
+        });
+        vlog({
+          turn: turn.turn,
+          process: "AGENT",
+          status: "ok",
+          detail: { tool: turn.tool, scene: turn.scene, replayed: true },
+          content: turn.reply.slice(0, 120),
+        });
+        return true;
+      };
 
       const logTurn = (fields: {
         // ts is the caller-supplied end-of-speech moment.
@@ -400,7 +476,7 @@ export async function POST(request: Request): Promise<Response> {
             return;
           }
           const result = await runAgentTurn({
-            key,
+            key: modelKey,
             transcript,
             history,
             url: process.env.META_RESPONSES_URL || undefined,
@@ -484,6 +560,12 @@ export async function POST(request: Request): Promise<Response> {
       try {
         if (cannedTranscript !== null) {
           send("final", { transcript: cannedTranscript });
+          if (typedTurn && (await answerRecordedTurn(cannedTranscript))) {
+            send("done", {});
+            clearTimeout(timeout);
+            closeStream();
+            return;
+          }
           if (typedTurn) {
             // Typed turns are always addressed to Vale: no ASR ran and the
             // wake gate is skipped, then the identical answer path runs.
@@ -555,7 +637,7 @@ export async function POST(request: Request): Promise<Response> {
               asrStartMs = Date.now();
               try {
                 asr = await openAsrConnection({
-                  key,
+                  key: modelKey,
                   url: process.env.META_ASR_URL || undefined,
                   language,
                   onEvent: (event) => {

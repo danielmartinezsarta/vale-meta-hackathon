@@ -1,18 +1,11 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ReplayScreen } from "@/components/ReplayScreen";
-import { speak } from "@/lib/speak";
+import { parseReplayRun } from "./replay";
 
-vi.mock("@/lib/speak", () => ({
-  speak: vi.fn(),
-  stopSpeaking: vi.fn(),
-}));
-
-const mockSpeak = vi.mocked(speak);
 const root = process.cwd();
 
 const WIDGET = {
@@ -127,26 +120,10 @@ describe("npm run replay:from-logs", () => {
     expect(serialized).not.toContain(".wav");
     expect(serialized).not.toContain("data/audio");
 
-    const fetched: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: URL | RequestInfo) => {
-        const url = typeof input === "string" ? input : String(input);
-        fetched.push(url);
-        if (url === "/api/replay") return { ok: true, text: async () => serialized };
-        throw new Error(`unexpected network in replay: ${url}`);
-      }),
-    );
-    render(<ReplayScreen stepMs={20} />);
-    return waitFor(() => {
-      expect(screen.getByText("Today: David at 3 PM.")).toBeTruthy();
-      expect(screen.getByText("Here is your goal.")).toBeTruthy();
-      expect(screen.getByText("Replay: Goals")).toBeTruthy();
-    }).then(() => {
-      expect(mockSpeak).toHaveBeenCalledWith("Today: David at 3 PM.", "en");
-      expect(mockSpeak).toHaveBeenCalledWith("Here is your goal.", "en");
-      expect(screen.getByRole("dialog", { name: "Monthly goal" })).toBeTruthy();
-      expect(fetched).toEqual(["/api/replay"]);
-    });
+    const folded = parseReplayRun(serialized);
+    expect(folded.turns).toHaveLength(2);
+    expect(folded.turns.map((turn) => turn.scene)).toEqual(["Daily agenda", "Goals"]);
+    expect(folded.turns[0].reply).toBe("Today: David at 3 PM.");
+    expect(folded.turns[1].widget).toMatchObject({ kind: "goal" });
   });
 });

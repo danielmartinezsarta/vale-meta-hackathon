@@ -17,7 +17,8 @@
     "db:reset": "node scripts/db-reset.mjs && npx tsx scripts/precompute-briefs.ts",
     "replay:record": "tsx scripts/record-replay.ts",
     "replay:from-logs": "tsx scripts/replay-from-logs.ts",
-    "replay": "VALE_REPLAY=1 META_API_KEY= PORT=\"${PORT:-3222}\" tsx server.ts"
+    "replay": "VALE_REPLAY=1 META_API_KEY= PORT=\"${PORT:-3222}\" tsx server.ts",
+    "demo": "tsx scripts/demo.ts"
   },
   "dependencies": {
     "@types/ws": "^8.18.2",
@@ -35,6 +36,7 @@
     "eslint": "^9.0.0",
     "eslint-config-next": "^16.0.0",
     "jsdom": "^26.0.0",
+    "playwright": "^1.64.1",
     "tsx": "^4.23.15",
     "typescript": "^5.0.0",
     "vitest": "^3.0.0"
