@@ -44,3 +44,7 @@
   outline: 2px solid var(--vs-a1, var(--aw-a1));
   outline-offset: 2px;
 }
+
+.opt svg {
+  display: block;
+}

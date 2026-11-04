@@ -8,6 +8,7 @@ import { PhoneFrame } from "@/components/PhoneFrame";
 import { ManageScreensHost } from "@/components/screens/ManageScreensHost";
 import { useScreenMode } from "@/components/useScreenMode";
 import type { ValeLanguage } from "@/lib/vale-language";
+import { ThemeSwitch } from "./ThemeSwitch";
 import { SegmentedControl } from "./SegmentedControl";
 import type { HomeData } from "@/lib/home-data";
 import styles from "./HomeScreen.module.css";
@@ -390,6 +391,10 @@ export function HomeScreen({
                 { value: "es", label: "ES" },
               ]}
             />
+          </fieldset>
+          <fieldset className={styles.lang}>
+            <legend>{ui.theme}</legend>
+            <ThemeSwitch language={language} />
           </fieldset>
           </nav>
         </div>

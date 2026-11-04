@@ -18,6 +18,9 @@ export interface UiStrings {
   test: string;
   systemDefault: string;
   language: string;
+  theme: string;
+  lightMode: string;
+  darkMode: string;
   sessionNow: string;
   session: string;
   noSessionOpen: string;
@@ -70,6 +73,9 @@ const EN: UiStrings = {
   test: "Test",
   systemDefault: "System default",
   language: "Language",
+  theme: "Theme",
+  lightMode: "Light",
+  darkMode: "Dark",
   sessionNow: "Session in progress",
   session: "Session",
   noSessionOpen: "No open session.",
@@ -132,6 +138,9 @@ const ES: UiStrings = {
   test: "Probar",
   systemDefault: "Voz del sistema",
   language: "Idioma",
+  theme: "Tema",
+  lightMode: "Claro",
+  darkMode: "Oscuro",
   sessionNow: "Sesión en curso",
   session: "Sesión",
   noSessionOpen: "Sin sesión abierta.",
