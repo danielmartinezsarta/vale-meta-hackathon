@@ -17,7 +17,13 @@ import time
 import wave
 
 import modal
-from fastapi import Request
+
+try:
+    # Real import inside the image. A plain deploy carries only modal,
+    # so the name must still exist here for the endpoint annotation.
+    from fastapi import Request
+except ImportError:  # pragma: no cover - local deploy without fastapi
+    Request = None  # type: ignore[assignment]
 
 MODEL_ID = "facebook/seamless-m4t-v2-large"
 GPU = "T4"
