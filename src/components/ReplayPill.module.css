@@ -1,6 +1,6 @@
 .pill {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 64px);
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 40;
@@ -73,8 +73,8 @@
   background: none;
   border: 0;
   color: #fff;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
   border-radius: 50%;

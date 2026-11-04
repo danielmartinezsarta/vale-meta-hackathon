@@ -132,6 +132,12 @@ async function main(): Promise<void> {
       const context = await browser.newContext({
         viewport: { width: 390, height: 844 },
         deviceScaleFactor: 2,
+        // The demo runs in dark mode. The theme key is set before the
+        // first load so the first paint is already dark.
+        colorScheme: "dark",
+      });
+      await context.addInitScript(() => {
+        window.localStorage.setItem("vale-theme", "dark");
       });
       const page = await context.newPage();
       const wakeUp = async () => {
