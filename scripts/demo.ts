@@ -131,8 +131,9 @@ async function main(): Promise<void> {
     });
     try {
       const context = await browser.newContext({
-        // Null viewport plus a matching window: no grey band beside the app.
-        viewport: null,
+        // Phone viewport at 2x; the window size matches so no grey band
+        // shows beside the app.
+        viewport: { width: 390, height: 844 },
         deviceScaleFactor: 2,
         // The demo runs in dark mode. The theme key is set before the
         // first load so the first paint is already dark.
