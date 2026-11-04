@@ -326,3 +326,65 @@ describe("mic mute (track toggle, session stays live)", () => {
     expect(screen.getByPlaceholderText("Type to Vale…")).toBeTruthy();
   });
 });
+
+describe("muted mic (no mic errors while muted)", () => {
+  it("shows no alert when capture reports blocked while muted", async () => {
+    const track = makeTrack();
+    stubMic(track);
+    stubSpeech();
+    stubVoice(() => "event: done\ndata: {}\n\n");
+    mockStartCapture.mockImplementation(() => ({
+      stop: () => {},
+      state: () => "suspended",
+      engine: () => "script" as const,
+    }));
+    await goLiveWithSession();
+    fireEvent.click(screen.getByRole("button", { name: "Mute microphone" }));
+    const callbacks = mockStartCapture.mock.calls[0][1];
+    callbacks.onBlocked();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // No alert, session kept: the timer still runs and typing still works.
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("timer", { name: "Session time" })).toBeTruthy();
+    expect(screen.getByPlaceholderText("Type to Vale…")).toBeTruthy();
+  });
+
+  it("keeps today's alert when capture reports blocked while unmuted", async () => {
+    const track = makeTrack();
+    stubMic(track);
+    stubSpeech();
+    stubVoice(() => "event: done\ndata: {}\n\n");
+    mockStartCapture.mockImplementation(() => ({
+      stop: () => {},
+      state: () => "suspended",
+      engine: () => "script" as const,
+    }));
+    await goLiveWithSession();
+    const callbacks = mockStartCapture.mock.calls[0][1];
+    callbacks.onBlocked();
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeTruthy();
+    });
+    expect(screen.getByRole("alert").textContent).toMatch(/didn't start/i);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  });
+
+  it("resumes capture in the unmute gesture", async () => {
+    const track = makeTrack();
+    stubMic(track);
+    stubSpeech();
+    stubVoice(() => "event: done\ndata: {}\n\n");
+    const resume = vi.fn();
+    mockStartCapture.mockImplementation(() => ({
+      stop: () => {},
+      resume,
+      state: () => "suspended",
+      engine: () => "script" as const,
+    }));
+    await goLiveWithSession();
+    fireEvent.click(screen.getByRole("button", { name: "Mute microphone" }));
+    expect(resume).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Unmute microphone" }));
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+});

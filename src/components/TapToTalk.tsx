@@ -523,6 +523,15 @@ export function TapToTalk({
     micMutedRef.current = next;
     setMicMuted(next);
     setMicTracksEnabled(!next);
+    if (!next) {
+      // Unmuting is a real gesture: resume a suspended capture context
+      // here. If it stays suspended the watchdogs report, as before.
+      try {
+        captureRef.current?.resume?.();
+      } catch {
+        /* the watchdogs report a context that stays suspended */
+      }
+    }
   }, [micMuted, setMicTracksEnabled]);
 
   // Typed turn: Enter or the send button sends, the field clears and keeps
@@ -1902,8 +1911,10 @@ export function TapToTalk({
             setLevel(value);
           },
           // iOS kept the context suspended past the gesture: zeros flow.
+          // Muted mic means no mic errors: the typed path needs no capture.
           onBlocked: () => {
             if (!sessionRef.current) return;
+            if (micMutedRef.current) return;
             endSessionWithAlert(
               turnErrorText("suspended", languageRef.current),
               null,
@@ -1940,6 +1951,9 @@ export function TapToTalk({
           // Her voice owns the session: the context is suspended on
           // purpose, so rebuilding here would yank her audio mid-reply.
           if (mutedRef.current) return;
+          // Muted mic means no mic errors: skip the track check and the
+          // restart while the typed path runs without capture.
+          if (micMutedRef.current) return;
           if (Date.now() - lastBeatAt < STALL_MS) return;
         const tracks =
           typeof stream.getTracks === "function" ? stream.getTracks() : [];
