@@ -367,7 +367,6 @@ export async function POST(request: Request): Promise<Response> {
         if (advance) state.cursor = idx + 1;
         if (byIndex) {
           send("final", { transcript: turn.transcript });
-          // eslint-disable-next-line no-param-reassign
           transcript = turn.transcript;
         }
         recordTurn(getDb(), clientKey, "user", transcript);
