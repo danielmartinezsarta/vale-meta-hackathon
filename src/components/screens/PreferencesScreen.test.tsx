@@ -41,7 +41,7 @@ describe("PreferencesScreen", () => {
     const name = (await screen.findByLabelText("Name")) as HTMLInputElement;
     expect(name.value).toBe("demo");
     expect(screen.getByText("Browser")).toBeTruthy();
-    expect(screen.getByText("Seamless voice is not configured.")).toBeTruthy();
+    expect(await screen.findByText("To enable Seamless TTS, set SEAMLESS_URL and SEAMLESS_TOKEN in .env.")).toBeTruthy();
   });
 
   it("saves the edited profile name", async () => {
@@ -60,10 +60,10 @@ describe("PreferencesScreen", () => {
     const onLanguageChange = vi.fn();
     render(<PreferencesScreen onBack={() => {}} language="en" onLanguageChange={onLanguageChange} />);
     await screen.findByLabelText("Name");
-    fireEvent.click(screen.getByLabelText("ES"));
+    fireEvent.click(screen.getByRole("radio", { name: "ES" }));
     expect(onLanguageChange).toHaveBeenCalledWith("es");
-    fireEvent.click(screen.getByLabelText("Browser"));
-    expect(screen.getByLabelText("Browser")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Browser" }));
+    expect(screen.getByRole("radio", { name: "Browser" })).toBeTruthy();
   });
 
   it.each([
@@ -102,7 +102,7 @@ describe("PreferencesScreen", () => {
     });
     expect(window.localStorage.getItem("vale-engine")).toBe("browser");
     expect(
-      (screen.getByRole("radio", { name: "Browser" }) as HTMLInputElement).checked,
-    ).toBe(true);
+      (screen.getByRole("radio", { name: "Browser" }) as HTMLElement).getAttribute("aria-checked"),
+    ).toBe("true");
   });
 });

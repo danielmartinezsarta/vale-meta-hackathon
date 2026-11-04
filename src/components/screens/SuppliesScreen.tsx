@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ManageField, ManageShell } from "./ManageShell";
 import { manageDelete, manageGet, managePost } from "./manageApi";
 import styles from "./ManageScreens.module.css";
+import { SegmentedControl } from "../SegmentedControl";
 
 interface Supply {
   id: number;
@@ -143,12 +144,15 @@ export function SuppliesScreen({ onBack }: { onBack: () => void }) {
         <>
           <fieldset className={styles.seg}>
             <legend className={styles.h}>Filter</legend>
-            {(["all", "low"] as const).map((value) => (
-              <label key={value}>
-                <input type="radio" name="supply-filter" value={value} checked={filter === value} onChange={() => setFilter(value)} />{" "}
-                {value === "all" ? "All" : "Low stock"}
-              </label>
-            ))}
+            <SegmentedControl<"all" | "low">
+              label="Filter"
+              value={filter}
+              onChange={setFilter}
+              options={(["all", "low"] as const).map((value) => ({
+                value,
+                label: value === "all" ? "All" : "Low stock",
+              }))}
+            />
           </fieldset>
           <section className={styles.card} aria-label="Supplies">
             {rows === null ? (
@@ -180,7 +184,7 @@ export function SuppliesScreen({ onBack }: { onBack: () => void }) {
             <input aria-label="Spanish name" value={form.es} onChange={(event) => setForm({ ...form, es: event.target.value })} />
           </ManageField>
           <ManageField label="Unit">
-            <select aria-label="Unit" value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })}>
+            <select className={styles.select} aria-label="Unit" value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })}>
               <option value="pcs">pcs</option>
               <option value="ml">ml</option>
               <option value="g">g</option>

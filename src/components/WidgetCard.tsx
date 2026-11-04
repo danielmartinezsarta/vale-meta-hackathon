@@ -15,12 +15,14 @@ export function WidgetCard({
   return (
     <div role="group" aria-label={widget.title}>
       <p>{widget.title}</p>
-      <button type="button" onClick={() => onVote("yes")}>
-        {language === "es" ? "Sí" : "Yes"}
-      </button>{" "}
-      <button type="button" onClick={() => onVote("no")}>
-        {language === "es" ? "No" : "No"}
-      </button>
+      <div className="aw-actions">
+        <button className="aw-act aw-accept" type="button" onClick={() => onVote("yes")}>
+          {language === "es" ? "Sí" : "Yes"}
+        </button>
+        <button className="aw-act aw-reject" type="button" onClick={() => onVote("no")}>
+          {language === "es" ? "No" : "No"}
+        </button>
+      </div>
     </div>
   );
 }

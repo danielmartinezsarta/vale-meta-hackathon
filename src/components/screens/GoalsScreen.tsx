@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ManageField, ManageShell } from "./ManageShell";
 import { manageDelete, manageGet, managePost } from "./manageApi";
 import styles from "./ManageScreens.module.css";
+import { SegmentedControl } from "../SegmentedControl";
 
 interface GoalProgress {
   earned_usd: number;
@@ -202,12 +203,12 @@ export function GoalsScreen({ onBack }: { onBack: () => void }) {
           </ManageField>
           <fieldset className={styles.seg}>
             <legend className={styles.h}>Work days</legend>
-            {SCHEDULES.map((value) => (
-              <label key={value}>
-                <input type="radio" name="work-days" value={value} checked={form.schedule === value} onChange={() => setForm({ ...form, schedule: value })} />{" "}
-                {value}
-              </label>
-            ))}
+            <SegmentedControl<string>
+              label="Work days"
+              value={form.schedule}
+              onChange={(schedule) => setForm({ ...form, schedule })}
+              options={SCHEDULES.map((value) => ({ value, label: value }))}
+            />
           </fieldset>
           <div className={styles.field}>
             <span>Hours per day</span>

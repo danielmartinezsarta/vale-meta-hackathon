@@ -45,7 +45,7 @@ describe("HomeScreen (Vale asleep)", () => {
         .getByRole("dialog", { name: "Menu" })
         .querySelectorAll('path[d="M9 6l6 6-6 6"]').length,
     ).toBe(8);
-    fireEvent.click(screen.getByLabelText("ES"));
+    fireEvent.click(screen.getByRole("radio", { name: "ES" }));
     expect(onLanguageChange).toHaveBeenCalledWith("es");
     fireEvent.click(screen.getByRole("button", { name: "Close menu" }));
     expect(screen.queryByRole("dialog", { name: "Menu" })).toBeNull();
