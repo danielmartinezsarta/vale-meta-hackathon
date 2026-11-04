@@ -8,6 +8,7 @@ node_modules/
 *.tsbuildinfo
 .worktrees/
 next-env.d.ts
+__pycache__/
 AGENTS.md
 
 # Local voice demo state; seed rebuilds it.

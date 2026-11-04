@@ -101,7 +101,12 @@ describe("awake screen (VoiceRobot, bubbles, sheets)", () => {
     });
     expect(screen.getByText("You:")).toBeTruthy();
     expect(screen.getByText("Vale:")).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 
   it("never shows ignored turns on the screen, not even as a label", async () => {
@@ -134,7 +139,12 @@ describe("awake screen (VoiceRobot, bubbles, sheets)", () => {
     expect(screen.queryByText("background chat here")).toBeNull();
     expect(screen.queryByText("background chat")).toBeNull();
     expect(screen.queryByText("ignored (no name)")).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 
   it("keeps at most three bubbles, dropping the oldest", async () => {
@@ -159,7 +169,12 @@ describe("awake screen (VoiceRobot, bubbles, sheets)", () => {
     expect(screen.getByText("two")).toBeTruthy();
     expect(screen.getByText("reply one from Vale")).toBeTruthy();
     expect(screen.getByText("reply two from Vale")).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 
   it("mutes her voice but keeps the reply text, and sleeps from zzz", async () => {

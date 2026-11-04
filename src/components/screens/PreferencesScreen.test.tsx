@@ -1,9 +1,17 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PreferencesScreen } from "./PreferencesScreen";
+import {
+  setSeamlessAvailable,
+  setVoiceEngine,
+  voiceEngine,
+} from "@/lib/speak";
+import type { ValeLanguage } from "@/lib/vale-language";
 
 afterEach(() => {
   cleanup();
+  setSeamlessAvailable(true);
+  setVoiceEngine("browser");
   vi.unstubAllGlobals();
   localStorage.clear();
 });
@@ -56,5 +64,45 @@ describe("PreferencesScreen", () => {
     expect(onLanguageChange).toHaveBeenCalledWith("es");
     fireEvent.click(screen.getByLabelText("Browser"));
     expect(screen.getByLabelText("Browser")).toBeTruthy();
+  });
+
+  it.each([
+    {
+      language: "en",
+      hint: "To enable Seamless TTS, set SEAMLESS_URL and SEAMLESS_TOKEN in .env.",
+    },
+    {
+      language: "es",
+      hint: "Para activar Seamless TTS, configura SEAMLESS_URL y SEAMLESS_TOKEN en .env.",
+    },
+  ] as const)(
+    "shows the enable hint in $language when unconfigured",
+    async ({ language, hint }: { language: ValeLanguage; hint: string }) => {
+      stubFetch();
+      render(
+        <PreferencesScreen
+          onBack={() => {}}
+          language={language}
+          onLanguageChange={() => {}}
+        />,
+      );
+
+      expect(await screen.findByText(hint)).toBeTruthy();
+    },
+  );
+
+  it("forces a stale saved Seamless pick back to browser when unconfigured", async () => {
+    stubFetch();
+    setVoiceEngine("seamless");
+    expect(window.localStorage.getItem("vale-engine")).toBe("seamless");
+    render(<PreferencesScreen onBack={() => {}} language="en" onLanguageChange={() => {}} />);
+
+    await waitFor(() => {
+      expect(voiceEngine()).toBe("browser");
+    });
+    expect(window.localStorage.getItem("vale-engine")).toBe("browser");
+    expect(
+      (screen.getByRole("radio", { name: "Browser" }) as HTMLInputElement).checked,
+    ).toBe(true);
   });
 });

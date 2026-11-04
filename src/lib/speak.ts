@@ -258,6 +258,23 @@ function logVoiceChoice(): void {
   }
 }
 
+/**
+ * Server-reported Seamless availability: true until /api/status answers
+ * otherwise, so the picker never starts disabled on a slow first paint.
+ */
+let seamlessAvailable = true;
+
+/** Whether the server reports Seamless TTS as configured. */
+export function isSeamlessAvailable(): boolean {
+  return seamlessAvailable;
+}
+
+/** Record the /api/status answer; losing Seamless forces the browser voice. */
+export function setSeamlessAvailable(available: boolean): void {
+  seamlessAvailable = available;
+  if (!available) setVoiceEngine("browser");
+}
+
 /** Switch the output engine at runtime; switch back with "browser". */
 export function setVoiceEngine(next: VoiceEngine): void {
   engine = next;

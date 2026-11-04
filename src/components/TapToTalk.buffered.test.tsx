@@ -76,7 +76,12 @@ describe("live turn over one socket (no buffered upload)", () => {
     ws.serverMessage({ type: "done" });
 
     // One transport: the POST upload path never fires.
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
 
     // Interim is replaced by the final.
     expect(screen.queryByText("hello")).toBeNull();

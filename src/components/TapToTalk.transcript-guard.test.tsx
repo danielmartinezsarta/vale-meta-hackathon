@@ -95,7 +95,12 @@ describe("transcript guard: an empty turn never deletes a bubble", () => {
     expect(
       screen.getByLabelText("Conversation").querySelectorAll("li"),
     ).toHaveLength(2);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 
   it("N empty turns after text leave the list intact", async () => {
@@ -123,7 +128,12 @@ describe("transcript guard: an empty turn never deletes a bubble", () => {
     answerEmptyTurn();
     await flush();
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
     expect(screen.getByText("Vale, agenda lista")).toBeTruthy();
     expect(screen.getByText("Listo, Daniel.")).toBeTruthy();
     expect(

@@ -178,7 +178,12 @@ describe("mic mute (track toggle, session stays live)", () => {
     expect(screen.getByPlaceholderText("Type to Vale…")).toBeTruthy();
     // Session untouched: timer still live, no stop happened.
     expect(screen.getByRole("timer", { name: "Session time" })).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
   });
 
   it("starts deaf when muted before the session exists", async () => {

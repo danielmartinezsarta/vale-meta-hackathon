@@ -178,4 +178,18 @@ describe("seamless-voice proxy", () => {
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("answers 503 without calling upstream when SEAMLESS_TOKEN is missing", async () => {
+    vi.stubEnv("SEAMLESS_URL", "https://seamless.test/speak");
+    vi.stubEnv("SEAMLESS_TOKEN", "");
+    const fetchMock = vi.fn(async (..._args: unknown[]) => wavResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await GET(new Request("http://test/api/seamless-voice?text=Hola"));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: "Seamless voice is not configured.",
+      code: "E-NET",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

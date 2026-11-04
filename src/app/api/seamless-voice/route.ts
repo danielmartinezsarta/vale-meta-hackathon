@@ -48,7 +48,10 @@ export async function GET(request: Request): Promise<Response> {
   }
   const speaker = pickSpeaker(searchParams.get("speaker"));
   const seamlessUrl = (process.env.SEAMLESS_URL ?? "").trim();
-  if (seamlessUrl === "") {
+  // Same auth as Glimmer: the token comes from the local .env (gitignored)
+  // or the shell env, never committed, and rides to Modal in the authorization header.
+  const seamlessToken = (process.env.SEAMLESS_TOKEN ?? "").trim();
+  if (seamlessUrl === "" || seamlessToken === "") {
     return Response.json(
       { error: "Seamless voice is not configured.", code: "E-NET" },
       { status: 503 },
@@ -64,9 +67,6 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
   const startedAt = Date.now();
-  // Same auth as Glimmer: the token lives only in the shell env, never
-  // in .env, and rides to Modal in the authorization header.
-  const seamlessToken = (process.env.SEAMLESS_TOKEN ?? "").trim();
   let upstream: Response;
   try {
     upstream = await fetch(

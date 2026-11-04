@@ -156,7 +156,12 @@ describe("socket drop reconnects on the same path, never POSTs", () => {
     });
     // One transport: two /voice sockets total, no POST, no alert.
     expect(FakeWs.instances).toHaveLength(2);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
     expect(screen.getByText("first reply from Vale")).toBeTruthy();
     expect(screen.getByText("second final")).toBeTruthy();
     expect(screen.getAllByText("Vale:")).toHaveLength(2);

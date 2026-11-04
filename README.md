@@ -63,7 +63,7 @@ modal app stop vale-glimmer    # scale to zero when done
 Production uses the drafter endpoint
 (`https://<username>--vale-glimmer-serve-draft.us-east.modal.run`).
 Set it as `GLIMMER_URL` (see `.env.example`) and export `GLIMMER_TOKEN`
-from the Modal secret in the shell; the token never lives in the repo.
+from the Modal secret, in the local .env (gitignored) or the shell; the token never lives in the repo.
 
 The same endpoint runs locally with `llama-server` and the GGUF weights
 from `meta-models/Muse-Glimmer-30B-GGUF`

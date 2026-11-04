@@ -52,7 +52,12 @@ describe("empty turns stay hidden (fix 1)", () => {
     expect(
       screen.getByLabelText("Conversation").querySelectorAll("li"),
     ).toHaveLength(0);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
@@ -99,7 +104,12 @@ describe("empty turns stay hidden (fix 1)", () => {
     expect(
       screen.getByLabelText("Conversation").querySelectorAll("li"),
     ).toHaveLength(0);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // Mount reads /api/status; turns still never POST.
+    expect(
+      fetchMock.mock.calls.every((call) =>
+        String(call.at(0)).includes("/api/status"),
+      ),
+    ).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
