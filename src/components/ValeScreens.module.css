@@ -243,19 +243,27 @@ border in the accent color, never the native outline. */
   overflow-y: auto;
 }
 
-/* Session error alert: text wraps, retry icon stays inline at the right,
-so the row fits the column with no page scroll. */
+/* Session error alert: no box, bubble type, one line, retry icon inline
+at the right, so the row fits the column with no page scroll. */
 .alert {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 0.88rem;
+  line-height: 1.3;
 }
 
 .alertText {
   flex: 1 1 auto;
   min-width: 0;
-  overflow-wrap: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .alert .abtn {

@@ -92,7 +92,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     });
     liveSocket().serverMessage({
       type: "error",
-      message: "Perdón, tuve un problema. Toca para intentar de nuevo.",
+      message: "Tuve un problema.",
       code: "E-MODEL",
     });
 
@@ -140,17 +140,15 @@ describe("plain-language errors (fake-device fallback)", () => {
     burst(seen[0]);
     liveSocket().serverMessage({
       type: "error",
-      message: "The connection dropped. Tap to try again.",
+      message: "Connection lost.",
       code: "E-NET",
     });
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/connection dropped/i);
+    expect(alert.textContent).toMatch(/connection lost/i);
     const retry = screen.getByRole("button", { name: "Try again" });
-    // Alert row: wrapping text first, retry icon inline at its right.
-    expect(retry.previousElementSibling?.textContent).toMatch(
-      /connection dropped/i,
-    );
+    // Alert row: one-line text first, retry icon inline at its right.
+    expect(retry.previousElementSibling?.textContent).toMatch(/connection lost/i);
     fireEvent.click(retry);
 
     await waitFor(() => {
@@ -171,12 +169,12 @@ describe("plain-language errors (fake-device fallback)", () => {
     burst(seen[0]);
     liveSocket().serverMessage({
       type: "error",
-      message: "The connection dropped. Tap to try again.",
+      message: "Connection lost.",
       code: "E-NET",
     });
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/connection dropped/i);
+    expect(alert.textContent).toMatch(/connection lost/i);
     expect(alert.textContent).not.toMatch(/E-NET/);
     expect(fetchMock).not.toHaveBeenCalled();
   });

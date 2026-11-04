@@ -24,11 +24,11 @@ describe("closed language set", () => {
     expect(turnErrorText("timeout", "es")).toContain("agotó");
     expect(turnErrorText("timeout", "en")).toContain("ran out");
     expect(turnErrorText("lost", "es")).toContain("conexión");
-    expect(turnErrorText("lost", "en")).toContain("dropped");
-    expect(turnErrorText("model", "es")).toContain("Perdón");
-    expect(turnErrorText("model", "en")).toContain("Sorry");
+    expect(turnErrorText("lost", "en")).toContain("lost");
+    expect(turnErrorText("model", "es")).toContain("problema");
+    expect(turnErrorText("model", "en")).toContain("wrong");
     expect(turnErrorText("suspended", "es")).toContain("no arrancó");
-    expect(turnErrorText("suspended", "en")).toContain("did not start");
+    expect(turnErrorText("suspended", "en")).toContain("didn't start");
   });
 
   it("keeps English when the caller passes nothing", () => {
