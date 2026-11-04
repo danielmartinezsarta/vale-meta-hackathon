@@ -38,6 +38,21 @@ export interface UiStrings {
   tryAgain: string;
   cardFor: (name: string) => string;
   valeState: (state: ValeStateName) => string;
+  greetingMorning: string;
+  greetingAfternoon: string;
+  greetingEvening: string;
+  homeToday: string;
+  homeSupplies: string;
+  homeMonthlyGoal: string;
+  homeLoading: string;
+  homeEmptyToday: string;
+  menuAgenda: string;
+  menuClientFiles: string;
+  menuServices: string;
+  menuSuppliesStock: string;
+  menuPayments: string;
+  menuGoals: string;
+  menuPreferences: string;
 }
 
 /** The six Vale states the robot can show: the single state union. */
@@ -79,6 +94,21 @@ const EN: UiStrings = {
     "To enable Seamless TTS, set SEAMLESS_URL and SEAMLESS_TOKEN in .env.",
   tryAgain: "Try again",
   cardFor: (name: string) => `${name}'s card`,
+  greetingMorning: "Good morning",
+  greetingAfternoon: "Good afternoon",
+  greetingEvening: "Good evening",
+  homeToday: "Today",
+  homeSupplies: "Supplies to buy",
+  homeMonthlyGoal: "Monthly goal",
+  homeLoading: "Loading…",
+  homeEmptyToday: "Nothing on the books.",
+  menuAgenda: "Agenda",
+  menuClientFiles: "Client files",
+  menuServices: "Services",
+  menuSuppliesStock: "Supplies & stock",
+  menuPayments: "Payments",
+  menuGoals: "Goals",
+  menuPreferences: "Preferences",
   valeState: (state: ValeStateName) =>
     ({
       idle: "Idle",
@@ -126,6 +156,21 @@ const ES: UiStrings = {
     "Para activar Seamless TTS, configura SEAMLESS_URL y SEAMLESS_TOKEN en .env.",
   tryAgain: "Inténtalo de nuevo",
   cardFor: (name: string) => `Ficha de ${name}`,
+  greetingMorning: "Buenos días",
+  greetingAfternoon: "Buenas tardes",
+  greetingEvening: "Buenas noches",
+  homeToday: "Hoy",
+  homeSupplies: "Materiales por comprar",
+  homeMonthlyGoal: "Meta mensual",
+  homeLoading: "Cargando…",
+  homeEmptyToday: "Sin citas hoy.",
+  menuAgenda: "Agenda",
+  menuClientFiles: "Fichas de clientes",
+  menuServices: "Servicios",
+  menuSuppliesStock: "Materiales y stock",
+  menuPayments: "Pagos",
+  menuGoals: "Metas",
+  menuPreferences: "Preferencias",
   valeState: (state: ValeStateName) =>
     ({
       idle: "Inactiva",
