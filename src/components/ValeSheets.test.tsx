@@ -189,7 +189,7 @@ describe("ValeSheets (sheet per kind)", () => {
         client: "David",
         date: "Nov 2, 2026",
         service: { name: "Gel manicure", price: 28 },
-        extras: [{ label: "Gold foil", amount: 7 }],
+        extras: [{ label: "+ Gold foil ×1", amount: 7, qty: 1 }],
         suggested: 35,
         charged: 35,
         timeTotal: "1h 12m",
@@ -201,6 +201,47 @@ describe("ValeSheets (sheet per kind)", () => {
     expect(screen.getByText("David")).toBeTruthy();
     expect(screen.getAllByText("$35")).toHaveLength(2);
     expect(screen.getByText("1h 12m")).toBeTruthy();
+  });
+
+  it("renders all three summary blocks for a paid session with two extras", () => {
+    renderSheet({
+      kind: "session_summary",
+      title: "Session summary",
+      size: "full",
+      data: {
+        client: "Ana",
+        date: "Nov 3, 2026",
+        service: { name: "Gel removal", price: 2 },
+        extras: [
+          { label: "+ Gold foil ×1", amount: 4, qty: 1 },
+          { label: "+ Crystals ×3", amount: 4.5, qty: 3 },
+        ],
+        suggested: 20,
+        charged: 25,
+        timeTotal: "1m",
+        timeParts: [],
+        costs: [
+          { label: "Supplies", amount: 17.32 },
+          { label: "Time (1 min)", amount: 1.63 },
+          { label: "Fixed costs", amount: 0.82 },
+          { label: "Margin (15%)", amount: 3 },
+        ],
+        fixedDetail: "$0.82 of this service",
+      },
+    });
+    const dialog = screen.getByRole("dialog", { name: "Session summary" });
+    expect(dialog.querySelector(".aw-sum__avatar")?.textContent).toBe("A");
+    // Service and extras block: service row plus one row per extra.
+    expect(screen.getByText("Service and extras")).toBeTruthy();
+    expect(screen.getByText("+ Gold foil ×1")).toBeTruthy();
+    expect(screen.getByText("+ Crystals ×3")).toBeTruthy();
+    expect(dialog.querySelector(".aw-sum__row--paid")).toBeTruthy();
+    // Time block: total only, no phase rows.
+    expect(screen.getByText("Time")).toBeTruthy();
+    expect(screen.getByText("1m")).toBeTruthy();
+    // Cost breakdown block with the fixed-costs line.
+    expect(screen.getByText("How the price was calculated")).toBeTruthy();
+    expect(screen.getByText("Fixed costs: $0.82 of this service")).toBeTruthy();
   });
 
   it("renders the summary in design markup with rows and a close button", () => {
@@ -215,7 +256,7 @@ describe("ValeSheets (sheet per kind)", () => {
             client: "David",
             date: "Nov 2, 2026",
             service: { name: "Gel manicure", price: 28 },
-            extras: [{ label: "Gold foil", amount: 7 }],
+            extras: [{ label: "+ Gold foil ×1", amount: 7, qty: 1 }],
             suggested: 35,
             charged: 35,
             timeTotal: "1h 12m",

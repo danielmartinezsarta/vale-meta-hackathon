@@ -128,6 +128,29 @@ describe("sessions", () => {
     db.close();
   });
 
+  it("closes with extras, breakdown and payment for the summary sheet", () => {
+    const db = freshTestDb();
+    expect(openSession(db, { client_name: "Ana", service_name: "Gel removal" }).ok).toBe(true);
+    expect(logSupplyUse(db, { name: "gold foil" }).ok).toBe(true);
+    expect(logSupplyUse(db, { name: "three crystals" }).ok).toBe(true);
+    expect(quoteSession(db, { amount: 25 }, "en").ok).toBe(true);
+    const closed = closeSession(db, { products_used: [] });
+    expect(closed.ok).toBe(true);
+    const data = closed.data as {
+      extras: { name: string; qty: number; amount: number }[];
+      breakdown: { supplies_cost: number; final_price: number } | null;
+      paid_amount_usd: number;
+    };
+    expect(data.extras).toHaveLength(2);
+    expect(data.extras).toContainEqual({ name: "Gold foil", qty: 1, amount: 4 });
+    expect(data.extras).toContainEqual({ name: "Crystals", qty: 3, amount: 4.5 });
+    expect(data.breakdown).not.toBeNull();
+    // Gel removal recipe (8.82) plus the two logged extras (4 + 4.50).
+    expect(data.breakdown?.supplies_cost).toBeCloseTo(17.32, 5);
+    expect(data.paid_amount_usd).toBe(25);
+    db.close();
+  });
+
   it("rejects a second open session and a close without one", () => {
     const db = freshTestDb();
     openAna(db);

@@ -161,7 +161,7 @@ export interface SessionSummaryData {
   client: string | null;
   date: string | null;
   service: { name: string; price: number } | null;
-  extras: { label: string; amount: number }[];
+  extras: { label: string; amount: number; qty: number }[];
   suggested: number | null;
   charged: number | null;
   timeTotal: string | null;
@@ -394,12 +394,31 @@ function buildCard(
   };
 }
 
+interface CloseBreakdown {
+  supplies_cost: number;
+  time_cost: number;
+  fixed_share: number;
+  margin_pct: number;
+  final_price: number;
+  margin_earned: number;
+}
+
+interface CloseExtra {
+  name: string;
+  qty: number;
+  amount: number;
+}
+
 function buildSummary(
   info: Record<string, unknown>,
   db: CardStore | undefined,
 ): Widget {
   const seconds = num(info.duration_s);
   const last = lastSessionOf(db);
+  const minutes = num(info.minutes);
+  const breakdown = (info.breakdown ?? null) as CloseBreakdown | null;
+  const closeExtras = Array.isArray(info.extras) ? (info.extras as CloseExtra[]) : [];
+  const charged = num(info.paid_amount_usd);
   return {
     kind: "session_summary",
     title: widgetTitle("session_summary"),
@@ -407,14 +426,36 @@ function buildSummary(
     data: {
       client: last.client,
       date: last.date,
-      service: last.service === null ? null : { name: last.service, price: 0 },
-      extras: [],
-      suggested: null,
-      charged: null,
+      service:
+        last.service === null || breakdown === null
+          ? null
+          : { name: last.service, price: breakdown.time_cost },
+      extras: closeExtras.map((extra) => ({
+        label: `+ ${extra.name} ×${extra.qty}`,
+        amount: extra.amount,
+        qty: extra.qty,
+      })),
+      suggested: breakdown === null ? null : breakdown.final_price,
+      charged: charged === null || charged <= 0 ? null : charged,
       timeTotal: seconds === null ? null : formatMinutes(seconds / 60),
       timeParts: [],
-      costs: [],
-      fixedDetail: null,
+      costs:
+        breakdown === null
+          ? []
+          : [
+              { label: "Supplies", amount: breakdown.supplies_cost },
+              {
+                label: `Time${minutes === null ? "" : ` (${minutes} min)`}`,
+                amount: breakdown.time_cost,
+              },
+              { label: "Fixed costs", amount: breakdown.fixed_share },
+              {
+                label: `Margin${breakdown.margin_pct === 0 ? "" : ` (${breakdown.margin_pct}%)`}`,
+                amount: breakdown.margin_earned,
+              },
+            ],
+      fixedDetail:
+        breakdown === null ? null : `$${breakdown.fixed_share.toFixed(2)} of this service`,
     },
   };
 }
