@@ -1,6 +1,30 @@
-# Vale
-
-Vale is an intent-based interface for people whose hands are busy at work and who cannot touch a phone mid-task.
+<div align="center">
+  <img src="docs/img/robot.svg" width="150" alt="Vale robot" />
+  <br />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/wordmark-dark.svg" />
+    <img src="docs/img/wordmark.svg" width="210" alt="vale — Just say it." />
+  </picture>
+  <p>Vale is a voice-first assistant with an intent-based interface for people who work with their hands: they say what they need, Vale does it, without stopping their work.</p>
+  <p>
+    <img src="https://img.shields.io/badge/Muse_Spark-1.3-2F5BFF" alt="Muse Spark 1.3" />
+    <img src="https://img.shields.io/badge/Muse_Voice_Transcribe-1.0-2F5BFF" alt="Muse Voice Transcribe 1.0" />
+    <img src="https://img.shields.io/badge/Muse_Image-1.0-2F5BFF" alt="Muse Image 1.0" />
+    <img src="https://img.shields.io/badge/SAM-3.1-2F5BFF" alt="SAM 3.1" />
+    <img src="https://img.shields.io/badge/Muse_Glimmer-30B-2F5BFF" alt="Muse Glimmer 30B" />
+    <img src="https://img.shields.io/badge/SeamlessM4T-v2_Large-2F5BFF" alt="SeamlessM4T v2 Large" />
+    <br />
+    <img src="https://img.shields.io/badge/Next.js-16-14224F" alt="Next.js 16" />
+    <img src="https://img.shields.io/badge/React-19-14224F" alt="React 19" />
+    <img src="https://img.shields.io/badge/TypeScript-5-14224F" alt="TypeScript 5" />
+    <img src="https://img.shields.io/badge/Vitest-3-14224F" alt="Vitest 3" />
+    <img src="https://img.shields.io/badge/Modal-GPU-14224F" alt="Modal GPU" />
+    <br />
+    <img src="https://img.shields.io/badge/License-Apache--2.0-E6329B" alt="License Apache-2.0" />
+    <img src="https://img.shields.io/badge/Voice_first-18B8E0" alt="Voice first" />
+    <img src="https://img.shields.io/badge/EN_ES-18B8E0" alt="EN ES" />
+  </p>
+</div>
 
 We start with nail technicians: it is the domain we know first-hand, with a primary user there. The product is not limited to them.
 
@@ -35,7 +59,7 @@ Open the printed URL and tap the microphone. Setup details: [docs/setup.md](docs
 
 ## What it does
 
-Voice first, not voice only. By voice she opens sessions with a timer, saves notes (health notes stay private), keeps the shopping list, quotes prices, manages the agenda and previews nail designs on the client photo.
+Voice first, not voice only. By voice the user opens sessions with a timer, saves notes (health notes stay private), keeps the shopping list, quotes prices, manages the agenda and previews nail designs on the client photo.
 
 The management screens cover the rest: Agenda, Client files, Services, Supplies & stock, Shopping list, Payments, Goals, Preferences.
 
@@ -46,10 +70,10 @@ The management screens cover the rest: Agenda, Client files, Services, Supplies 
 | “Add primer to the shopping list” | Adds it to the list (`shopping_add`) |
 | “How much does David pay?” | Quotes on a sheet; the totals stay on screen (`session_quote`) |
 | “What do I have today?” | Reads the agenda (`agenda_show`) |
-| “Move David to Friday” | Moves the appointment; asks first (`agenda_move_appointment`) |
+| “Move David to Friday” | Moves it at once with a notice; undo reverts it (`agenda_move_appointment`) |
 | “Show her how it would look” | Previews the reference design on the before photo (`photo_preview_design`) |
 
-With the mic muted, a typed field does the same. Language (EN | ES) and voice engine (Browser | Seamless) switch from one control; the Seamless option stays disabled until its URL and token are set.
+With the mic muted, a typed field does the same. Language (EN | ES) and voice engine (Browser | Seamless) switch from one control; the Seamless option stays disabled until its URL and token are set. Dark by default, with a sun/moon switch in the menu, Preferences and Settings.
 
 Every name, price and note on screen is invented demo data.
 
@@ -61,7 +85,7 @@ Every name, price and note on screen is invented demo data.
 | Muse Voice Transcribe 1.0 | Live speech input with turn detection | Meta Model API |
 | Muse Image 1.0 | Design preview on the client photo | Meta Model API |
 | SAM 3.1 | Counts five nails in the before photo, re-checks the preview, runs one more Image call on mismatch | Meta Model API |
-| Muse Glimmer 30B (open weights, on infrastructure we run) | Private client briefs: what to say and show, never health text | Modal GPU (A10G, our deploy) |
+| Muse Glimmer 30B (open weights, our deploy) | Private client briefs: what to say and show, never health text | Modal GPU (A10G, our deploy) |
 | SeamlessM4T v2 Large (open weights, optional) | Spoken answers when configured | Modal GPU (T4, our deploy) |
 
 ## How it works
@@ -84,14 +108,14 @@ The Meta API key stays on the server. The browser never calls `api.meta.ai`. How
 
 ## Open weights on Modal
 
-Two backends run on Modal and scale to zero when idle: Glimmer briefs (`modal/glimmer.py`) and SeamlessM4T v2 Large voice (`modal/seamless.py`). Glimmer serves Q4_K_M weights with a speculative drafter.
+Two backends run on Modal and scale to zero when idle: Glimmer briefs and SeamlessM4T v2 Large voice. Glimmer serves Q4_K_M weights with a speculative drafter.
 
 Deploy with `modal deploy modal/glimmer.py` → see [docs/modal.md](docs/modal.md). Without them the app still runs: the browser voice speaks and the cards open without private briefs.
 
 Provenance: every Glimmer call logs model, time and outcome, never the text:
 
 ```
-02:35:04.610 | - | GLIMMER | muse-glimmer-30B | 7308ms | ok | source=precompute client=2 result=stored | -
+22:52:01.347 | -     | GLIMMER | muse-glimmer-30B |      0ms | ok      | source=precompute client=1 result=stored | -
 ```
 
 An example brief for the demo client holds no health text:
@@ -104,7 +128,7 @@ An example brief for the demo client holds no health text:
 
 Vale is designed for PHI/PII minimization:
 
-- Health-note text never reaches the cloud model. Only Glimmer reads it, on our Modal, with a token that lives in the shell, never in the repo.
+- Health-note text never reaches the cloud model. Only Glimmer reads it, on our Modal, with a token that lives in local `.env` or the shell, never in the repo.
 - Glimmer never receives phone, email or birthday.
 - A brief that repeats health words is dropped and generated once more. A second leak stores nothing.
 - The health alert shows on screen only, never spoken. Amounts stay on screen too, never spoken.
@@ -126,3 +150,8 @@ Vale was built by agents, directed by Daniel: [docs/how-we-built.md](docs/how-we
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+<div align="center">
+  <img src="docs/img/robot.svg" width="64" alt="Vale robot" />
+  <p><em>Built for the hands that do the work.</em></p>
+</div>
