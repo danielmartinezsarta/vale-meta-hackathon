@@ -123,14 +123,15 @@ async function main(): Promise<void> {
         // Let the AudioContext run: without it the capture posts zeros,
         // the app calls the mic blocked, and the session dies on turn 1.
         "--autoplay-policy=no-user-gesture-required",
-        "--window-size=430,932",
+        "--window-size=390,844",
       ],
     });
     try {
       const context = await browser.newContext({
-        // Null viewport: the page fills the window, so no grey band
-        // shows anywhere. The window size matches a phone.
-        viewport: null,
+        // Phone viewport at 2x, window sized the same: the page fills
+        // the window with no grey band anywhere.
+        viewport: { width: 390, height: 844 },
+        deviceScaleFactor: 2,
         // The demo runs in dark mode. The theme key is set before the
         // first load so the first paint is already dark.
         colorScheme: "dark",
@@ -236,12 +237,16 @@ async function main(): Promise<void> {
         if (turn.widget) await page.waitForTimeout(1500);
         await quiet(page);
         // A session alert banner means the run is broken: stop loud,
-        // never hang. (The state subtitle can lag; only the banner counts.)
+        // never hang. Banners can flash mid-render, so only a banner
+        // that stays put aborts the run.
         const banner = page.getByRole("alert").first();
         if (await banner.isVisible().catch(() => false)) {
-          const text = ((await banner.innerText().catch(() => "")) || "").slice(0, 120);
-          await page.screenshot({ path: join(shots, `alert-${turn.turn}.png`) });
-          throw new Error(`demo stopped: session alert on screen: ${text}`);
+          await page.waitForTimeout(1500);
+          if (await banner.isVisible().catch(() => false)) {
+            const text = ((await banner.innerText().catch(() => "")) || "").slice(0, 120);
+            await page.screenshot({ path: join(shots, `alert-${turn.turn}.png`) });
+            throw new Error(`demo stopped: session alert on screen: ${text || "unreadable"}`);
+          }
         }
         const shot = SHOT_TURNS[turn.turn];
         if (shot && !shotTaken.has(shot)) {
