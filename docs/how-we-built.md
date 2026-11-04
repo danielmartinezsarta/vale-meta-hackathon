@@ -1,8 +1,11 @@
 # How we built it
 
-Daniel directs. Hacki-chan, a project-manager agent running Muse Spark, plans the tickets and drives the lead sessions. Ticket leads run on Muse Code and call builders and, when needed, reviewers, researchers and advisors. Initiative leads (UI lead, Branding lead, Replay lead) and auditors for specific areas cut across tickets. Agents talk to each other through session messages.
-
-Each lead works on a branch off main and opens one PR against main; Daniel merges.
+- All the code was written by Muse Code agents, each ticket in its own herdr workspace on Muse Spark 1.3: a lead writes spec and acceptance tests, a builder plans and codes, an optional reviewer checks the diff.
+- Muse Wonder: planning, a few complex early tickets, reviewing and testing the workflow.
+- Hacki-chan, a project-manager agent running on Muse Spark 1.3, ran the ticket agents through the herdr CLI.
+- Agents coordinated through Muse session messages, shown in the graph.
+- Daniel approved every plan before any code was written and merged every PR.
+- Exception: the brand identity (logo and design tokens) was turned into code by an external tool from visual references generated with Muse Image 1.0.
 
 ![Agent collaboration graph: 40 agents, 246 session messages](img/agent-graph.svg)
 
