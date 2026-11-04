@@ -4,6 +4,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { BRAND } from "@/lib/brand-tokens";
 import { homeVars } from "@/lib/vale-theme";
 import { PhoneFrame } from "@/components/PhoneFrame";
+import { ManageScreensHost } from "@/components/screens/ManageScreensHost";
 import { useScreenMode } from "@/components/useScreenMode";
 import type { ValeLanguage } from "@/lib/vale-language";
 import type { HomeData } from "@/lib/home-data";
@@ -58,7 +59,7 @@ function SleepingHead() {
   );
 }
 
-const MENU_ITEMS = [
+export const MENU_ITEMS = [
   {
     name: "Agenda",
     icon: (
@@ -78,12 +79,11 @@ const MENU_ITEMS = [
     ),
   },
   {
-    name: "Goals",
+    name: "Services",
     icon: (
       <>
-        <circle cx="12" cy="12" r="8" />
-        <circle cx="12" cy="12" r="4" />
-        <circle cx="12" cy="12" r=".8" fill="currentColor" />
+        <path d="M9 7h11M9 12h11M9 17h11" />
+        <path d="M3.5 7l1.2 1.2L6.8 6M3.5 12l1.2 1.2L6.8 11M3.5 17l1.2 1.2L6.8 16" />
       </>
     ),
   },
@@ -97,40 +97,41 @@ const MENU_ITEMS = [
     ),
   },
   {
-    name: "Collaborators",
+    name: "Shopping list",
     icon: (
       <>
-        <circle cx="9" cy="9.5" r="3" />
-        <circle cx="16.5" cy="10.5" r="2.4" />
-        <path d="M3.5 19c.6-3.3 2.8-4.8 5.5-4.8s4.9 1.5 5.5 4.8M15.5 14.5c2.4-.2 4.3 1.1 5 4" />
+        <path d="M4 6h2l2.4 11h10.4l2-8H7" />
+        <circle cx="9.5" cy="19" r="1.5" />
+        <circle cx="16.5" cy="19" r="1.5" />
       </>
     ),
   },
   {
-    name: "Suppliers",
+    name: "Payments",
     icon: (
       <>
-        <path d="M3 7h11v9H3zM14 10h4l3 3v3h-7" />
-        <circle cx="7" cy="17.5" r="1.8" />
-        <circle cx="17" cy="17.5" r="1.8" />
+        <rect x="3" y="6" width="18" height="13" rx="3" />
+        <path d="M3 10h18M7 15h4" />
       </>
     ),
   },
   {
-    name: "Permissions",
+    name: "Goals",
     icon: (
       <>
-        <rect x="5" y="10.5" width="14" height="9.5" rx="3" />
-        <path d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5" />
+        <circle cx="12" cy="12" r="8" />
+        <circle cx="12" cy="12" r="4" />
+        <circle cx="12" cy="12" r=".8" fill="currentColor" />
       </>
     ),
   },
   {
-    name: "Services",
+    name: "Preferences",
     icon: (
       <>
-        <path d="M9 7h11M9 12h11M9 17h11" />
-        <path d="M3.5 7l1.2 1.2L6.8 6M3.5 12l1.2 1.2L6.8 11M3.5 17l1.2 1.2L6.8 16" />
+        <path d="M4 8h10M18 8h2M4 16h4M12 16h8" />
+        <circle cx="16" cy="8" r="2.2" />
+        <circle cx="10" cy="16" r="2.2" />
       </>
     ),
   },
@@ -146,14 +147,25 @@ export function HomeScreen({
   language,
   onLanguageChange,
   onWake,
+  onNavigate,
 }: {
   data: HomeData | null;
   language: ValeLanguage;
   onLanguageChange: (next: ValeLanguage) => void;
   onWake: () => void;
+  onNavigate?: (name: string) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [screen, setScreen] = useState<string | null>(null);
   const mode = useScreenMode();
+
+  const openScreen = (name: string) => {
+    if (onNavigate) {
+      onNavigate(name);
+      return;
+    }
+    setScreen(name);
+  };
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -296,8 +308,13 @@ export function HomeScreen({
         />
         <nav className={styles.panel}>
           <div className={styles.ovtop}>
-            <h2>Menu</h2>
-            <button className={styles.menu} type="button" aria-label="Close menu" onClick={() => setMenuOpen(false)}>
+            <h2>{screen ?? "Menu"}</h2>
+            <button
+              className={styles.menu}
+              type="button"
+              aria-label={screen ? "Back to menu" : "Close menu"}
+              onClick={() => (screen ? setScreen(null) : setMenuOpen(false))}
+            >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <g fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
                   <path d="M6.5 6.5l11 11" />
@@ -306,10 +323,17 @@ export function HomeScreen({
               </svg>
             </button>
           </div>
+          {screen ? (
+            <ManageScreensHost name={screen} onBack={() => setScreen(null)} language={language} />
+          ) : (
           <ul className={styles.items}>
             {MENU_ITEMS.map((item, index) => (
               <li key={item.name}>
-                <button className={`${styles.item} ${styles[`i${(index % 3) + 1}`]}`} type="button">
+                <button
+                  className={`${styles.item} ${styles[`i${(index % 3) + 1}`]}`}
+                  type="button"
+                  onClick={() => openScreen(item.name)}
+                >
                   <span className={styles.ic}>
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                       <g
@@ -338,6 +362,7 @@ export function HomeScreen({
               </li>
             ))}
           </ul>
+          )}
           <fieldset className={styles.lang}>
             <legend>Language</legend>
             <label>

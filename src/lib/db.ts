@@ -355,6 +355,92 @@ export function seedDatabase(db: ValeDb): void {
   seedDemoReminders(db, seed.demo_reminders ?? [], supplyIds);
   seedDemoVisits(db, seed.demo_visits ?? [], clientIds, serviceIds);
   seedDemoPastSessions(db, seed.demo_past_sessions ?? [], clientIds, serviceIds);
+  seedBusinessSettings(db);
+}
+
+/** Business goal settings edited from the Goals screen. */
+export interface BusinessSettings {
+  monthlyGoalUsd: number;
+  marginPct: number;
+  schedule: string;
+  workHoursPerDay: number;
+  fixedCosts: { id: number; label: string; amountUsd: number }[];
+}
+
+/**
+ * Seed business_settings and business_fixed_costs from the seed pricing
+ * block, once: later seeds never overwrite the user's own edits.
+ */
+function seedBusinessSettings(db: ValeDb): void {
+  const pricing = (
+    seedData as unknown as {
+      pricing?: {
+        monthly_goal_usd?: number;
+        margin_pct?: number;
+        schedule?: string;
+        work_hours_per_day?: number;
+        fixed_costs?: { label: string; amount_usd: number }[];
+      };
+    }
+  ).pricing;
+  if (!pricing) return;
+  if (tableCount(db, "business_settings") === 0) {
+    const put = db.prepare("INSERT INTO business_settings (key, value) VALUES (?, ?)");
+    put.run("monthly_goal_usd", String(pricing.monthly_goal_usd ?? 2500));
+    put.run("margin_pct", String(pricing.margin_pct ?? 30));
+    put.run("schedule", String(pricing.schedule ?? "lun-vie"));
+    put.run("work_hours_per_day", String(pricing.work_hours_per_day ?? 8));
+  }
+  if (tableCount(db, "business_fixed_costs") === 0) {
+    const add = db.prepare("INSERT INTO business_fixed_costs (label, amount_usd) VALUES (?, ?)");
+    for (const item of pricing.fixed_costs ?? []) {
+      add.run(item.label, item.amount_usd);
+    }
+  }
+}
+
+function settingsNumber(db: ValeDb, key: string, fallback: number): number {
+  try {
+    const row = db.prepare("SELECT value FROM business_settings WHERE key = ?").get(key) as
+      | { value: string }
+      | undefined;
+    const parsed = Number(row?.value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Goal settings for the screens and goal_show: seed values until edited. */
+export function getBusinessSettings(db: ValeDb): BusinessSettings {
+  let fixedCosts: BusinessSettings["fixedCosts"] = [];
+  try {
+    fixedCosts = (
+      db.prepare("SELECT id, label, amount_usd AS amountUsd FROM business_fixed_costs ORDER BY id").all() as {
+        id: number;
+        label: string;
+        amountUsd: number;
+      }[]
+    ).map((row) => ({ id: row.id, label: row.label, amountUsd: row.amountUsd }));
+  } catch {
+    fixedCosts = [];
+  }
+  return {
+    monthlyGoalUsd: settingsNumber(db, "monthly_goal_usd", PRICING.goalMonthlyUsd),
+    marginPct: settingsNumber(db, "margin_pct", PRICING.marginPct),
+    schedule: (() => {
+      try {
+        const row = db.prepare("SELECT value FROM business_settings WHERE key = 'schedule'").get() as
+          | { value: string }
+          | undefined;
+        return row?.value.trim() !== "" ? (row?.value as string) : "lun-vie";
+      } catch {
+        return "lun-vie";
+      }
+    })(),
+    workHoursPerDay: settingsNumber(db, "work_hours_per_day", PRICING.workHoursPerDay),
+    fixedCosts,
+  };
 }
 
 /** Table row count, used to seed demo rows once without touching live rows. */

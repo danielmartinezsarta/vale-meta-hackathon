@@ -12,7 +12,7 @@ import {
   refreshClientBrief,
   refreshClientBriefInBackground,
 } from "./client-briefs";
-import { PRICING, getPublicNotes, type PublicNote, type ValeDb } from "./db";
+import { PRICING, getBusinessSettings, getPublicNotes, type PublicNote, type ValeDb } from "./db";
 import { SAM_MODEL, segmentNails } from "./nails";
 import { bogotaDay, bogotaTime, formatNaturalDateTime, hour12, parseNaturalDate } from "./natural-date";
 import { PREVIEW_MODEL, runPhotoPreview, samBoxesMatch, type DesignSpec } from "./photo-preview";
@@ -162,7 +162,8 @@ function matchSupply(db: ValeDb, query: string): Match {
   return matchAliased(aliasedRows(db, "supplies"), query);
 }
 
-function logWrite(db: ValeDb, action: string, tableName: string, rowId: number, extra?: unknown): void {
+/** Shared write marker: voice tools and management screens log here; undo reads it. */
+export function logWrite(db: ValeDb, action: string, tableName: string, rowId: number, extra?: unknown): void {
   db.prepare("INSERT INTO write_log (action, table_name, row_id, extra) VALUES (?, ?, ?, ?)").run(
     action,
     tableName,
@@ -1069,6 +1070,22 @@ const UNDO_LABELS: Record<ValeLanguage, Record<string, string>> = {
   session_quote_accept: "pago registrado",
   stock_set: "cambio de stock",
   stock_add: "entrada de stock",
+  manage_delete_reminder: "recordatorio borrado",
+  manage_save_client: "ficha guardada",
+  manage_delete_client: "clienta borrada",
+  manage_delete_note: "nota borrada",
+  manage_clear_visit_photo: "foto quitada",
+  manage_clear_appointment_photo: "foto de referencia quitada",
+  manage_save_service: "servicio guardado",
+  manage_delete_service: "servicio borrado",
+  manage_save_supply: "insumo guardado",
+  manage_delete_supply: "insumo borrado",
+  manage_save_payment: "pago guardado",
+  manage_delete_payment: "pago borrado",
+  manage_save_settings: "meta guardada",
+  manage_add_fixed_cost: "costo fijo agregado",
+  manage_delete_fixed_cost: "costo fijo borrado",
+  manage_save_profile: "perfil guardado",
   },
   en: {
   session_open: "session opening",
@@ -1085,6 +1102,22 @@ const UNDO_LABELS: Record<ValeLanguage, Record<string, string>> = {
   session_quote_accept: "registered payment",
   stock_set: "stock change",
   stock_add: "stock entry",
+  manage_delete_reminder: "deleted reminder",
+  manage_save_client: "saved client file",
+  manage_delete_client: "deleted client",
+  manage_delete_note: "deleted note",
+  manage_clear_visit_photo: "removed photo",
+  manage_clear_appointment_photo: "removed reference photo",
+  manage_save_service: "saved service",
+  manage_delete_service: "deleted service",
+  manage_save_supply: "saved supply",
+  manage_delete_supply: "deleted supply",
+  manage_save_payment: "saved payment",
+  manage_delete_payment: "deleted payment",
+  manage_save_settings: "saved goal",
+  manage_add_fixed_cost: "added fixed cost",
+  manage_delete_fixed_cost: "deleted fixed cost",
+  manage_save_profile: "saved profile",
   },
 };
 
@@ -1093,15 +1126,24 @@ export function undoLastWrite(db: ValeDb, language: ValeLanguage = "es"): ToolRe
     | { id: number; action: string; table_name: string; row_id: number; extra: string | null }
     | undefined;
   if (!entry) return { ok: false, message: "No hay nada que deshacer." };
+  // HACK-030: row snapshots are plain table values (string | number | null).
+  type UndoRow = Record<string, string | number | null>;
   const extra = entry.extra
     ? (JSON.parse(entry.extra) as {
         supply_id?: number;
+        supply_ids?: number[];
         supplies?: number[];
         auto_created?: boolean;
         prev_day?: string;
         prev_time?: string;
         prev_qty?: number;
-        row?: Record<string, unknown>;
+        prev_name?: string;
+        prev_photo?: string;
+        prev?: UndoRow | null;
+        prev_lines?: UndoRow[];
+        notes?: UndoRow[];
+        lines?: UndoRow[];
+        row?: UndoRow;
       })
     : {};
   switch (entry.action) {
@@ -1203,6 +1245,150 @@ export function undoLastWrite(db: ValeDb, language: ValeLanguage = "es"): ToolRe
       const prevQty = typeof extra.prev_qty === "number" ? extra.prev_qty : null;
       if (prevQty === null) return { ok: false, message: "No se puede deshacer." };
       db.prepare("UPDATE supplies SET stock_qty = ? WHERE id = ?").run(prevQty, entry.row_id);
+      break;
+    }
+    // HACK-030 management screens: every screen write reverses here too.
+    case "manage_delete_reminder": {
+      const row = extra.row;
+      if (!row || typeof row.id !== "number") return { ok: false, message: "No se puede deshacer." };
+      db.prepare("INSERT OR REPLACE INTO reminders (id, text, kind, day, created_at) VALUES (?, ?, ?, ?, ?)").run(
+        row.id, row.text, row.kind, row.day, row.created_at,
+      );
+      for (const supplyId of Array.isArray(extra.supply_ids) ? extra.supply_ids : []) {
+        db.prepare("INSERT OR IGNORE INTO shopping_list (supply_id) VALUES (?)").run(supplyId);
+        const listed = db.prepare("SELECT id FROM shopping_list WHERE supply_id = ?").get(supplyId) as { id: number };
+        db.prepare("INSERT OR IGNORE INTO reminder_items (reminder_id, shopping_list_id) VALUES (?, ?)").run(row.id, listed.id);
+      }
+      break;
+    }
+    case "manage_save_client": {
+      const prev = extra.prev;
+      if (prev === null || prev === undefined) {
+        db.prepare("DELETE FROM clients WHERE id = ?").run(entry.row_id);
+        break;
+      }
+      db.prepare("UPDATE clients SET name = ?, sex = ?, phone = ?, email = ?, birthday = ? WHERE id = ?").run(
+        prev.name, prev.sex, prev.phone, prev.email, prev.birthday, entry.row_id,
+      );
+      break;
+    }
+    case "manage_delete_client": {
+      const row = extra.row;
+      if (!row || typeof row.id !== "number") return { ok: false, message: "No se puede deshacer." };
+      db.prepare("INSERT OR REPLACE INTO clients (id, name, sex, phone, email, birthday, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+        row.id, row.name, row.sex, row.phone, row.email, row.birthday, row.created_at,
+      );
+      for (const note of Array.isArray(extra.notes) ? extra.notes : []) {
+        db.prepare("INSERT OR REPLACE INTO notes (id, client_id, text, kind, private_for_glimmer, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(
+          note.id, note.client_id, note.text, note.kind, note.private_for_glimmer, note.created_at,
+        );
+      }
+      break;
+    }
+    case "manage_delete_note": {
+      const row = extra.row;
+      if (!row || typeof row.id !== "number") return { ok: false, message: "No se puede deshacer." };
+      db.prepare("INSERT OR REPLACE INTO notes (id, client_id, text, kind, private_for_glimmer, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(
+        row.id, row.client_id, row.text, row.kind, row.private_for_glimmer, row.created_at,
+      );
+      break;
+    }
+    case "manage_clear_visit_photo": {
+      if (typeof extra.prev_photo !== "string") return { ok: false, message: "No se puede deshacer." };
+      db.prepare("UPDATE visits SET photo = ? WHERE id = ?").run(extra.prev_photo, entry.row_id);
+      break;
+    }
+    case "manage_clear_appointment_photo": {
+      if (typeof extra.prev_photo !== "string") return { ok: false, message: "No se puede deshacer." };
+      db.prepare("UPDATE appointments SET reference_photo = ? WHERE id = ?").run(extra.prev_photo, entry.row_id);
+      break;
+    }
+    case "manage_save_service": {
+      const prev = extra.prev;
+      if (prev === null || prev === undefined) {
+        db.prepare("DELETE FROM service_supplies WHERE service_id = ?").run(entry.row_id);
+        db.prepare("DELETE FROM services WHERE id = ?").run(entry.row_id);
+        break;
+      }
+      db.prepare("UPDATE services SET name = ?, es = ?, aliases = ?, price_cents = ?, duration_min = ? WHERE id = ?").run(
+        prev.name, prev.es, prev.aliases, prev.price_cents, prev.duration_min, entry.row_id,
+      );
+      db.prepare("DELETE FROM service_supplies WHERE service_id = ?").run(entry.row_id);
+      for (const line of Array.isArray(extra.prev_lines) ? extra.prev_lines : []) {
+        db.prepare("INSERT INTO service_supplies (service_id, supply_id, qty, unit) VALUES (?, ?, ?, ?)").run(
+          entry.row_id, line.supply_id, line.qty, line.unit,
+        );
+      }
+      break;
+    }
+    case "manage_delete_service": {
+      const row = extra.row;
+      if (!row || typeof row.id !== "number") return { ok: false, message: "No se puede deshacer." };
+      db.prepare("INSERT OR REPLACE INTO services (id, name, es, aliases, price_cents, duration_min) VALUES (?, ?, ?, ?, ?, ?)").run(
+        row.id, row.name, row.es, row.aliases, row.price_cents, row.duration_min,
+      );
+      for (const line of extra.lines ?? []) {
+        db.prepare("INSERT OR IGNORE INTO service_supplies (service_id, supply_id, qty, unit) VALUES (?, ?, ?, ?)").run(
+          row.id, line.supply_id, line.qty, line.unit,
+        );
+      }
+      break;
+    }
+    case "manage_save_supply": {
+      const prev = extra.prev;
+      if (prev === null || prev === undefined) {
+        db.prepare("DELETE FROM supplies WHERE id = ?").run(entry.row_id);
+        break;
+      }
+      db.prepare("UPDATE supplies SET name = ?, es = ?, aliases = ?, unit = ?, content_per_product = ?, stock_qty = ?, min_qty = ?, price_per_product_usd = ? WHERE id = ?").run(
+        prev.name, prev.es, prev.aliases, prev.unit, prev.content_per_product, prev.stock_qty, prev.min_qty,
+        prev.price_per_product_usd, entry.row_id,
+      );
+      break;
+    }
+    case "manage_delete_supply": {
+      const row = extra.row;
+      if (!row || typeof row.id !== "number") return { ok: false, message: "No se puede deshacer." };
+      db.prepare("INSERT OR REPLACE INTO supplies (id, name, es, aliases, unit, content_per_product, stock_qty, min_qty, price_per_product_usd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+        row.id, row.name, row.es, row.aliases, row.unit, row.content_per_product, row.stock_qty, row.min_qty,
+        row.price_per_product_usd,
+      );
+      break;
+    }
+    case "manage_save_payment":
+      db.prepare("DELETE FROM payments WHERE id = ?").run(entry.row_id);
+      break;
+    case "manage_delete_payment": {
+      const row = extra.row;
+      if (!row || typeof row.id !== "number") return { ok: false, message: "No se puede deshacer." };
+      db.prepare("INSERT OR REPLACE INTO payments (id, session_id, amount_usd, created_at) VALUES (?, ?, ?, ?)").run(
+        row.id, row.session_id, row.amount_usd, row.created_at,
+      );
+      break;
+    }
+    case "manage_save_settings": {
+      const prev = extra.prev;
+      if (!prev) return { ok: false, message: "No se puede deshacer." };
+      const put = db.prepare("INSERT INTO business_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+      for (const key of ["monthly_goal_usd", "margin_pct", "schedule", "work_hours_per_day"]) {
+        if (prev[key] !== undefined) put.run(key, String(prev[key]));
+      }
+      break;
+    }
+    case "manage_add_fixed_cost":
+      db.prepare("DELETE FROM business_fixed_costs WHERE id = ?").run(entry.row_id);
+      break;
+    case "manage_delete_fixed_cost": {
+      const row = extra.row;
+      if (!row || typeof row.id !== "number") return { ok: false, message: "No se puede deshacer." };
+      db.prepare("INSERT OR REPLACE INTO business_fixed_costs (id, label, amount_usd) VALUES (?, ?, ?)").run(
+        row.id, row.label, row.amount_usd,
+      );
+      break;
+    }
+    case "manage_save_profile": {
+      if (typeof extra.prev_name !== "string") return { ok: false, message: "No se puede deshacer." };
+      db.prepare("UPDATE user_profile SET name = ? WHERE id = 1").run(extra.prev_name);
       break;
     }
     default:
@@ -1993,7 +2179,8 @@ export function goalProgress(db: ValeDb): ToolResult {
     )
     .get() as { earned: number };
   const earned = Math.round(row.earned * 100) / 100;
-  const goal = PRICING.goalMonthlyUsd;
+  // Same figure the Goals screen edits: seed value until the user changes it.
+  const goal = getBusinessSettings(db).monthlyGoalUsd || PRICING.goalMonthlyUsd;
   const pct = Math.round((earned / goal) * 100);
   const month = new Date().toISOString().slice(0, 7);
   return {

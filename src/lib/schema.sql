@@ -128,3 +128,14 @@ CREATE TABLE IF NOT EXISTS write_log (
   undone INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+-- HACK-030 management screens: business settings edited from Goals, seeded
+-- from the seed pricing block. All values stay invented demo data.
+CREATE TABLE IF NOT EXISTS business_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS business_fixed_costs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  label TEXT NOT NULL,
+  amount_usd REAL NOT NULL DEFAULT 0
+);
