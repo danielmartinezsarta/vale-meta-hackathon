@@ -77,7 +77,11 @@ describe("tool definitions", () => {
         "session_log_supply",
         "session_open",
         "session_quote",
+        "shopping_add",
+        "shopping_remove",
+        "shopping_show",
         "stock_set",
+        "stock_show_low",
         "tool_get_details",
         "undo_last",
         "widget_show",
@@ -97,11 +101,7 @@ describe("tool definitions", () => {
     const names = VALE_TOOLS.map((tool) => tool.name);
     for (const internal of [
       "agenda_get_next",
-      "shopping_add",
-      "shopping_show",
-      "shopping_remove",
       "service_show",
-      "stock_show_low",
       "stock_add",
       "session_quote_accept",
     ]) {
@@ -491,6 +491,28 @@ describe("shopping list", () => {
     expect(readShoppingList(db).message).toContain("Nail file");
     expect(removeFromShoppingList(db, { item_name: "Lima" }).ok).toBe(true);
     expect(removeFromShoppingList(db, { item_name: "Lima" }).ok).toBe(false);
+    db.close();
+  });
+
+  it("adds, shows and removes by direct tool name with undo", () => {
+    const db = freshTestDb();
+    db.prepare("DELETE FROM reminder_items").run();
+    db.prepare("DELETE FROM shopping_list").run();
+    db.prepare("DELETE FROM reminders").run();
+    const added = runValeTool(db, "shopping_add", { item_name: "lima" });
+    expect(added.ok).toBe(true);
+    const shown = runValeTool(db, "shopping_show", {});
+    expect(shown.ok).toBe(true);
+    expect((shown.data as { items: string[] }).items).toContain("Nail file");
+    const logged = db
+      .prepare("SELECT action FROM write_log WHERE action = 'shopping_add'")
+      .get() as { action: string } | undefined;
+    expect(logged?.action).toBe("shopping_add");
+    expect(undoLastWrite(db).ok).toBe(true);
+    expect(readShoppingList(db).message).toBe("La lista está vacía.");
+    addToShoppingList(db, { item_name: "lima" });
+    expect(runValeTool(db, "shopping_remove", { item_name: "Lima" }).ok).toBe(true);
+    expect(readShoppingList(db).message).toBe("La lista está vacía.");
     db.close();
   });
 });
@@ -1210,6 +1232,16 @@ describe("stock", () => {
     expect(low.map((item) => item.name)).toContain("Top coat");
     expect(low.every((item) => item.name !== "Acetone")).toBe(true);
     expect(read.message).toContain("mínimo 5");
+    db.close();
+  });
+
+  it("reports low stock by direct tool name", () => {
+    const db = freshTestDb();
+    setStock(db, { name: "Top coat", qty: 5 });
+    const read = runValeTool(db, "stock_show_low", {});
+    expect(read.ok).toBe(true);
+    const low = (read.data as { low: { name: string }[] }).low;
+    expect(low.map((item) => item.name)).toContain("Top coat");
     db.close();
   });
 

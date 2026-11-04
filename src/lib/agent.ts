@@ -262,6 +262,12 @@ export function contractWidgetFor(
     }
     case "session_close":
       return { tool: "close_session", args: {}, data };
+    case "shopping_show":
+    case "shopping_add":
+    case "shopping_remove":
+    case "stock_show_low":
+      // The sheets exist: pass the call through so the list opens.
+      return { tool, args, data };
     default:
       return null;
   }

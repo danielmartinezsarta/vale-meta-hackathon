@@ -148,6 +148,31 @@ describe("agent prompt", () => {
     expect(contractWidgetFor("agenda_move_appointment", {}, {})).toBeNull();
   });
 
+  it("passes shopping and low-stock calls through so the sheets open", () => {
+    const items = { items: ["Nail file"] };
+    expect(contractWidgetFor("shopping_show", {}, items)).toEqual({
+      tool: "shopping_show",
+      args: {},
+      data: items,
+    });
+    expect(contractWidgetFor("shopping_add", {}, items)).toEqual({
+      tool: "shopping_add",
+      args: {},
+      data: items,
+    });
+    expect(contractWidgetFor("shopping_remove", {}, items)).toEqual({
+      tool: "shopping_remove",
+      args: {},
+      data: items,
+    });
+    const low = { low: [{ name: "Top coat", stock_qty: 5, min_qty: 5 }] };
+    expect(contractWidgetFor("stock_show_low", {}, low)).toEqual({
+      tool: "stock_show_low",
+      args: {},
+      data: low,
+    });
+  });
+
   it("drops the quote sheet mapping once the amount is paid", () => {
     expect(
       contractWidgetFor("session_quote", {}, { paid_amount_usd: 25 }),
