@@ -32,7 +32,7 @@ We start with nail technicians: it is the domain we know first-hand, with a prim
 
 Gloves on, gel curing, acetone in the air, the client in the chair asking how much. Stopping to type means losing the thread of the session.
 
-Video: [Watch the demo](https://www.youtube.com/watch?v=eoWEdRfhTug) (3 minutes). It follows the recorded run: agenda, client card, quote, photos and shopping.
+Video: Watch the demo (https://www.youtube.com/watch?v=eoWEdRfhTug) (3 minutes).
 
 ## For judges
 
