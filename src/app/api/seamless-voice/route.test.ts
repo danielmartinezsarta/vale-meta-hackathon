@@ -27,11 +27,11 @@ describe("seamless-voice proxy", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("audio/wav");
     expect(res.headers.get("X-Synthesis-Seconds")).toBe("1.23");
-    expect(res.headers.get("X-Speaker-Requested")).toBe("10");
+    expect(res.headers.get("X-Speaker-Requested")).toBe("17");
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4]));
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0][0])).toContain("text=Hola");
-    expect(String(fetchMock.mock.calls[0][0])).toContain("speaker=10");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("speaker=17");
   });
 
   it("forwards an explicit speaker and echoes it back", async () => {
@@ -54,7 +54,7 @@ describe("seamless-voice proxy", () => {
     await GET(
       new Request("http://test/api/seamless-voice?text=Hola&speaker=abc"),
     );
-    expect(String(fetchMock.mock.calls[1][0])).toContain("speaker=10");
+    expect(String(fetchMock.mock.calls[1][0])).toContain("speaker=17");
   });
 
   it("caps callers at 30 per minute with a short 429", async () => {
@@ -87,7 +87,7 @@ describe("seamless-voice proxy", () => {
     await GET(
       new Request("http://test/api/seamless-voice?text=Hola&speaker=%20%20"),
     );
-    expect(String(fetchMock.mock.calls[0][0])).toContain("speaker=10");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("speaker=17");
     await GET(
       new Request("http://test/api/seamless-voice?text=Hola&speaker=-5"),
     );
@@ -108,6 +108,29 @@ describe("seamless-voice proxy", () => {
     const res = await GET(new Request("http://test/api/seamless-voice?text=%20%20"));
     expect(res.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("logs one synthesis line with engine, speaker, time and warmth", async () => {
+    const logged: unknown[] = [];
+    const spy = vi
+      .spyOn(console, "log")
+      .mockImplementation((...args: unknown[]) => {
+        logged.push(args.join(" "));
+      });
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (..._args: unknown[]) => wavResponse("0.62")),
+      );
+      await GET(new Request("http://test/api/seamless-voice?text=Hola"));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(logged).toHaveLength(1);
+    expect(String(logged[0])).toContain("engine=seamless");
+    expect(String(logged[0])).toContain("speaker=17");
+    expect(String(logged[0])).toContain("synthesisS=0.62");
+    expect(String(logged[0])).toContain("warm");
   });
 
   it("maps upstream failures to a short message", async () => {

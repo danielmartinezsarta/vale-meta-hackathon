@@ -75,6 +75,13 @@ briefs on server start and after `npm run db:reset` for the clients with
 appointments today; a new note or a closed session regenerates that
 client's brief in the background.
 
+## Voice (Seamless, optional)
+
+The demo speaks with the browser voice unless `SEAMLESS_URL` is set. To serve
+the open model yourself: `pip install modal`, then
+`SEAMLESS_APP_NAME=vale-seamless-<something-private> modal deploy modal/seamless.py`,
+then copy the printed https URL into your local `.env` as `SEAMLESS_URL`.
+
 ## License
 
 [Apache-2.0](LICENSE)
