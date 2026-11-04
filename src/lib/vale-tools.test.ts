@@ -9,6 +9,7 @@ import { quotePrice } from "./quote";
 import seedData from "./seed-data.json";
 import { bogotaDay } from "./natural-date";
 import { buildPendingActions } from "./pending-action";
+import { buildWidget } from "./widget";
 import { previewsDir, sessionPhotoPath, sessionPhotosDir } from "./session-photo";
 import {
   VALE_TOOLS,
@@ -138,7 +139,12 @@ describe("sessions", () => {
     expect(closed.ok).toBe(true);
     const data = closed.data as {
       extras: { name: string; qty: number; amount: number }[];
-      breakdown: { supplies_cost: number; final_price: number } | null;
+      breakdown: {
+        supplies_cost: number;
+        time_cost: number;
+        fixed_share: number;
+        final_price: number;
+      } | null;
       paid_amount_usd: number;
     };
     expect(data.extras).toHaveLength(2);
@@ -148,6 +154,20 @@ describe("sessions", () => {
     // Gel removal recipe (8.82) plus the two logged extras (4 + 4.50).
     expect(data.breakdown?.supplies_cost).toBeCloseTo(17.32, 5);
     expect(data.paid_amount_usd).toBe(25);
+    // The sheet adds up: service plus extras equal the quoted subtotal.
+    const summary = buildWidget("close_session", {}, data, db);
+    const summaryData = summary?.data as {
+      service: { price: number };
+      extras: { amount: number }[];
+    };
+    const subtotal =
+      (data.breakdown?.supplies_cost ?? 0) +
+      (data.breakdown?.time_cost ?? 0) +
+      (data.breakdown?.fixed_share ?? 0);
+    expect(
+      summaryData.service.price +
+        summaryData.extras.reduce((sum, extra) => sum + extra.amount, 0),
+    ).toBeCloseTo(subtotal, 5);
     db.close();
   });
 
