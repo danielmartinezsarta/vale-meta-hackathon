@@ -302,22 +302,6 @@ describe("test-database guards", () => {
     db.close();
   });
 
-  it("prefers VALE_USER_NAME over the seed and keeps a renamed profile", () => {
-    const saved = process.env.VALE_USER_NAME;
-    const db = freshTestDb();
-    try {
-      process.env.VALE_USER_NAME = "Maria";
-      expect(userName(db)).toBe("Maria");
-    } finally {
-      if (saved === undefined) delete process.env.VALE_USER_NAME;
-      else process.env.VALE_USER_NAME = saved;
-    }
-    db.prepare("UPDATE user_profile SET name = ? WHERE id = 1").run("Maria");
-    seedDatabase(db);
-    expect(userName(db)).toBe("Maria");
-    db.close();
-  });
-
   it("resolves the live file by default and honors VALE_DB_PATH", () => {
     const saved = process.env.VALE_DB_PATH;
     try {

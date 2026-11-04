@@ -226,13 +226,11 @@ export function migrateDatabase(db: ValeDb): void {
 }
 
 /** Create tables and insert the invented seed. Idempotent. */
-/** The user behind the voice: seeded, overridable with VALE_USER_NAME. */
+/** The user behind the voice: the seeded demo profile. */
 export const DEFAULT_USER_NAME = "Demo";
 
-/** The user's name for the prompt: env wins, then the seeded profile. */
+/** The user's name for the prompt: the seeded profile, else the default. */
 export function userName(db: ValeDb): string {
-  const env = process.env.VALE_USER_NAME?.trim();
-  if (env) return env;
   try {
     const row = db
       .prepare("SELECT name FROM user_profile WHERE id = 1")
