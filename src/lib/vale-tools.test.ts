@@ -60,7 +60,10 @@ describe("tool definitions", () => {
     const names = VALE_TOOLS.map((tool) => tool.name).sort();
     expect(names).toEqual(
       [
+        "agenda_cancel_appointment",
         "agenda_create_appointment",
+        "agenda_create_reminder",
+        "agenda_move_appointment",
         "agenda_show",
         "client_card_show",
         "client_create",
@@ -92,10 +95,7 @@ describe("tool definitions", () => {
   it("keeps booking and card lookups internal-only", () => {
     const names = VALE_TOOLS.map((tool) => tool.name);
     for (const internal of [
-      "agenda_move_appointment",
-      "agenda_cancel_appointment",
       "agenda_get_next",
-      "agenda_create_reminder",
       "shopping_add",
       "shopping_show",
       "shopping_remove",
@@ -931,6 +931,42 @@ describe("appointments", () => {
     expect(asked.ok).toBe(false);
     expect(asked.pendingMove).toEqual({ client_name: "Ana", new_day: localDay(), new_time: "12:00" });
     expect(listToday(db).message).toContain("10:00");
+    db.close();
+  });
+
+  it("calls move, cancel and reminder by name through runValeTool", () => {
+    const db = freshTestDb();
+    db.prepare("DELETE FROM appointments").run();
+    bookToday(db, "Ana", "10:00");
+    const asked = runValeTool(db, "agenda_move_appointment", {
+      client_name: "Ana",
+      new_day: localDay(),
+      new_time: "12:00",
+    });
+    expect(asked.ok).toBe(false);
+    const moved = runValeTool(db, "agenda_move_appointment", {
+      client_name: "Ana",
+      new_day: localDay(),
+      new_time: "12:00",
+      confirm_move: true,
+    });
+    expect(moved.ok).toBe(true);
+    expect(listToday(db).message).toContain("12:00");
+    const logged = db
+      .prepare("SELECT action FROM write_log WHERE action = 'agenda_move_appointment'")
+      .get() as { action: string } | undefined;
+    expect(logged?.action).toBe("agenda_move_appointment");
+    const askCancel = runValeTool(db, "agenda_cancel_appointment", { client_name: "Ana" });
+    expect(askCancel.ok).toBe(false);
+    const cancelled = runValeTool(db, "agenda_cancel_appointment", { client_name: "Ana", confirm_cancel: true });
+    expect(cancelled.ok).toBe(true);
+    expect(listToday(db).message).toBe("No tienes nada hoy.");
+    const reminded = runValeTool(db, "agenda_create_reminder", { text: "Buy acetone" });
+    expect(reminded.ok).toBe(true);
+    const row = db.prepare("SELECT text FROM reminders WHERE text = 'Buy acetone'").get() as
+      | { text: string }
+      | undefined;
+    expect(row?.text).toBe("Buy acetone");
     db.close();
   });
 

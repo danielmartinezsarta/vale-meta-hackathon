@@ -383,6 +383,55 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   },
   {
     type: "function",
+    name: "agenda_move_appointment",
+    description:
+      "Move a client's appointment to a new day and time. The first call asks for confirmation; repeat it with confirm_move true to move it. Pass day and time as YYYY-MM-DD and HH:MM, or natural words with new_when; a date with no time keeps the booking's time. Resolved on the America/Bogota calendar.",
+    parameters: {
+      type: "object",
+      properties: {
+        client_name: { type: "string", description: "Client name, approximate is fine." },
+        day: { type: "string", description: "Which booking when several: date as YYYY-MM-DD." },
+        new_day: { type: "string", description: "New date as YYYY-MM-DD." },
+        new_time: { type: "string", description: "New time as HH:MM, 24 hours." },
+        new_when: { type: "string", description: "Natural new date and time in English, for example tomorrow at 3 PM. Overrides new_day and new_time." },
+        confirm_move: { type: "boolean", description: "Repeat a confirmed move with true." },
+      },
+      required: ["client_name"],
+    },
+  },
+  {
+    type: "function",
+    name: "agenda_cancel_appointment",
+    description:
+      "Cancel a client's appointment. The first call asks for confirmation; repeat it with confirm_cancel true to cancel it. With appointment_id no client name is needed.",
+    parameters: {
+      type: "object",
+      properties: {
+        client_name: { type: "string", description: "Client name, approximate is fine." },
+        day: { type: "string", description: "Which booking when several: date as YYYY-MM-DD." },
+        appointment_id: { type: "number", description: "Booking id from a confirm question." },
+        confirm_cancel: { type: "boolean", description: "Repeat a confirmed cancel with true." },
+      },
+      required: [],
+    },
+  },
+  {
+    type: "function",
+    name: "agenda_create_reminder",
+    description:
+      "Save a standalone reminder for a day, optionally linked to shopping-list supplies through items.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Reminder text." },
+        day: { type: "string", description: "Date as YYYY-MM-DD. Defaults to today." },
+        items: { type: "array", items: { type: "string" }, description: "Supply names to buy, linked to the shopping list." },
+      },
+      required: ["text"],
+    },
+  },
+  {
+    type: "function",
     name: "stock_set",
     description: "Set a supply stock to an exact quantity.",
     parameters: {
@@ -906,10 +955,7 @@ export function getToolDetails(args: { name?: unknown }, language: ValeLanguage 
   const internal: Record<string, string> = {
     client_note_add: "Save a one-line note on the client card immediately, no confirmation. Kind is note or health_note (allergies and similar health topics, stays private). If the client is unknown, register them with client_create first, then save.",
 
-    agenda_move_appointment: "Move an appointment. Asks first: the refusal carries the confirm question and a yes moves it.",
-    agenda_cancel_appointment: "Cancel an appointment. Asks first: the refusal carries the confirm question and a yes cancels it.",
     agenda_get_next: "Next appointment today. Internal: only when asked who is next.",
-    agenda_create_reminder: "Save a standalone reminder. Internal: only when asked to remind.",
     shopping_add: "Add a supply to the shopping list. Internal: only when asked to buy or add.",
     shopping_remove: "Remove a supply from the shopping list. Internal: only when asked to remove.",
     shopping_show: "Read the shopping list. Internal: reads run with the agenda.",
