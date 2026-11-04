@@ -1,9 +1,12 @@
 <div align="center">
-  <img src="docs/img/robot.svg" width="150" alt="Vale robot" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/robot-dark.svg" />
+    <img src="docs/img/robot.svg" width="150" alt="Vale robot" />
+  </picture>
   <br />
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/wordmark-dark.svg" />
-    <img src="docs/img/wordmark.svg" width="210" alt="vale — Just say it." />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-dark.png" />
+    <img src="docs/img/logo-light.png" width="300" alt="vale. Just say it." />
   </picture>
   <p>Vale is a voice-first assistant with an intent-based interface for people who work with their hands: they say what they need, Vale does it, without stopping their work.</p>
   <p>
