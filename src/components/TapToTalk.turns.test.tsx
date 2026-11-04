@@ -64,8 +64,7 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
     const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBe(1);
     });
@@ -88,7 +87,9 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
       expect(screen.getByText("second final")).toBeTruthy();
     });
 
-    expect(screen.getAllByText("You:")).toHaveLength(2);
+    // The awake screen shows the last 3 bubbles: Vale's first reply plus
+    // the whole second turn.
+    expect(screen.getAllByText("You:")).toHaveLength(1);
     expect(screen.getAllByText("Vale:")).toHaveLength(2);
     expect(screen.getByText("first reply from Vale")).toBeTruthy();
     expect(screen.getByText("second reply from Vale")).toBeTruthy();
@@ -96,9 +97,9 @@ describe("turn bubbles (fake-device fallback, no real mic)", () => {
 
     expect(screen.queryByText("first")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
   });
 });

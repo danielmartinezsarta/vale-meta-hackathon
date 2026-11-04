@@ -50,8 +50,7 @@ async function tapToTalk() {
     vi.fn(() => new Promise(() => {})),
   );
   stubSession();
-  render(<TapToTalk debug />);
-  fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+  render(<TapToTalk autoStart />);
   // Flush the async getUserMedia continuation: advance(0) alone does not
   // commit the live render once the session owns more than one interval,
   // so run past the first session tick (no turn effects at this silence).
@@ -60,7 +59,7 @@ async function tapToTalk() {
 
 function sessionAlive() {
   expect(
-    screen.getByRole("button", { name: "Stop" }),
+    screen.getByRole("button", { name: "Put Vale to sleep" }),
   ).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
 }

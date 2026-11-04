@@ -1,37 +1,40 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { VoiceControls } from "./VoiceControls";
 
 afterEach(() => {
   cleanup();
 });
 
 describe("TapToTalk smoke", () => {
-  it("renders the tap target and the voice switch with no mic prompt", () => {
-    const getUserMedia = vi.fn();
+  it("renders the awake screen and starts the mic with no prompt", async () => {
+    const getUserMedia = vi.fn(async () => ({ getTracks: () => [] }));
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
 
-    render(<TapToTalk debug />);
+    render(<TapToTalk autoStart />);
 
     const buttons = screen.getAllByRole("button");
     expect(buttons).toHaveLength(3);
     expect(
-      screen.getByRole("button", { name: "Tap to talk" }),
+      screen.getByRole("button", { name: "Mute Vale" }),
     ).toBeDefined();
     expect(
-      screen.getByRole("button", { name: "Use Seamless voice" }),
+      screen.getByRole("button", { name: "Mute microphone" }),
+    ).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: "Put Vale to sleep" }),
     ).toBeDefined();
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(getUserMedia).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+    });
 
     vi.unstubAllGlobals();
   });
 
   it("shows voice controls instead of a language switch", () => {
-    const getUserMedia = vi.fn();
-    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
-
-    render(<TapToTalk debug />);
+    render(<VoiceControls />);
 
     expect(screen.queryByRole("button", { name: "ES" })).toBeNull();
     expect(screen.queryByRole("button", { name: "EN" })).toBeNull();
@@ -39,7 +42,5 @@ describe("TapToTalk smoke", () => {
     expect(screen.getByRole("slider", { name: "Speed" })).toBeDefined();
     expect(screen.getByRole("slider", { name: "Pitch" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Test" })).toBeDefined();
-
-    vi.unstubAllGlobals();
   });
 });

@@ -57,8 +57,7 @@ function burst() {
 }
 
 async function tap() {
-  render(<TapToTalk debug />);
-  fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+  render(<TapToTalk autoStart />);
   await vi.advanceTimersByTimeAsync(300);
 }
 
@@ -94,8 +93,8 @@ describe("transcript guard: an empty turn never deletes a bubble", () => {
     expect(screen.getByText("Vale, agenda lista")).toBeTruthy();
     expect(screen.getByText("Listo, Daniel.")).toBeTruthy();
     expect(
-      screen.getByLabelText("Conversation turns").querySelectorAll("li"),
-    ).toHaveLength(1);
+      screen.getByLabelText("Conversation").querySelectorAll("li"),
+    ).toHaveLength(2);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -128,7 +127,7 @@ describe("transcript guard: an empty turn never deletes a bubble", () => {
     expect(screen.getByText("Vale, agenda lista")).toBeTruthy();
     expect(screen.getByText("Listo, Daniel.")).toBeTruthy();
     expect(
-      screen.getByLabelText("Conversation turns").querySelectorAll("li"),
-    ).toHaveLength(1);
+      screen.getByLabelText("Conversation").querySelectorAll("li"),
+    ).toHaveLength(2);
   });
 });

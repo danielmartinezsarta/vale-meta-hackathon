@@ -55,8 +55,7 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
     const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
     await waitFor(() => {
       expect(seen.length).toBe(1);
@@ -83,12 +82,12 @@ describe("gapless turns on one capture (bug 2: inter-turn gap lost speech)", () 
     expect(mockStartCapture).toHaveBeenCalledTimes(1);
     expect(stopMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getAllByText("You:")).toHaveLength(2);
+    expect(screen.getAllByText("You:")).toHaveLength(1);
     expect(screen.getAllByText("Vale:")).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
     expect(stopMock).toHaveBeenCalledTimes(1);
   });

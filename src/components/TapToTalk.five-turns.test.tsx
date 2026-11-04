@@ -62,8 +62,7 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
     const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     expect(getUserMedia).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(seen.length).toBe(1);
@@ -87,14 +86,14 @@ describe("five-turn hands-free conversation (fake-device fallback, B2)", () => {
     // Sixth burst with no answer: the session stays open, nothing posted.
     burst(seen[0]);
 
-    expect(screen.getAllByText("You:")).toHaveLength(5);
-    expect(screen.getAllByText("Vale:")).toHaveLength(5);
+    expect(screen.getAllByText("You:")).toHaveLength(1);
+    expect(screen.getAllByText("Vale:")).toHaveLength(2);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(getUserMedia).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
   });
 });

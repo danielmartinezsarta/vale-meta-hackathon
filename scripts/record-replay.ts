@@ -1,7 +1,7 @@
 // Record the committed demo run (HACK-024): posts the demo phrases as
 // typed turns through the real app, then folds the unified log
 // (data/logs/*.jsonl) into replay/demo-run.json. Run it with the server up:
-//   PORT=3106 npm run dev   # or tsx server.ts with META_API_KEY set
+//   PORT=3000 npm run dev   # or tsx server.ts with META_API_KEY set
 //   npm run replay:record
 // Meta cap for the whole recording: 0.50 USD. The server must run on a
 // fresh demo database: run npm run db:reset and (re)start the server first,
@@ -14,7 +14,7 @@ import { DatabaseSync } from "node:sqlite";
 import { buildReplayRun, type ReplayRun } from "../src/lib/replay";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const base = process.env.REPLAY_BASE ?? "http://localhost:3106";
+const base = process.env.REPLAY_BASE ?? "http://localhost:3000";
 const language = process.env.REPLAY_LANG ?? "en";
 
 const MAX_COST_USD = 0.5;

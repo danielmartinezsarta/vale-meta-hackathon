@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
 import { startCapture } from "@/lib/capture";
@@ -76,8 +76,7 @@ async function openConversation() {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("no post", { status: 500 })));
   stubSessionOnce();
 
-  render(<TapToTalk debug />);
-  fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+  render(<TapToTalk autoStart />);
   await waitFor(() => {
     expect(FakeWs.instances).toHaveLength(1);
   });
@@ -103,11 +102,12 @@ describe("confirm card (touch equals voice)", () => {
         size: "half",
       },
     });
-    await waitFor(() => {
-      expect(
-        screen.getByText("Open session with Ana for Gel refill?"),
-      ).toBeTruthy();
+    const confirmSheet = await screen.findByRole("dialog", {
+      name: "Open session with Ana for Gel refill?",
     });
+    expect(
+      within(confirmSheet).getByRole("button", { name: "Yes" }),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Yes" }));
     await waitFor(() => {
       const votes = ws
@@ -126,9 +126,8 @@ describe("confirm card (touch equals voice)", () => {
       type: "widget",
       widget: { kind: "confirm", title: "Log Top coat?", lines: [], size: "half" },
     });
-    await waitFor(() => {
-      expect(screen.getByText("Log Top coat?")).toBeTruthy();
-    });
+    const noSheet = await screen.findByRole("dialog", { name: "Log Top coat?" });
+    expect(within(noSheet).getByRole("button", { name: "No" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "No" }));
     await waitFor(() => {
       const votes = ws
@@ -300,9 +299,8 @@ describe("sheet flows", () => {
         },
       },
     });
-    await waitFor(() => {
-      expect(screen.getByText("David")).toBeTruthy();
-    });
+    const cardSheet = await screen.findByRole("dialog", { name: "Client card" });
+    expect(within(cardSheet).getByText("David")).toBeTruthy();
     fireEvent.click(
       screen.getByRole("button", { name: /open the photos of this visit/ }),
     );
@@ -332,9 +330,8 @@ describe("sheet flows", () => {
         },
       },
     });
-    await waitFor(() => {
-      expect(screen.getByText("David")).toBeTruthy();
-    });
+    const closeSheet = await screen.findByRole("dialog", { name: "Client card" });
+    expect(within(closeSheet).getByText("David")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close client card" }));
     await waitFor(() => {
       expect(screen.queryByText("David")).toBeNull();

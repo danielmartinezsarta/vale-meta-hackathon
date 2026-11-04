@@ -86,8 +86,7 @@ describe("reply streaming (transient output fix)", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("no post", { status: 500 })));
     stubSessionOnce();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });

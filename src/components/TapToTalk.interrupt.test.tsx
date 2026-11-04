@@ -74,8 +74,7 @@ describe("interruption (fake-device fallback)", () => {
     });
     const fetchMock = noAudioPost();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
@@ -108,7 +107,7 @@ describe("interruption (fake-device fallback)", () => {
     speakAudibleRef.current = false;
     liveSocket().serverMessage({ type: "done" });
     expect(fetchMock).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
   });
 
   it("pausing for her voice closes the released segment with endStream first", async () => {
@@ -132,8 +131,7 @@ describe("interruption (fake-device fallback)", () => {
       };
     });
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
@@ -167,8 +165,7 @@ describe("interruption (fake-device fallback)", () => {
       return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
@@ -202,8 +199,7 @@ describe("interruption (fake-device fallback)", () => {
         "fetch",
         vi.fn(() => new Promise(() => {})),
       );
-      render(<TapToTalk debug />);
-      fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+      render(<TapToTalk autoStart />);
       // The /voice gate polls every 50 ms: advance past one poll.
       await vi.advanceTimersByTimeAsync(100);
       expect(seen.length).toBeGreaterThan(0);
@@ -217,7 +213,7 @@ describe("interruption (fake-device fallback)", () => {
         screen.queryByText("I didn't hear you. Speak, I'm listening."),
       ).toBeNull();
       expect(
-        screen.getByRole("button", { name: "Stop" }),
+        screen.getByRole("button", { name: "Put Vale to sleep" }),
       ).toBeTruthy();
       expect(mockStopSpeaking).not.toHaveBeenCalled();
     } finally {
@@ -238,8 +234,7 @@ describe("interruption (fake-device fallback)", () => {
           },
         });
         stubVoiceSocket();
-        render(<TapToTalk debug />);
-        fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+        render(<TapToTalk autoStart />);
         // She speaks before the summary lands: the chain must not wait on it.
         speakAudibleRef.current = true;
         await screen.findByText("Speaking", undefined, { timeout: 5000 });

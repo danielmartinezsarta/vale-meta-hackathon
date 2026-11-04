@@ -105,8 +105,7 @@ describe("socket drop reconnects on the same path, never POSTs", () => {
     vi.stubGlobal("fetch", fetchMock);
     stubSessionOnce();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
@@ -163,9 +162,9 @@ describe("socket drop reconnects on the same path, never POSTs", () => {
     expect(screen.getAllByText("Vale:")).toHaveLength(2);
     expect(screen.queryByRole("alert")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
   });
 });

@@ -50,7 +50,6 @@ import {
 } from "@/lib/widget";
 import { AwakeScreen, type AwakeBubble } from "@/components/AwakeScreen";
 import { SessionScreen } from "@/components/SessionScreen";
-import { VoiceDebugView } from "@/components/VoiceDebugView";
 import { useScreenMode } from "@/components/useScreenMode";
 import styles from "./ValeScreens.module.css";
 
@@ -91,11 +90,9 @@ function countVoiced(frame: Int16Array): boolean {
 
 export function TapToTalk({
   autoStart = false,
-  debug = false,
   onSleep,
 }: {
   autoStart?: boolean;
-  debug?: boolean;
   onSleep?: () => void;
 } = {}) {
   const [status, setStatus] = useState<Status>("idle");
@@ -2098,34 +2095,9 @@ export function TapToTalk({
 
   const mode = useScreenMode();
 
-  if (debug) {
-    return (
-      <VoiceDebugView
-        status={status}
-        ui={ui}
-        language={language}
-        engine={engine}
-        level={level}
-        valeUiState={valeUiState}
-        turns={turns}
-        board={board}
-        widget={widget}
-        notice={notice}
-        alert={alert}
-        onTap={() => void handleTap()}
-        onToggleEngine={toggleEngine}
-        onSwitchLanguage={switchLanguage}
-        onVote={(vote) => castVoteRef.current(vote)}
-        onCloseWidget={closeWidgetByHand}
-        sheetCallbacks={sheetCallbacks}
-      />
-    );
-  }
-
   // Dialogue bubbles for the awake screen: the user line grows in its own
   // bubble, Vale's reply grows with the deltas; the screen shows the last 3.
-  // Ignored turns never reach the screens (not even as a label): they stay
-  // visible only in the debug view, which reads the turns directly.
+  // Ignored turns never reach the screens (not even as a label).
   const bubbles: AwakeBubble[] = [];
   for (const turn of turns) {
     if (turn.ignored) continue;
@@ -2138,6 +2110,16 @@ export function TapToTalk({
       bubbles.push({ id: `turn-${turn.id}-vale`, text: turn.reply, from: "vale" });
     }
   }
+
+  // Startup mic errors used to render in the debug view: with it gone the
+  // real screens carry them, or a denied mic fails silently.
+  const startupAlert =
+    status === "blocked"
+      ? `${ui.micBlockedLead} ${ui.micBlockedIPhone} ${ui.micBlockedChrome}`
+      : status === "error"
+        ? ui.micError
+        : null;
+  const shownAlert = alert ?? startupAlert;
 
   const session = board?.session ?? null;
   if (session) {
@@ -2154,7 +2136,7 @@ export function TapToTalk({
         micMuted={micMuted}
         typedField={typedField}
         notice={notice}
-        alert={alert}
+        alert={shownAlert}
         onToggleMute={toggleMute}
         onToggleMicMute={toggleMicMute}
         onSleep={sleep}
@@ -2178,7 +2160,7 @@ export function TapToTalk({
       micMuted={micMuted}
       typedField={typedField}
       notice={notice}
-      alert={alert}
+      alert={shownAlert}
       onToggleMute={toggleMute}
       onToggleMicMute={toggleMicMute}
       onSleep={sleep}

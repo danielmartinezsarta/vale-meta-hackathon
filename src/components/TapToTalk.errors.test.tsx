@@ -58,8 +58,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     const seen = setupDevice();
     const fetchMock = noAudioPost();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
@@ -74,9 +73,6 @@ describe("plain-language errors (fake-device fallback)", () => {
     expect(alert.textContent).toMatch(/configurada/i);
     expect(alert.textContent).not.toMatch(/at .*:[0-9]+/);
     expect(screen.queryByText("You:")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Tap to talk" }),
-    ).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -84,8 +80,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     const seen = setupDevice();
     const fetchMock = noAudioPost();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
@@ -105,9 +100,6 @@ describe("plain-language errors (fake-device fallback)", () => {
     expect(alert.textContent).toMatch(/tuve un problema/i);
     expect(alert.textContent).not.toMatch(/E-MODEL/);
     expect(screen.getByText("book a refill")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Tap to talk" }),
-    ).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -116,8 +108,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     const fetchMock = noAudioPost();
     const message = "I need a photo with all five nails visible.";
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
@@ -133,7 +124,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     expect(await screen.findByText(message)).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
     // Success path: the session stays live instead of ending with an alert.
-    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Put Vale to sleep" })).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -141,8 +132,7 @@ describe("plain-language errors (fake-device fallback)", () => {
     const seen = setupDevice();
     const fetchMock = noAudioPost();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
@@ -163,14 +153,10 @@ describe("plain-language errors (fake-device fallback)", () => {
     const seen = setupDevice();
     const fetchMock = noAudioPost();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(seen.length).toBeGreaterThan(0);
     });
-    expect(
-      screen.getByRole("meter", { name: "Microphone level" }),
-    ).toBeTruthy();
     burst(seen[0]);
     liveSocket().serverMessage({
       type: "error",

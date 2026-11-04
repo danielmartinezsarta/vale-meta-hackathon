@@ -41,23 +41,22 @@ describe("empty turns stay hidden (fix 1)", () => {
     const fetchMock = vi.fn(() => new Promise(() => {}));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
     await waitFor(() => {
       expect(
-        screen.getByText("Your microphone is on. Go ahead, I'm listening."),
+        screen.getByText("Listening"),
       ).toBeTruthy();
     });
 
     expect(
-      screen.getByLabelText("Conversation turns").querySelectorAll("li"),
+      screen.getByLabelText("Conversation").querySelectorAll("li"),
     ).toHaveLength(0);
     expect(fetchMock).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
   });
 
@@ -82,8 +81,7 @@ describe("empty turns stay hidden (fix 1)", () => {
     const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
     await waitFor(() => {
       expect(
@@ -95,17 +93,17 @@ describe("empty turns stay hidden (fix 1)", () => {
     answerEmptyTurn();
     await waitFor(() => {
       expect(
-        screen.getByText("Your microphone is on. Go ahead, I'm listening."),
+        screen.getByText("Listening"),
       ).toBeTruthy();
     });
     expect(
-      screen.getByLabelText("Conversation turns").querySelectorAll("li"),
+      screen.getByLabelText("Conversation").querySelectorAll("li"),
     ).toHaveLength(0);
     expect(fetchMock).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
   });
 });

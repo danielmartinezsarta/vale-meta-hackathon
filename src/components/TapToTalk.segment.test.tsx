@@ -27,8 +27,7 @@ function tapSession() {
     "fetch",
     vi.fn(async () => new Response("no post", { status: 500 })),
   );
-  render(<TapToTalk debug />);
-  fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+  render(<TapToTalk autoStart />);
 }
 
 async function waitForCapture() {
@@ -98,7 +97,7 @@ describe("client segment invariant (one transport, VAD-owned ends)", () => {
     for (let i = 0; i < 8; i += 1) seen[0].onFrame(new Int16Array(960));
     seen[0].onSpeechEnd();
     await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toBe("Listening");
+      expect(screen.getByText("Listening")).toBeTruthy();
     });
     expect(endStreamCount()).toBe(0);
     expect(screen.queryByText("You:")).toBeNull();
@@ -132,7 +131,7 @@ describe("client segment invariant (one transport, VAD-owned ends)", () => {
     expect(tag).toMatch(/^t\d+$/);
     FakeVoiceSocket.instances[0].serverMessage({ type: "done", turn: tag });
     await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toBe("Listening");
+      expect(screen.getByText("Listening")).toBeTruthy();
     });
     expect(screen.queryByRole("alert")).toBeNull();
     // Unknown tag: no turn matches, nothing happens, session stays live.
@@ -143,6 +142,6 @@ describe("client segment invariant (one transport, VAD-owned ends)", () => {
       turn: "t999",
     });
     expect(screen.queryByText("stray")).toBeNull();
-    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Put Vale to sleep" })).toBeTruthy();
   });
 });

@@ -41,8 +41,7 @@ describe("live turn over one socket (no buffered upload)", () => {
     const fetchMock = vi.fn(async () => new Response("no post", { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
     await waitFor(() => {
       expect(FakeVoiceSocket.instances).toHaveLength(1);
@@ -82,9 +81,9 @@ describe("live turn over one socket (no buffered upload)", () => {
     // Interim is replaced by the final.
     expect(screen.queryByText("hello")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
   });
 });

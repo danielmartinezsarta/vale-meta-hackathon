@@ -102,8 +102,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     vi.stubGlobal("fetch", fetchMock);
     stubSessionOnce();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
     // Session start dials one conversation socket; capture waits for it.
     await waitFor(() => {
@@ -168,8 +167,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("no post", { status: 500 })));
     stubSessionOnce();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
 
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
@@ -181,17 +179,30 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     expect(FakeWs.instances[0].sentStrings()).toContain(
       JSON.stringify({ type: "language", language: "en" }),
     );
+  });
 
-    // Switch to Spanish and tap again: the new session socket carries ES.
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
-    await waitFor(() => {
-      expect(FakeWs.instances).toHaveLength(2);
+  it("sends the saved Spanish language when the socket opens", async () => {
+    vi.stubGlobal("navigator", {
+      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
-    FakeWs.instances[1].open();
-    expect(FakeWs.instances[1].sentStrings()).toContain(
-      JSON.stringify({ type: "language", language: "en" }),
+    vi.stubGlobal("WebSocket", FakeWs);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("no post", { status: 500 })));
+    stubSessionOnce();
+    window.localStorage.setItem("vale-language", "es");
+
+    render(<TapToTalk autoStart />);
+
+    await waitFor(() => {
+      expect(FakeWs.instances).toHaveLength(1);
+    });
+    FakeWs.instances[0].open();
+    await waitFor(() => {
+      expect(driver).not.toBeNull();
+    });
+    expect(FakeWs.instances[0].sentStrings()).toContain(
+      JSON.stringify({ type: "language", language: "es" }),
     );
+    window.localStorage.removeItem("vale-language");
   });
 
   it("reconnects when the conversation socket drops mid-turn, never POSTs", async () => {
@@ -203,8 +214,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     vi.stubGlobal("fetch", fetchMock);
     stubSessionOnce();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
@@ -270,8 +280,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     vi.stubGlobal("fetch", fetchMock);
     stubSessionOnce();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
@@ -300,8 +309,7 @@ describe("live bridge (TapToTalk over WebSocket, conversation socket)", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("no post", { status: 500 })));
     stubSessionOnce();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });

@@ -26,6 +26,8 @@ export interface UiStrings {
   shoppingList: string;
   emptyList: string;
   micBlockedLead: string;
+  micBlockedIPhone: string;
+  micBlockedChrome: string;
   micError: string;
   cardFor: (name: string) => string;
   valeState: (state: ValeStateName) => string;
@@ -55,8 +57,12 @@ const EN: UiStrings = {
   emptyList: "The list is empty.",
   micBlockedLead:
     "Your microphone is blocked, so I can't hear you. To turn it back on:",
+  micBlockedIPhone:
+    "iPhone (Safari): open Settings > Safari > Microphone and choose Allow, then reload.",
+  micBlockedChrome:
+    "Chrome: tap the lock (or tune) icon left of the address bar, choose Microphone > Allow, then reload.",
   micError:
-    "Something went wrong with the microphone. Check that one is connected and tap again.",
+    "Something went wrong with the microphone. Check that one is connected and reload.",
   cardFor: (name: string) => `${name}'s card`,
   valeState: (state: ValeStateName) =>
     ({
@@ -90,8 +96,12 @@ const ES: UiStrings = {
   emptyList: "La lista está vacía.",
   micBlockedLead:
     "Tu micrófono está bloqueado, así que no puedo oírte. Para reactivarlo:",
+  micBlockedIPhone:
+    "iPhone (Safari): abre Ajustes > Safari > Micrófono y elige Permitir, luego recarga.",
+  micBlockedChrome:
+    "Chrome: toca el candado (o el icono de ajuste) junto a la barra de direcciones, elige Micrófono > Permitir, luego recarga.",
   micError:
-    "Algo falló con el micrófono. Revisa que haya uno conectado y toca de nuevo.",
+    "Algo falló con el micrófono. Revisa que haya uno conectado y recarga.",
   cardFor: (name: string) => `Ficha de ${name}`,
   valeState: (state: ValeStateName) =>
     ({

@@ -74,7 +74,7 @@ async function waitForEndStream(count: number) {
   });
 }
 
-const LISTENING_HINT = "Your microphone is on. Go ahead, I'm listening.";
+const LISTENING_HINT = "Listening";
 const VAD_BANNER_TEXT = "didn't hear you";
 
 function vadBanner(): HTMLElement | null {
@@ -103,8 +103,7 @@ describe("silence never banners (vad-continue removed)", () => {
       vi.stubGlobal("fetch", fetchMock);
       stubSessionOnce();
 
-      render(<TapToTalk debug />);
-      fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+      render(<TapToTalk autoStart />);
       await waitFor(() => {
         expect(driver).not.toBeNull();
       });
@@ -137,8 +136,7 @@ describe("silence never banners (vad-continue removed)", () => {
     vi.stubGlobal("fetch", fetchMock);
     stubSessionOnce();
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(driver).not.toBeNull();
     });
@@ -162,7 +160,7 @@ describe("silence never banners (vad-continue removed)", () => {
     answerReply("Done.");
     // Settled back to listening with the reply bubble standing.
     await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toBe("Listening");
+      expect(screen.getByText("Listening")).toBeTruthy();
     });
     expect(vadBanner()).toBeNull();
 
@@ -170,7 +168,7 @@ describe("silence never banners (vad-continue removed)", () => {
     blip();
     blip();
     await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toBe("Listening");
+      expect(screen.getByText("Listening")).toBeTruthy();
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(vadBanner()).toBeNull();
@@ -181,13 +179,13 @@ describe("silence never banners (vad-continue removed)", () => {
     await waitForEndStream(2);
     answerIgnoredNotice();
     await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toBe("Listening");
+      expect(screen.getByText("Listening")).toBeTruthy();
     });
     expect(fetchMock).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put Vale to sleep" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Tap to talk" })).toBeTruthy();
+      expect(screen.getByText("Asleep")).toBeTruthy();
     });
   });
 });

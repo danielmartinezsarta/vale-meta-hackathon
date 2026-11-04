@@ -122,8 +122,7 @@ describe("browser voice output", () => {
     });
     speakAudibleRef.current = false;
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
@@ -135,7 +134,7 @@ describe("browser voice output", () => {
     const ws = FakeWs.instances[0];
     const voiced = new Int16Array(960).fill(4000);
     await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toBe("Listening");
+      expect(screen.getByText("Listening")).toBeTruthy();
     });
 
     // Her reply is audible: mic frames never reach the wire.
@@ -144,7 +143,7 @@ describe("browser voice output", () => {
     driver!.onFrame?.(voiced);
     expect(ws.sentBinaryCount()).toBe(0);
     await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toBe("Speaking");
+      expect(screen.getByText("Speaking")).toBeTruthy();
     });
 
     // She settles: the same session captures again, no reconnect, no cut.
@@ -157,7 +156,7 @@ describe("browser voice output", () => {
     expect(FakeWs.instances).toHaveLength(1);
     // The posted turn claimed the state, so the mic-resume timer leaves it.
     await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toBe("Thinking");
+      expect(screen.getByText("Thinking")).toBeTruthy();
     });
     // The turn's endStream carries delivery accounting, not just audio.
     const endStreams = ws
@@ -199,8 +198,7 @@ describe("browser voice output", () => {
     });
     speakAudibleRef.current = false;
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
@@ -268,29 +266,18 @@ describe("voice engine switch", () => {
     return { played };
   }
 
-  it("toggles the engine without starting a turn", () => {
-    vi.stubGlobal("navigator", {
-      mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
-    });
-    render(<TapToTalk debug />);
-    const toggle = screen.getByRole("button", { name: "Use Seamless voice" });
-    expect(toggle.textContent).toContain("Voice: browser");
-    fireEvent.click(toggle);
+  it("switches the engine through the module without starting a turn", () => {
+    expect(voiceEngine()).toBe("browser");
+    setVoiceEngine("seamless");
     expect(voiceEngine()).toBe("seamless");
-    expect(
-      screen.getByRole("button", { name: "Use browser voice" }).textContent,
-    ).toContain("Voice: Seamless");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Use browser voice" }),
-    );
+    setVoiceEngine("browser");
     expect(voiceEngine()).toBe("browser");
   });
 
   it("requests echo cancellation and noise suppression on the mic", async () => {
     const getUserMedia = vi.fn(async () => ({ getTracks: () => [] }));
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(getUserMedia).toHaveBeenCalledWith({
         audio: { echoCancellation: true, noiseSuppression: true },
@@ -317,9 +304,8 @@ describe("voice engine switch", () => {
       return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    setVoiceEngine("seamless");
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
@@ -340,7 +326,7 @@ describe("voice engine switch", () => {
     expect(mockSpeak).toHaveBeenCalledWith("Session open.", "en");
   });
 
-  it("renders ignored turns dimmed with a label, never as dialogue", async () => {
+  it("keeps ignored turns off the screens, never as dialogue", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
@@ -354,8 +340,7 @@ describe("voice engine switch", () => {
       return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
@@ -373,14 +358,13 @@ describe("voice engine switch", () => {
     ws.serverMessage({ type: "done" });
 
     await waitFor(() => {
-      expect(screen.getByText("ignored (no name)")).toBeDefined();
+      expect(screen.queryByText("ignored (no name)")).toBeNull();
     });
-    const item = screen.getByText("ignored (no name)").closest("li");
-    expect(item?.getAttribute("style")).toContain("opacity");
+    expect(screen.queryByText("noise")).toBeNull();
     expect(screen.queryByText("You:")).toBeNull();
   });
 
-  it("never lets the board displace the conversation", async () => {
+  it("never lets board updates displace the conversation", async () => {
     vi.stubGlobal("navigator", {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     });
@@ -394,8 +378,7 @@ describe("voice engine switch", () => {
       return { stop: () => {}, state: () => "running", engine: () => "script" as const };
     });
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
@@ -412,17 +395,40 @@ describe("voice engine switch", () => {
     ws.serverMessage({ type: "reply", text: "Hi, I am Vale." });
     ws.serverMessage({
       type: "board",
-      board: { session: null, card: null, list: [] },
+      board: {
+        session: {
+          id: 7,
+          clientName: "David",
+          serviceName: "Gel manicure",
+          startedAt: "2026-11-04T00:00:00.000Z",
+        },
+        card: null,
+        list: [],
+      },
     });
 
     await waitFor(() => {
       expect(screen.getByText("Hi, I am Vale.")).toBeDefined();
     });
-    const turns = screen.getByRole("list", { name: "Conversation turns" });
-    const board = screen.getByRole("heading", { name: "Shopping list" });
-    expect(
-      turns.compareDocumentPosition(board) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    // A board refresh lands mid-conversation: bubbles stand.
+    ws.serverMessage({
+      type: "board",
+      board: {
+        session: {
+          id: 7,
+          clientName: "David",
+          serviceName: "Gel manicure",
+          startedAt: "2026-11-04T00:00:00.000Z",
+        },
+        card: null,
+        list: [],
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("vale, hi")).toBeDefined();
+    });
+    expect(screen.getByText("Hi, I am Vale.")).toBeDefined();
+    expect(screen.getByRole("log", { name: "Conversation" })).toBeDefined();
   });
 
   it("holds her reply through speaker echo, then serves the next turn", async () => {
@@ -445,9 +451,8 @@ describe("voice engine switch", () => {
     });
     speakAudibleRef.current = false;
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Use Seamless voice" }));
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    setVoiceEngine("seamless");
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
@@ -531,8 +536,7 @@ describe("voice engine switch", () => {
     });
     speakAudibleRef.current = false;
 
-    render(<TapToTalk debug />);
-    fireEvent.click(screen.getByRole("button", { name: "Tap to talk" }));
+    render(<TapToTalk autoStart />);
     await waitFor(() => {
       expect(FakeWs.instances).toHaveLength(1);
     });
@@ -542,7 +546,7 @@ describe("voice engine switch", () => {
     });
     const ws = FakeWs.instances[0];
     await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toBe("Listening");
+      expect(screen.getByText("Listening")).toBeTruthy();
     });
     await waitFor(() => {
       expect(settleListener).not.toBeNull();
@@ -557,14 +561,14 @@ describe("voice engine switch", () => {
     expect(setPausedSpy).toHaveBeenCalledWith(true);
     ws.serverMessage({ type: "reply", text: "On it." });
     await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toBe("Speaking");
+      expect(screen.getByText("Speaking")).toBeTruthy();
     });
 
     // Her voice really ends: face, mic and server anchor follow at once.
     speakAudibleRef.current = false;
     settleListener!();
     await waitFor(() => {
-      expect(screen.getByRole("status").textContent).toBe("Listening");
+      expect(screen.getByText("Listening")).toBeTruthy();
     });
     await waitFor(() => {
       expect(setPausedSpy).toHaveBeenCalledWith(false);
