@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TapToTalk } from "./TapToTalk";
+import { stubVoiceSocket } from "./test-voice-socket";
 import { startCapture, unlockAudioContext } from "@/lib/capture";
 
 vi.mock("@/lib/capture", () => ({
@@ -17,6 +18,12 @@ function stubGetUserMedia(impl: (...args: never[]) => unknown) {
   vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
   return getUserMedia;
 }
+
+beforeEach(() => {
+  // One transport: without an open /voice the tap ends in E-NET before
+  // capture, so the socket opens here like in every other session test.
+  stubVoiceSocket();
+});
 
 afterEach(() => {
   cleanup();
