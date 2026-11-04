@@ -48,17 +48,3 @@ export GLIMMER_TOKEN=<same-token-as-the-secret>
 
 The token never lives in the repo. Without URL and token the cards
 still open, with a sentence saying no private model is set up.
-
-## Approximate cost
-
-Rates at [modal.com/pricing](https://modal.com/pricing): T4 about
-$0.59/h, A10 about $1.10/h, per second, $0 while scaled to zero.
-
-| Call | Observed | Cost |
-| --- | --- | --- |
-| Warm Seamless synthesis | ~1 s on T4 | ~$0.0002 |
-| Warm Glimmer brief | ~6 s on A10G | ~$0.002 |
-| Cold start, either app | minutes, once per scale-from-zero | ~$0.01–0.30 |
-
-Image builds and weight downloads bill CPU seconds only. The $110
-hackathon budget never came close: a full demo day stays under $1.
