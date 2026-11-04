@@ -320,6 +320,84 @@ function synth(): SpeechSynthesis | null {
 }
 
 /**
+ * iOS unlock: speechSynthesis.speak() and HTMLAudioElement.play() stay
+ * muted unless first called inside a user gesture. The wake tap already
+ * resumes the capture context in-gesture; prime both speech paths there
+ * too, so the later out-of-gesture speak()/play() calls produce sound.
+ * The unlock is page-scoped, so priming any element unlocks the
+ * per-sentence elements playSentence() creates later.
+ */
+export function primeSpokenAudio(): void {
+  try {
+    const s = synth();
+    if (s) {
+      // Clear any wedge an earlier prime left before queueing ours.
+      try {
+        s.cancel();
+      } catch {
+        /* nothing queued or nothing to clear */
+      }
+      const warm = new SpeechSynthesisUtterance(" ");
+      warm.volume = 0;
+      let warmEnded = false;
+      const markEnded = (): void => {
+        warmEnded = true;
+      };
+      warm.onend = markEnded;
+      warm.onerror = markEnded;
+      s.speak(warm);
+      // A blank utterance that never ends would wedge speaking forever
+      // (isSpeaking reads the synth flag and the warm owes no estimate):
+      // clear it so the mic reopens.
+      setTimeout(() => {
+        if (!warmEnded) {
+          try {
+            s.cancel();
+          } catch {
+            /* already clear */
+          }
+        }
+      }, 2000);
+    }
+  } catch {
+    /* voice output is best-effort */
+  }
+  try {
+    // 20 ms of 8 kHz 16-bit mono silence behind a minimal WAV header.
+    const samples = 160;
+    const buffer = new ArrayBuffer(44 + samples * 2);
+    const view = new DataView(buffer);
+    const ascii = (offset: number, text: string): void => {
+      for (let index = 0; index < text.length; index += 1) {
+        view.setUint8(offset + index, text.charCodeAt(index));
+      }
+    };
+    ascii(0, "RIFF");
+    view.setUint32(4, 36 + samples * 2, true);
+    ascii(8, "WAVE");
+    ascii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, 8000, true);
+    view.setUint32(28, 16000, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    ascii(36, "data");
+    view.setUint32(40, samples * 2, true);
+    const url = URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
+    const silent = new Audio(url);
+    silent.volume = 0;
+    silent.onended = () => URL.revokeObjectURL(url);
+    void silent.play().catch(() => {
+      URL.revokeObjectURL(url);
+    });
+  } catch {
+    /* voice output is best-effort */
+  }
+}
+
+/**
  * Browser voices load asynchronously: the first getVoices() is often empty
  * or partial, which used to give the first phrase the wrong voice. Wait for
  * voiceschanged before choosing; after it fired once the list is trusted.
@@ -472,6 +550,7 @@ async function playSentence(
     onDone();
     return;
   }
+  let clearSentenceAudio = (): void => {};
   try {
     const blob = await response.blob();
     if (playId !== seamlessPlayId) {
@@ -481,13 +560,74 @@ async function playSentence(
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     seamlessAudio = audio;
-    audio.onended = () => {
+    let audioDone = false;
+    let progressTimer: ReturnType<typeof setInterval> | undefined;
+    clearSentenceAudio = (): void => {
+      if (audioDone) return;
+      audioDone = true;
+      clearTimeout(watchdog);
+      if (progressTimer !== undefined) clearInterval(progressTimer);
+      try {
+        audio.pause();
+      } catch {
+        /* already stopped */
+      }
       URL.revokeObjectURL(url);
       if (seamlessAudio === audio) seamlessAudio = null;
+    };
+    // Mid-play freeze (element stops advancing with no event): a few
+    // seconds of still audio ends the sentence instead of holding it.
+    // A pause never counts as stillness; the end watchdog caps the total.
+    let playStarted = false;
+    let lastTime = 0;
+    let stillCount = 0;
+    progressTimer = setInterval(() => {
+      if (audioDone || !playStarted) return;
+      try {
+        if (audio.ended || audio.seeking || audio.paused) {
+          stillCount = 0;
+          lastTime = audio.currentTime;
+          return;
+        }
+        if (audio.readyState < 2) return;
+        if (audio.currentTime === lastTime) stillCount += 1;
+        else {
+          stillCount = 0;
+          lastTime = audio.currentTime;
+        }
+        if (stillCount >= 3) {
+          emitSpeechEvent("sentence-still", `t=${lastTime.toFixed(1)}`);
+          endSentence();
+        }
+      } catch {
+        /* read-only probe, never breaks playback */
+      }
+    }, 1000);
+    // iOS can drop onended: without this the reply holds the mic
+    // forever (mute clears it, which is why mute unblocked the field).
+    // next() ignores a stale playId, so forcing the end is safe.
+    const watchdog = setTimeout(() => {
+      emitSpeechEvent("sentence-timeout", `t=${audio.currentTime.toFixed(1)}`);
+      clearSentenceAudio();
+      onDone();
+    }, estimateSpeechMs(sentence, 1) + SEAMLESS_SENTENCE_GRACE_MS);
+    const endSentence = (): void => {
+      clearSentenceAudio();
       onDone();
     };
+    audio.onended = () => {
+      emitSpeechEvent("sentence-event", `t=${audio.currentTime.toFixed(1)}`);
+      endSentence();
+    };
+    audio.onerror = () => {
+      emitSpeechEvent("sentence-error", `t=${audio.currentTime.toFixed(1)}`);
+      endSentence();
+    };
     await audio.play();
+    playStarted = true;
   } catch {
+    emitSpeechEvent("sentence-fetch-fail");
+    clearSentenceAudio();
     if (playId === seamlessPlayId) {
       seamlessClean = false;
       sayBrowserFallback(sentence, language, false);
@@ -611,8 +751,25 @@ function queueBrowserSentences(
       };
       utterance.onend = release;
       utterance.onerror = release;
+      // iOS pauses speech on session interruptions with no end event:
+      // reclaim it at once instead of holding the queue behind it.
+      utterance.onpause = () => {
+        try {
+          s.resume();
+        } catch {
+          /* best-effort; the timeout watchdog still frees accounting */
+        }
+      };
       pendingUtterances += 1;
       s.speak(utterance);
+      // iOS can cut an utterance with no event: the queue stalls behind
+      // it and the mic stays shut. Past estimate + grace the accounting
+      // releases (never the audio itself), so the rest still speaks.
+      setTimeout(() => {
+        if (!owed || gen !== speechGen) return;
+        emitSpeechEvent("utterance-timeout");
+        release();
+      }, estimateSpeechMs(clean, prosody.rate) + SEAMLESS_SENTENCE_GRACE_MS);
     }
   } catch {
     /* voice output is best-effort; the text stays on screen */
@@ -707,6 +864,22 @@ export function stopSpeaking(reason: string): void {
  */
 export const SPEECH_MS_PER_CHAR = 150;
 export const SPEECH_END_MARGIN_MS = 2500;
+/** Per-sentence grace past the estimate before a missing onended is forced. */
+export const SEAMLESS_SENTENCE_GRACE_MS = 5000;
+
+/** Speech-path telemetry for the field: drained by the UI into client-state. */
+export interface SpeechEvent {
+  kind: string;
+  detail: string;
+}
+const speechEvents: SpeechEvent[] = [];
+function emitSpeechEvent(kind: string, detail = ""): void {
+  speechEvents.push({ kind, detail });
+  if (speechEvents.length > 20) speechEvents.shift();
+}
+export function drainSpeechEvents(): SpeechEvent[] {
+  return speechEvents.splice(0);
+}
 
 /** When the queued reply should be over, worst case. 0 means nothing queued. */
 let speechDueUntil = 0;

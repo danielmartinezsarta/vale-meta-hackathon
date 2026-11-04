@@ -13,9 +13,8 @@ import {
   session_photo_show,
 } from "./session-photo";
 
-// Box tokens transcribed from the HACK-004 spike SSE log
-// (Tickets/HACK-004/HACK-004 spike t2-nail.sse.log): five nail boxes
-// SAM 3.1 returned inline for one photo. Coordinates only, invented demo.
+// Box tokens from a recorded SAM response: five nail boxes
+// returned inline for one photo. Coordinates only, invented demo.
 const SPIKE_FIVE_BOXES =
   "nails <|box;x1=304;y1=697;x2=462;y2=769;w=896;h=1195|>" +
   " <|box;x1=268;y1=589;x2=465;y2=679;w=896;h=1195|>" +

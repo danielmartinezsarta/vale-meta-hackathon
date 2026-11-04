@@ -276,7 +276,7 @@ describe("buildWidget (typed payloads per kind)", () => {
     expect(buildWidget("no_such_tool", {}, {}, NO_DB)).toBeNull();
   });
 
-  it("formats money, days, visits, minutes, and initials Ali-style", () => {
+  it("formats money, days, visits, minutes, and initials design-style", () => {
     expect(usdWhole(35)).toBe("$35");
     expect(usdWhole(2000)).toBe("$2,000");
     expect(formatDay("2026-11-27")).toBe("Friday, November 27");

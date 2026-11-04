@@ -267,11 +267,12 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
   {
     type: "function",
     name: "session_log_supply",
-    description: "Record a supply used in the open session. Unknown supplies save at once like notes; undo_last covers mistakes.",
+    description: "Record a supply used in the open session, with quantity when she says how many (\"add three crystals\" -> name \"crystals\", quantity 3). Unknown names never invent a row: the tool asks to confirm first.",
     parameters: {
       type: "object",
       properties: {
         name: { type: "string" },
+        quantity: { type: "integer", description: "Units used, default 1." },
         confirm_create: { type: "boolean", description: "Set true only after the user said yes to creating it." },
       },
       required: ["name"],
@@ -307,7 +308,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
     type: "function",
     name: "session_quote",
     description:
-      "Quote the open session: base cost, extras total and suggested total on a sheet with Accept and Reject. A yes or accept registers the payment for the suggested total; a no or reject leaves the sheet waiting for the spoken amount, and a later call with amount registers that amount instead. Neither closes the session. Never say any amount aloud: the totals live on the screen only.",
+      "Quote the open session: base cost, extras total and suggested total on a sheet. A yes or accept registers the payment for the suggested total; a no or reject leaves the sheet waiting for the spoken amount. With an open session, any call with amount (\"David paid 25\", \"me pagó 25\") registers that payment at once, quote open or not, and closes the sheet. Neither closes the session. Never say any amount aloud and never name the on-screen buttons: the totals live on the screen only.",
     parameters: {
       type: "object",
       properties: {
@@ -493,20 +494,28 @@ export function closeSession(db: ValeDb, args: { products_used?: unknown }, lang
   const durationS = Math.max(0, Math.round((Date.parse(endedAt) - Date.parse(started.started_at)) / 1000));
   const minutes = Math.max(1, Math.round(durationS / 60));
   const service = db.prepare("SELECT id, name FROM services WHERE id = ?").get(open.service_id) as { id: number; name: string };
-  const earned = quotePrice(
-    PRICING,
-    minutes,
-    recipeForService(db, service.id).map((line) => ({
-      qty: line.qty,
-      pricePerProductUsd: line.price_per_product_usd,
-      contentPerProduct: line.content_per_product,
-    })),
-  ).marginEarned;
+  // The same breakdown the quote sheet shows, extras included: the summary
+  // sheet reads it off the close data instead of recomputing it.
+  const quoted = computeQuoteWithSessionExtras(db, service.id, minutes, open.id);
+  const earned = "error" in quoted ? 0 : quoted.breakdown.marginEarned;
   db.prepare("UPDATE sessions SET ended_at = ?, duration_s = ?, margin_earned = ? WHERE id = ?").run(endedAt, durationS, earned, open.id);
   logWrite(db, "session_close", "sessions", open.id, { supplies: recordedIds });
   // The private brief follows the record in the background;
   // the voice never waits for it.
   refreshClientBriefInBackground(db, open.client_id);
+  const loggedExtras = (
+    "error" in quoted
+      ? []
+      : quoted.lines.filter((line) =>
+          db
+            .prepare("SELECT 1 FROM session_supplies WHERE session_id = ? AND supply_id = ?")
+            .get(open.id, line.supply_id),
+        )
+  ).map((line) => ({
+    name: line.name,
+    qty: line.qty,
+    amount: line.qty * line.price_per_product_usd * (line.content_per_product > 0 ? 1 / line.content_per_product : 0),
+  }));
   // The full summary sheet reads the payment off this session, if any.
   const paid = db.prepare("SELECT COALESCE(SUM(amount_usd), 0) AS total FROM payments WHERE session_id = ?").get(open.id) as { total: number };
   const lasted = language === "en" ? `It lasted ${minutes} minute${minutes === 1 ? "" : "s"}.` : `Duró ${minutes} minuto${minutes === 1 ? "" : "s"}.`;
@@ -524,6 +533,18 @@ export function closeSession(db: ValeDb, args: { products_used?: unknown }, lang
       service: service.name,
       client: clientLabel(db, open.client_id),
       paid_amount_usd: paid.total,
+      extras: loggedExtras,
+      breakdown:
+        "error" in quoted
+          ? null
+          : {
+              supplies_cost: quoted.breakdown.suppliesCost,
+              time_cost: quoted.breakdown.timeCost,
+              fixed_share: quoted.breakdown.fixedShare,
+              margin_pct: quoted.breakdown.marginPct,
+              final_price: quoted.breakdown.finalPrice,
+              margin_earned: quoted.breakdown.marginEarned,
+            },
     },
   };
 }
@@ -961,35 +982,60 @@ export function createClient(db: ValeDb, args: { name?: unknown }, language: Val
   return { ok: true, message: language === "en" ? `${name} registered.` : `${name} registrada.`, data: { client_id: Number(result.lastInsertRowid) } };
 }
 
-export function logSupplyUse(db: ValeDb, args: { name?: unknown; confirm_create?: unknown }, language: ValeLanguage = "es"): ToolResult {
+/** Leading count words: safety net when the model sends the count in the name. */
+const LEADING_QTY_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
+};
+
+/** "three crystals" -> { name: "crystals", qty: 3 }: no leading count passes through. */
+function splitLeadingQuantity(raw: string): { name: string; qty: number | null } {
+  const match = raw.match(/^(\d+|[a-záéíóúñü]+)\s+(.+)$/i);
+  if (!match) return { name: raw, qty: null };
+  const head = match[1].toLowerCase();
+  const numeric = /^\d+$/.test(head) ? Number(head) : (LEADING_QTY_WORDS[head] ?? null);
+  if (numeric === null || !Number.isInteger(numeric) || numeric < 1 || numeric > 99) return { name: raw, qty: null };
+  return { name: match[2], qty: numeric };
+}
+
+export function logSupplyUse(
+  db: ValeDb,
+  args: { name?: unknown; quantity?: unknown; confirm_create?: unknown },
+  language: ValeLanguage = "es",
+): ToolResult {
   const open = getOpenSession(db);
   if (!open) return { ok: false, message: "No hay sesión abierta." };
-  const name = typeof args.name === "string" ? args.name.trim().replace(/\s+/g, " ") : "";
-  if (name === "") return { ok: false, message: "Falta el nombre del insumo." };
+  const raw = typeof args.name === "string" ? args.name.trim().replace(/\s+/g, " ") : "";
+  if (raw === "") return { ok: false, message: "Falta el nombre del insumo." };
+  const split = splitLeadingQuantity(raw);
+  const explicit =
+    typeof args.quantity === "number" && Number.isInteger(args.quantity) && args.quantity > 0 ? args.quantity : null;
+  const qty = explicit ?? split.qty ?? 1;
+  const name = split.name;
   const found = matchSupply(db, name);
   if (found.kind === "ambiguous") return { ok: false, message: ambiguousMessage(found.options) };
   if (found.kind === "match") {
-    const link = db
-      .prepare("INSERT OR IGNORE INTO session_supplies (session_id, supply_id) VALUES (?, ?)")
-      .run(open.id, found.row.id);
-    logWrite(db, "session_log_supply", "session_supplies", open.id, { supply_id: found.row.id, auto_created: false });
-    if (link.changes === 0) return { ok: true, message: language === "en" ? `${found.row.name} was already logged.` : `${found.row.name} ya estaba anotado.` };
+    db.prepare(
+      "INSERT INTO session_supplies (session_id, supply_id, qty) VALUES (?, ?, ?) ON CONFLICT(session_id, supply_id) DO UPDATE SET qty = qty + excluded.qty",
+    ).run(open.id, found.row.id, qty);
+    logWrite(db, "session_log_supply", "session_supplies", open.id, { supply_id: found.row.id, qty, auto_created: false });
     return { ok: true, message: language === "en" ? `${found.row.name} logged for the session.` : `${found.row.name} anotado en la sesión.` };
   }
-  // Unknown supplies save at once like notes: extra stock in an open
-  // session is a low-risk write and undo_last covers mistakes.
-  const created = db.prepare("INSERT INTO supplies (name) VALUES (?)").run(name);
-  const supplyId = Number(created.lastInsertRowid);
-  db.prepare("INSERT OR IGNORE INTO session_supplies (session_id, supply_id) VALUES (?, ?)").run(open.id, supplyId);
-  logWrite(db, "session_log_supply", "session_supplies", open.id, { supply_id: supplyId, auto_created: true });
-  const owner = db.prepare("SELECT name FROM clients WHERE id = ?").get(open.client_id) as { name: string } | undefined;
-  const who = owner?.name ?? "";
+  if (args.confirm_create === true) {
+    const created = db.prepare("INSERT INTO supplies (name) VALUES (?)").run(name);
+    const supplyId = Number(created.lastInsertRowid);
+    db.prepare("INSERT INTO session_supplies (session_id, supply_id, qty) VALUES (?, ?, ?)").run(open.id, supplyId, qty);
+    logWrite(db, "session_log_supply", "session_supplies", open.id, { supply_id: supplyId, qty, auto_created: true });
+    return { ok: true, message: language === "en" ? `${name} added to the session.` : `${name} anotado en la sesión.` };
+  }
+  // Unknown supplies never invent rows: the confirm card creates them.
   return {
-    ok: true,
+    ok: false,
     message:
       language === "en"
-        ? `${name} added to ${who === "" ? "the" : who + "'s"} session.`
-        : `${name} anotado en la sesión${who === "" ? "" : ` de ${who}`}.`,
+        ? `"${name}" is not in the supplies. Confirm to add it.`
+        : `"${name}" no está en los insumos. Confirma para agregarlo.`,
+    pendingCreate: name,
   };
 }
 
@@ -1237,14 +1283,14 @@ function computeQuoteWithSessionExtras(
   const lines = recipeForService(db, serviceId);
   if (sessionId !== null) {
     const logged = db
-      .prepare("SELECT supply_id FROM session_supplies WHERE session_id = ?")
-      .all(sessionId) as { supply_id: number }[];
+      .prepare("SELECT supply_id, qty FROM session_supplies WHERE session_id = ?")
+      .all(sessionId) as { supply_id: number; qty: number }[];
     for (const row of logged) {
       if (lines.some((line) => line.supply_id === row.supply_id)) continue;
       const extra = db
         .prepare("SELECT id AS supply_id, name, es, price_per_product_usd, content_per_product FROM supplies WHERE id = ?")
         .get(row.supply_id) as Omit<RecipeLine, "qty"> | undefined;
-      if (extra) lines.push({ ...extra, qty: 1 });
+      if (extra) lines.push({ ...extra, qty: row.qty ?? 1 });
     }
   }
   return {
@@ -1340,18 +1386,10 @@ export function quoteSession(
   language: ValeLanguage = "en",
 ): ToolResult {
   const open = getOpenSession(db);
-  // A spoken amount after a reject registers instead of the suggested total.
+  // A spoken amount with an open session always registers the payment:
+  // quote on screen or not, accepted or not. The sheet closes on payment.
   if (args.amount !== undefined) {
     if (!open) return { ok: false, message: language === "en" ? "No session is open." : "No hay sesión abierta." };
-    if (!isQuoteAwaiting(open.id)) {
-      return {
-        ok: false,
-        message:
-          language === "en"
-            ? "There is no quote waiting for an amount."
-            : "No hay cotización esperando un monto.",
-      };
-    }
     return recordPayment(db, open.id, Number(args.amount), language);
   }
   const serviceName = typeof args.service_name === "string" ? args.service_name.trim() : "";
@@ -1403,8 +1441,8 @@ export function quoteSession(
     // Amounts live on the sheet: the voice only points at it.
     message:
       language === "en"
-        ? `The quote for ${data.service} is on screen, with Accept and Reject.`
-        : `La cotización de ${data.service} está en pantalla, con Aceptar y Rechazar.`,
+        ? "The quote is on screen."
+        : "La cotización está en pantalla.",
     data,
     pendingAccept: open ? { amount: computed.breakdown.finalPrice, session_id: open.id } : undefined,
   };
