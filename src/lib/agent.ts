@@ -107,8 +107,12 @@ export interface AgentResult {
   usage: AgentUsage;
   toolUsed: string | null;
   firstTokenMs: number | null;
-  /** Screen card derived from the tool call, never from reply text. */
-  widget: Widget | null;
+  /**
+   * Screen card derived from the tool call, never from reply text.
+   * undefined sends no frame (the screen keeps its sheet); an explicit
+   * null closes the open sheet.
+   */
+  widget: Widget | null | undefined;
 }
 
 /** Bogotá clock for the session facts; the salon runs on America/Bogota. */
@@ -206,8 +210,11 @@ export function contractWidgetFor(
         args: { ...args, kind: args.kind === "health_note" ? "health" : "general" },
         data: null,
       };
-    case "session_quote":
+    case "session_quote": {
+      // A registered amount closes the quote sheet instead of reopening it.
+      if (info.paid_amount_usd !== undefined) return null;
       return { tool: "quote_price", args: {}, data };
+    }
     case "photo_preview_design":
       return { tool: "photo_preview", args: {}, data };
     case "photo_show":
@@ -569,7 +576,7 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
       usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
       toolUsed: null,
       firstTokenMs: null,
-      widget: null,
+      widget: undefined,
     };
   }
   // Stable base first, volatile facts last: Meta's prefix cache holds the
@@ -598,7 +605,9 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
   ];
   let text = "";
   let toolUsed: string | null = null;
-  let widget: Widget | null = null;
+  // No card by default: undefined sends no widget frame and the screen
+  // keeps whatever it shows. An explicit null closes the open sheet.
+  let widget: Widget | null | undefined;
   // A pending proposal dies with the next real turn unless that turn stores
   // a new one: a later yes must never fire a stale proposal (eval C17).
   let storedThisTurn = false;
@@ -703,11 +712,14 @@ export async function runAgentTurn(options: AgentTurnOptions): Promise<AgentResu
     }
     if (toolResult.ok && call.name === "session_quote") {
       // The quote answers itself with no second round: its amounts never
-      // reach the voice. A registered amount retires any stale proposal;
-      // the fresh quote keeps the Accept one stored above.
+      // reach the voice. A registered amount retires any stale proposal
+      // and closes the sheet; the fresh quote keeps the Accept one above.
       const paid =
         ((toolResult as { data?: unknown }).data as { paid_amount_usd?: unknown } | undefined)?.paid_amount_usd !== undefined;
-      if (paid) clearPendingAction(slotKey);
+      if (paid) {
+        clearPendingAction(slotKey);
+        widget = null;
+      }
       text = toolResult.message;
       break;
     }

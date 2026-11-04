@@ -560,10 +560,29 @@ describe("session_quote", () => {
     db.close();
   });
 
-  it("refuses a stray amount with no quote waiting", () => {
+  it("registers a spoken amount with no quote waiting when a session is open", () => {
     const db = freshTestDb();
     openAna(db);
-    expect(quoteSession(db, { amount: 35 }, "en").ok).toBe(false);
+    const paid = quoteSession(db, { amount: 25 }, "en");
+    expect(paid.ok).toBe(true);
+    expect(paid.message).toBe("Payment registered.");
+    const rows = db.prepare("SELECT amount_usd FROM payments").all() as { amount_usd: number }[];
+    expect(rows).toEqual([{ amount_usd: 25 }]);
+    db.close();
+  });
+
+  it("registers the amount with the quote open and keeps the session open", () => {
+    const db = freshTestDb();
+    openSession(db, { client_name: "Ana", service_name: "Gel removal" });
+    const quoted = quoteSession(db, {}, "en");
+    expect(quoted.ok).toBe(true);
+    const paid = quoteSession(db, { amount: 25 }, "en");
+    expect(paid.ok).toBe(true);
+    expect(paid.message).toBe("Payment registered.");
+    const rows = db.prepare("SELECT amount_usd FROM payments").all() as { amount_usd: number }[];
+    expect(rows).toEqual([{ amount_usd: 25 }]);
+    const open = db.prepare("SELECT id FROM sessions WHERE ended_at IS NULL").get() as { id: number };
+    expect(open).toBeDefined();
     db.close();
   });
 });

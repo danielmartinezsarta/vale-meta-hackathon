@@ -1120,6 +1120,49 @@ describe("GET /api/voice live bridge (browser -> Vercel -> Meta)", () => {
     }
   });
 
+  it("sends a null widget frame when the agent closes the sheet", async () => {
+    finalTranscript = "vale, paid";
+    const closingAgent = async (): Promise<BridgeAgentResult> => ({
+      text: "Payment registered.",
+      usage: { inputTokens: 100, outputTokens: 20 },
+      toolUsed: "session_quote",
+      firstTokenMs: 50,
+      widget: null,
+    });
+    try {
+      const browser = new FakeBrowser();
+      attachVoiceBridge({
+        browser: browser as unknown as WebSocket,
+        key: "test-key",
+        clientId: "conv-widget-close",
+        metaUrl: url,
+        runAgent: closingAgent,
+        conversation: true,
+      });
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "bridge"),
+        ).toBe(true);
+      });
+      browser.peerMessage(Buffer.from(new Int16Array(960).fill(4000).buffer));
+      browser.peerMessage(Buffer.from(JSON.stringify({ type: "endStream" })));
+      await vi.waitFor(() => {
+        expect(
+          browser.frames().some((frame) => frame.type === "widget"),
+        ).toBe(true);
+      });
+      const widget = browser.frames().find(
+        (frame) => frame.type === "widget",
+      ) as {
+        widget?: unknown;
+      };
+      expect(widget.widget).toBeNull();
+      browser.close(1000, "test done");
+    } finally {
+      finalTranscript = "vale, live from the bridge";
+    }
+  });
+
   it("runs the stored writes on a yes vote with no model call", async () => {
     const agent = vi.fn(fakeAgent());
     const { setPendingAction } = await import("./pending-action");

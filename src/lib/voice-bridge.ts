@@ -1024,7 +1024,9 @@ export function attachVoiceBridge(options: VoiceBridgeOptions): void {
       // Her reply restarts the window: the next turn counts from here.
       noteAttention(clientId);
       sendBoard();
-      if (result.widget) {
+      // An explicit null closes the open sheet; undefined sends nothing
+      // and the screen keeps whatever it shows.
+      if (result.widget !== undefined) {
         sendWidget(result.widget);
       }
       logTurn({

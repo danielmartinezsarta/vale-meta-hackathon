@@ -288,7 +288,7 @@ export const VALE_TOOLS: ValeToolDefinition[] = [
     type: "function",
     name: "session_quote",
     description:
-      "Quote the open session: base cost, extras total and suggested total on a sheet. A yes or accept registers the payment for the suggested total; a no or reject leaves the sheet waiting for the spoken amount, and a later call with amount registers that amount instead. Neither closes the session. Never say any amount aloud and never name the on-screen buttons: the totals live on the screen only.",
+      "Quote the open session: base cost, extras total and suggested total on a sheet. A yes or accept registers the payment for the suggested total; a no or reject leaves the sheet waiting for the spoken amount. With an open session, any call with amount (\"David paid 25\", \"me pagó 25\") registers that payment at once, quote open or not, and closes the sheet. Neither closes the session. Never say any amount aloud and never name the on-screen buttons: the totals live on the screen only.",
     parameters: {
       type: "object",
       properties: {
@@ -1235,18 +1235,10 @@ export function quoteSession(
   language: ValeLanguage = "en",
 ): ToolResult {
   const open = getOpenSession(db);
-  // A spoken amount after a reject registers instead of the suggested total.
+  // A spoken amount with an open session always registers the payment:
+  // quote on screen or not, accepted or not. The sheet closes on payment.
   if (args.amount !== undefined) {
     if (!open) return { ok: false, message: language === "en" ? "No session is open." : "No hay sesión abierta." };
-    if (!isQuoteAwaiting(open.id)) {
-      return {
-        ok: false,
-        message:
-          language === "en"
-            ? "There is no quote waiting for an amount."
-            : "No hay cotización esperando un monto.",
-      };
-    }
     return recordPayment(db, open.id, Number(args.amount), language);
   }
   const serviceName = typeof args.service_name === "string" ? args.service_name.trim() : "";
