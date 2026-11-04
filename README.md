@@ -1,114 +1,120 @@
-# Vale (hackathon build)
+# Vale
 
-## What was built during the hackathon
+Vale is an intent-based interface for people whose hands are busy at work and who cannot touch a phone mid-task. We start with nail technicians: it is the domain we know first-hand, with a primary user there. The product is not limited to them.
 
-Started 2026-10-27. Today this holds the base app (Next.js + TypeScript) with a one-tap microphone screen.
+Gloves on, gel curing, acetone in the air, the client in the chair asking how much. Stopping to type means losing the thread of the session.
 
-Everything here is new: this repository was created on October 26, 2026 with only the license and this README, and all code was written from October 27, 2026 onward, during the hackathon window (October 26 to November 4, 2026). No code, data, prompts, or assets from earlier projects are included, and any data used is invented.
+Video: `VIDEO_URL` (3-minute demo, the link goes in before the freeze). The video follows the recorded run: agenda, client card, quote, photos and shopping.
 
-The idea comes from first-hand knowledge of the trade: nail technicians work with their hands full and no free moment to type, so this build explores a hands-free, voice-first helper for them.
+## For judges
 
-Hands-free, voice-first assistant for entrepreneurs who work with their hands, starting with nail technicians.
+No key needed: this is the clearly labeled mock-data path. It plays the recorded run end to end, labeled “Replay: recorded run”:
 
-## How a price is quoted (all invented)
-
-When asked how much to charge, Vale adds four parts and says each one out
-loud: the supplies used, the work time, a share of the monthly fixed costs,
-and the margin. The hourly rate and the fixed share both come from the
-workable minutes of the current month (its Monday-to-Friday days, eight
-hours a day), so no rate is written by hand. The final figure rounds up
-to the tens, and the rounding difference counts toward the 2500 USD
-monthly goal: closing a session saves its margin, and "how am I doing
-on the goal" reports the month's sum against 2500.
-
-supplies = sum over the recipe of (quantity × product price / product content)
-time = minutes × (monthly goal / workable minutes)
-fixed share = minutes × (monthly fixed costs / workable minutes)
-price = round_up((supplies + time + fixed share) × (1 + margin))
-
-The agenda and the stock follow the same spoken rule: appointments are
-created, listed and moved by voice, and the stock only moves when she says
-so ("I bought two", "three left", "it's gone"). Logging supplies for a
-session never touches the stock. Weekend or after-hours bookings warn
-first ("heads up, that's outside 9 to 5") and still run.
-
-## Demo data (all invented)
-
-Client, service and supply names come from `src/lib/seed-data.json` and are
-entirely fictitious, created for this hackathon. The SQLite file
-(`data/vale.db`, created by `npm run db:seed` and never committed) holds only
-that invented seed. Health notes are stored flagged as private and are never
-shown or sent to the cloud model.
-
-Built for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/meta-ai-developer-hackathon) (Indie Developer track, "Build for Your World"), October 26 to November 4, 2026.
-
-## Private client briefs (open weights)
-
-Client records are only read by an open-weights Meta model on infrastructure
-we run. The cloud assistant handles the business and never sees the client's
-private details: "tell me about David" speaks a precomputed brief and opens
-the card with the summary on top, labeled "Prepared privately by Muse Glimmer
-(open weights)". Without a private model the card still opens, with the
-sentence "I don't have a private model set up to read client records, so
-here's David's card."
-
-Deploy the model from `modal/glimmer.py` (warm brief ~19 s, about $0.006
-per brief, $0 while idle):
-
-```
-modal deploy modal/glimmer.py  # serve and serve_draft (drafter, faster)
-modal app stop vale-glimmer    # scale to zero when done
-```
-
-Production uses the drafter endpoint
-(`https://<username>--vale-glimmer-serve-draft.us-east.modal.run`).
-Set it as `GLIMMER_URL` (see `.env.example`) and export `GLIMMER_TOKEN`
-from the Modal secret, in the local .env (gitignored) or the shell; the token never lives in the repo.
-
-The same endpoint runs locally with `llama-server` and the GGUF weights
-from `meta-models/Muse-Glimmer-30B-GGUF`
-(`Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf`, plus the dflash drafter for
-the fast path), with the flags from the model card (`--jinja`, `-ngl 99`,
-low reasoning strength, `--reasoning-budget 512`, temp 1.0, top-p 0.95,
-top-k 64), then `GLIMMER_URL=http://127.0.0.1:8080`. The app precomputes
-briefs on server start and after `npm run db:reset` for the clients with
-appointments today; a new note or a closed session regenerates that
-client's brief in the background.
-
-## Watch the demo without a key
-
-`npm run demo` plays the committed run from `replay/demo-run.json`
-through the real app: it starts the keyless replay server on a free port
-and drives a headed browser exactly like the manual steps — open the app,
-wake Vale, type every recorded turn, waiting for her to finish speaking
-and the sheet to show before the next turn. One voice at a time.
-
-```
+```bash
 npm install
-npm run build
-npm run demo
+cp .env.example .env
+npm run replay
 ```
 
-To record a new run, reset an isolated database and fold the filtered
-log (never hand-edit the file):
+The empty `.env` is enough: no key needed.
+
+[TBD: this path becomes `npm run demo`, with a scene pill.]
+
+With your own Meta key, run it live instead:
+
+```bash
+cp .env.example .env
+# put your key in .env: META_API_KEY=...
+npm run db:reset
+npm start
+```
+
+Open the printed URL and tap the microphone. Setup details: [docs/setup.md](docs/setup.md).
+
+## What it does
+
+Voice first, not voice only. By voice she opens sessions with a timer, saves notes (health notes stay private), keeps the shopping list, quotes prices, manages the agenda and previews nail designs on the client photo. The management screens cover the rest: Agenda, Client files, Services, Supplies & stock, Shopping list, Payments, Goals, Preferences.
+
+| User says | Vale does |
+|---|---|
+| “Starting a gel refill with David” | Opens the session and starts the clock (`session_open`) |
+| “Note that David is allergic to latex” | Saves a private note on his record (`client_note_add`) |
+| “Add primer to the shopping list” | Adds it to the list (`shopping_add`) |
+| “How much does David pay?” | Quotes on a sheet; the totals stay on screen (`session_quote`) |
+| “What do I have today?” | Reads the agenda (`agenda_show`) |
+| “Move David to Friday” | Moves the appointment; asks first (`agenda_move_appointment`) |
+| “Show her how it would look” | Previews the reference design on the before photo (`photo_preview_design`) |
+
+With the mic muted, a typed field does the same. Language (EN | ES) and voice engine (Browser | Seamless) switch from one control; the Seamless option stays disabled until its URL and token are set. Every name, price and note on screen is invented demo data.
+
+## Meta models
+
+| Model | Job in Vale | Runs on |
+|---|---|---|
+| Muse Spark 1.3 | The agent: decides and calls the business tools | Meta Model API |
+| Muse Voice Transcribe 1.0 | Live speech input with turn detection | Meta Model API |
+| Muse Image 1.0 | Design preview on the client photo | Meta Model API |
+| SAM 3.1 | Counts five nails in the before photo, re-checks the preview, asks for one more Image call on mismatch | Meta Model API |
+| Muse Glimmer 30B (open weights, on infrastructure we run) | Private client briefs: what to say and show, never health text | Modal GPU (A10G, our deploy) |
+| SeamlessM4T v2 Large (open weights, optional) | Spoken answers when configured | Modal GPU (T4, our deploy) |
+
+## How it works
+
+1. The person speaks, hands busy. Vale listens.
+2. Vale acts: it books, saves, quotes and moves.
+3. The screen shows what changed; the voice confirms it in one line.
+
+```mermaid
+flowchart LR
+    person[Person, hands busy] -->|speaks| vale[Vale]
+    vale -->|acts| work[Books, saves, quotes, moves]
+    work --> screen[Screen shows it]
+    work --> voice[Voice confirms it]
+```
+
+Diagram generated by a Muse Spark 1.3 agent.
+
+The Meta API key stays on the server. The browser never calls `api.meta.ai`. How the system runs underneath: [docs/architecture.md](docs/architecture.md).
+
+## Open weights on Modal
+
+Two backends run on Modal and scale to zero when idle: Glimmer briefs (`modal/glimmer.py`) and SeamlessM4T v2 Large voice (`modal/seamless.py`). Glimmer serves Q4_K_M weights with a speculative drafter. Deploy with `modal deploy modal/glimmer.py` → see [docs/modal.md](docs/modal.md). Without them the app still runs: the browser voice speaks and the cards open without private briefs.
+
+Provenance: every Glimmer call logs model, time and outcome, never the text:
 
 ```
-VALE_DB_PATH=/tmp/vale-replay.db PORT=3222 npm run db:reset
-PORT=3222 VALE_DB_PATH=/tmp/vale-replay.db tsx --env-file=.env server.ts
-REPLAY_BASE=http://localhost:3222 VALE_DB_PATH=/tmp/vale-replay.db REPLAY_BANNED_WORDS=... npm run replay:record
+02:35:04.610 | - | GLIMMER | muse-glimmer-30B | 7308ms | ok | source=precompute client=2 result=stored | -
 ```
 
-`REPLAY_BANNED_WORDS` is an optional comma-separated blocklist (kept in
-the shell, never committed): the recording fails if a reply contains one
-of those words.
+An example brief for the demo client holds no health text:
 
-## Voice (Seamless, optional)
+```
+"David comes every 3 weeks. He also has a health note; it's on screen."
+```
 
-The demo speaks with the browser voice unless `SEAMLESS_URL` is set. To serve
-the open model yourself: `pip install modal`, then
-`SEAMLESS_APP_NAME=vale-seamless-<something-private> modal deploy modal/seamless.py`,
-then copy the printed https URL into your local `.env` as `SEAMLESS_URL`.
+## Privacy
+
+Vale is designed for PHI/PII minimization:
+
+- Health-note text never reaches the cloud model. Only Glimmer reads it, on our Modal, with a token that lives in the shell, never in the repo.
+- Glimmer never receives phone, email or birthday.
+- A brief that repeats health words is dropped and generated once more. A second leak stores nothing.
+- The health alert shows on screen only, never spoken. Amounts stay on screen too, never spoken.
+- Logs keep the model, the time and the outcome, never the text.
+
+## Limits
+
+- All names, prices and notes are invented seed data. `npm run db:reset` restores them in seconds.
+- Without `META_API_KEY` and without replay, the app says so on screen instead of starting voice.
+- Without Glimmer or SeamlessM4T v2 Large configured, everything still works with the browser voice and plain cards.
+- The photo preview needs a saved before photo and the appointment reference design.
+
+## How we built it
+
+Vale was built by agents, directed by Daniel: [docs/how-we-built.md](docs/how-we-built.md).
+
+![Agent collaboration graph: 40 agents, 246 session messages](docs/img/agent-graph.svg)
 
 ## License
 
-[Apache-2.0](LICENSE)
+Apache-2.0. See [LICENSE](LICENSE).

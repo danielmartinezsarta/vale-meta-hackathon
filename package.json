@@ -15,6 +15,7 @@
     "test:audio": "vitest run asr route capture agent",
     "db:seed": "node scripts/seed.mjs",
     "db:reset": "node scripts/db-reset.mjs && npx tsx scripts/precompute-briefs.ts",
+    "replay": "VALE_REPLAY=1 npm start",
     "replay:record": "tsx scripts/record-replay.ts",
     "replay:from-logs": "tsx scripts/replay-from-logs.ts",
     "replay": "VALE_REPLAY=1 META_API_KEY= PORT=\"${PORT:-3222}\" tsx server.ts",
