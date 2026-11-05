@@ -58,21 +58,11 @@ function waitUp(port: number): Promise<void> {
 }
 
 function ensureChromium(): void {
-  const cache = join(homedir(), "Library", "Caches", "ms-playwright");
-  let present = false;
-  try {
-    for (const entry of readdirSync(cache)) {
-      if (entry.startsWith("chromium-") && existsSync(join(cache, entry))) {
-        present = true;
-      }
-    }
-  } catch {
-    /* cache dir missing: install below */
-  }
-  if (!present) {
-    console.log("[demo] installing Chromium for Playwright (once)...");
-    execSync("npx playwright install chromium", { cwd: root, stdio: "inherit" });
-  }
+  // Always install: it is idempotent and takes about a second when the
+  // right build is present, while a cache-folder check goes stale on an
+  // older build and points at the wrong path off macOS.
+  console.log("[demo] ensuring Playwright Chromium...");
+  execSync("npx playwright install chromium", { cwd: root, stdio: "inherit" });
 }
 
 async function quiet(page: Page): Promise<void> {
