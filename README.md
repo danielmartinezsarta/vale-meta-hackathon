@@ -1,79 +1,40 @@
-# Vale (hackathon build)
+<div align="center">
+  <img src="docs/img/robot.svg" width="150" alt="Vale robot" />
+  <br />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-dark.png" />
+    <img src="docs/img/logo-light.png" width="300" alt="vale. Just say it." />
+  </picture>
+  <p>Vale is a voice-first assistant with an intent-based interface for people who work with their hands: they say what they need, Vale does it, without stopping their work.</p>
+  <p>
+    <img src="https://img.shields.io/badge/Muse_Spark-1.3-2F5BFF" alt="Muse Spark 1.3" />
+    <img src="https://img.shields.io/badge/Muse_Voice_Transcribe-1.0-2F5BFF" alt="Muse Voice Transcribe 1.0" />
+    <img src="https://img.shields.io/badge/Muse_Image-1.0-2F5BFF" alt="Muse Image 1.0" />
+    <img src="https://img.shields.io/badge/SAM-3.1-2F5BFF" alt="SAM 3.1" />
+    <img src="https://img.shields.io/badge/Muse_Glimmer-30B-2F5BFF" alt="Muse Glimmer 30B" />
+    <img src="https://img.shields.io/badge/SeamlessM4T-v2_Large-2F5BFF" alt="SeamlessM4T v2 Large" />
+    <br />
+    <img src="https://img.shields.io/badge/Next.js-16-14224F" alt="Next.js 16" />
+    <img src="https://img.shields.io/badge/React-19-14224F" alt="React 19" />
+    <img src="https://img.shields.io/badge/TypeScript-5-14224F" alt="TypeScript 5" />
+    <img src="https://img.shields.io/badge/Vitest-3-14224F" alt="Vitest 3" />
+    <img src="https://img.shields.io/badge/Modal-GPU-14224F" alt="Modal GPU" />
+    <br />
+    <img src="https://img.shields.io/badge/License-Apache--2.0-E6329B" alt="License Apache-2.0" />
+    <img src="https://img.shields.io/badge/Voice_first-18B8E0" alt="Voice first" />
+    <img src="https://img.shields.io/badge/EN_ES-18B8E0" alt="EN ES" />
+    <br />
+    <a href="https://www.youtube.com/watch?v=eoWEdRfhTug"><img src="https://img.shields.io/badge/YouTube-Watch_the_demo-E6329B?logo=youtube&logoColor=white" alt="Watch the demo" /></a>
+  </p>
+</div>
 
-## What was built during the hackathon
+We start with nail technicians: it is the domain we know first-hand, with a primary user there. The product is not limited to them.
 
-Started 2026-10-27. Today this holds the base app (Next.js + TypeScript) with a one-tap microphone screen.
+Gloves on, gel curing, acetone in the air, the client in the chair asking how much. Stopping to type means losing the thread of the session.
 
-Everything here is new: this repository was created on October 26, 2026 with only the license and this README, and all code was written from October 27, 2026 onward, during the hackathon window (October 26 to November 4, 2026). No code, data, prompts, or assets from earlier projects are included, and any data used is invented.
+Video: [Watch the 3-minute demo →](https://www.youtube.com/watch?v=eoWEdRfhTug)
 
-The idea comes from first-hand knowledge of the trade: nail technicians work with their hands full and no free moment to type, so this build explores a hands-free, voice-first helper for them.
-
-Hands-free, voice-first assistant for entrepreneurs who work with their hands, starting with nail technicians.
-
-## How a price is quoted (all invented)
-
-When asked how much to charge, Vale adds four parts and says each one out
-loud: the supplies used, the work time, a share of the monthly fixed costs,
-and the margin. The hourly rate and the fixed share both come from the
-workable minutes of the current month (its Monday-to-Friday days, eight
-hours a day), so no rate is written by hand. The final figure rounds up
-to the tens, and the rounding difference counts toward the 2500 USD
-monthly goal: closing a session saves its margin, and "how am I doing
-on the goal" reports the month's sum against 2500.
-
-supplies = sum over the recipe of (quantity × product price / product content)
-time = minutes × (monthly goal / workable minutes)
-fixed share = minutes × (monthly fixed costs / workable minutes)
-price = round_up((supplies + time + fixed share) × (1 + margin))
-
-The agenda and the stock follow the same spoken rule: appointments are
-created, listed and moved by voice, and the stock only moves when she says
-so ("I bought two", "three left", "it's gone"). Logging supplies for a
-session never touches the stock. Weekend or after-hours bookings warn
-first ("heads up, that's outside 9 to 5") and still run.
-
-## Demo data (all invented)
-
-Client, service and supply names come from `src/lib/seed-data.json` and are
-entirely fictitious, created for this hackathon. The SQLite file
-(`data/vale.db`, created by `npm run db:seed` and never committed) holds only
-that invented seed. Health notes are stored flagged as private and are never
-shown or sent to the cloud model.
-
-Built for the [Meta Global AI Developer Hackathon](https://cerebralvalley.ai/e/meta-ai-developer-hackathon) (Indie Developer track, "Build for Your World"), October 26 to November 4, 2026.
-
-## Private client briefs (open weights)
-
-Client records are only read by an open-weights Meta model on infrastructure
-we run. The cloud assistant handles the business and never sees the client's
-private details: "tell me about David" speaks a precomputed brief and opens
-the card with the summary on top, labeled "Prepared privately by Muse Glimmer
-(open weights)". Without a private model the card still opens, with the
-sentence "I don't have a private model set up to read client records, so
-here's David's card."
-
-Deploy the model from `modal/glimmer.py` (warm brief ~19 s, about $0.006
-per brief, $0 while idle):
-
-```
-modal deploy modal/glimmer.py  # serve and serve_draft (drafter, faster)
-modal app stop vale-glimmer    # scale to zero when done
-```
-
-Production uses the drafter endpoint
-(`https://<username>--vale-glimmer-serve-draft.us-east.modal.run`).
-Set it as `GLIMMER_URL` (see `.env.example`) and export `GLIMMER_TOKEN`
-from the Modal secret, in the local .env (gitignored) or the shell; the token never lives in the repo.
-
-The same endpoint runs locally with `llama-server` and the GGUF weights
-from `meta-models/Muse-Glimmer-30B-GGUF`
-(`Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf`, plus the dflash drafter for
-the fast path), with the flags from the model card (`--jinja`, `-ngl 99`,
-low reasoning strength, `--reasoning-budget 512`, temp 1.0, top-p 0.95,
-top-k 64), then `GLIMMER_URL=http://127.0.0.1:8080`. The app precomputes
-briefs on server start and after `npm run db:reset` for the clients with
-appointments today; a new note or a closed session regenerates that
-client's brief in the background.
+## For judges
 
 ## Watch the demo without a key
 
@@ -102,13 +63,105 @@ REPLAY_BASE=http://localhost:3222 VALE_DB_PATH=/tmp/vale-replay.db REPLAY_BANNED
 the shell, never committed): the recording fails if a reply contains one
 of those words.
 
-## Voice (Seamless, optional)
+With your own Meta key, run it live instead:
 
-The demo speaks with the browser voice unless `SEAMLESS_URL` is set. To serve
-the open model yourself: `pip install modal`, then
-`SEAMLESS_APP_NAME=vale-seamless-<something-private> modal deploy modal/seamless.py`,
-then copy the printed https URL into your local `.env` as `SEAMLESS_URL`.
+```bash
+cp .env.example .env
+# put your key in .env: META_API_KEY=...
+npm run db:reset
+npm start
+```
+
+Open the printed URL and tap the microphone. Setup details: [docs/setup.md](docs/setup.md).
+
+## What it does
+
+You ask by voice and Vale acts: it opens a session with a timer, saves a note about a client, adds to the shopping list, books or moves an appointment, prepares a quote and previews a nail design on the client photo. Prices and health notes appear on screen and are never read aloud. Everything is also available by touch, in eight screens: Agenda, Client files, Services, Supplies and stock, Shopping list, Payments, Goals and Preferences.
+
+| User says | Vale does |
+|---|---|
+| “Starting a gel refill with David” | Opens the session and starts the clock (`session_open`) |
+| “Note that David is allergic to latex” | Saves a private note on his record (`client_note_add`) |
+| “Add primer to the shopping list” | Adds it to the list (`shopping_add`) |
+| “How much does David pay?” | Quotes on a sheet; the totals stay on screen (`session_quote`) |
+| “What do I have today?” | Reads the agenda (`agenda_show`) |
+| “Move David to Friday” | Moves it at once with a notice; undo reverts it (`agenda_move_appointment`) |
+| “Show her how it would look” | Previews the reference design on the before photo (`photo_preview_design`) |
+
+If the mic is muted, the user can type instead. Language (EN | ES), voice engine and light or dark theme can be changed from the app.
+
+Every name, price and note on screen is invented demo data.
+
+## Meta models
+
+| Model | Job in Vale | Runs on |
+|---|---|---|
+| Muse Spark 1.3 | The agent: decides and calls the business tools | Meta Model API |
+| Muse Voice Transcribe 1.0 | Live speech input with turn detection | Meta Model API |
+| Muse Image 1.0 | Design preview on the client photo | Meta Model API |
+| SAM 3.1 | Counts five nails in the before photo, re-checks the preview, runs one more Image call on mismatch | Meta Model API |
+| Muse Glimmer 30B (open weights, our deploy) | Private client briefs: what to say and show, never health text | Modal GPU (A10G, our deploy) |
+| SeamlessM4T v2 Large (open weights, optional) | Spoken answers when configured | Modal GPU (T4, our deploy) |
+
+## How it works
+
+1. The person speaks, hands busy. Vale listens.
+2. Vale acts: it books, saves, quotes and moves.
+3. The screen shows what changed; the voice confirms it in one line.
+
+```mermaid
+flowchart LR
+    person[Person, hands busy] -->|speaks| vale[Vale]
+    vale -->|acts| work[Books, saves, quotes, moves]
+    work --> screen[Screen shows it]
+    work --> voice[Voice confirms it]
+```
+
+*Diagram generated by a Muse Spark 1.3 agent.*
+
+The Meta API key never leaves the server: the browser never talks to Meta directly.
+
+**What happens between “Vale, …” and the answer on screen?** [Follow one request through the system →](docs/architecture.md)
+
+## Open models, on our own GPU.
+
+**A client history is the most private thing a small business has.** Vale summarizes it with an open-weights model we deploy and control ourselves.
+
+- Muse Glimmer 30B writes each client brief before the appointment: what to say and what to show. Health notes never go in. It runs on our Modal GPU (A10G), quantized and with a speculative drafter, and scales to zero when idle.
+- SeamlessM4T v2 gives Vale its spoken voice in English, on our GPU too. It is optional: without it, the browser voice speaks.
+
+Every Glimmer call is logged with model, time and outcome, never the text.
+
+[Deploy it yourself →](docs/modal.md).
+
+## Privacy
+
+Vale is designed for PHI/PII minimization:
+
+- Health-note text never reaches the cloud model. Only Glimmer reads it, on our Modal, with a token that lives in local `.env` or the shell, never in the repo.
+- Glimmer never receives phone, email or birthday.
+- A brief that repeats health words is dropped and generated once more. A second leak stores nothing.
+- The health alert shows on screen only, never spoken. Amounts stay on screen too, never spoken.
+- Logs keep the model, the time and the outcome, never the text.
+
+## Limits
+
+- All names, prices and notes are invented seed data. `npm run db:reset` restores them in seconds.
+- Without `META_API_KEY` and without replay, the app says so on screen instead of starting voice.
+- Without Glimmer or SeamlessM4T v2 Large configured, everything still works with the browser voice and plain cards.
+- The photo preview needs a saved before photo and the appointment reference design.
+
+## How we built it
+
+**One developer, a team of agents, nine days.** Daniel set the direction; agents running on Meta Muse models wrote the specs, the code and the tests, as leads, builders and reviewers, coordinated by hacki-chan. [See how Vale was built →](docs/how-we-built.md).
+
+![Agent collaboration graph: 40 agents, 701 messages](docs/img/agent-graph.svg)
 
 ## License
 
-[Apache-2.0](LICENSE)
+Apache-2.0. See [LICENSE](LICENSE).
+
+<div align="center">
+  <img src="docs/img/robot.svg" width="64" alt="Vale robot" />
+  <p><em>Built for the hands that do the work.</em></p>
+</div>
