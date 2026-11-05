@@ -32,7 +32,7 @@ We start with nail technicians: it is the domain we know first-hand, with a prim
 
 Gloves on, gel curing, acetone in the air, the client in the chair asking how much. Stopping to type means losing the thread of the session.
 
-Video: [Watch the 3-minute demo in YouTube →](https://www.youtube.com/watch?v=eoWEdRfhTug)
+Video: [Watch the 3-minute demo on YouTube →](https://www.youtube.com/watch?v=eoWEdRfhTug)
 
 ## For judges
 
@@ -60,7 +60,7 @@ npm start
 
 Open the printed URL and tap the microphone.
 
-[Setup Details →](docs/setup.md).
+[Setup Details →](docs/setup.md)
 
 
 ## What it does
@@ -108,6 +108,7 @@ flowchart LR
 The Meta API key never leaves the server: the browser never talks to Meta directly.
 
 **What happens between “Vale, …” and the answer on screen?** 
+
 [Follow one request through the system →](docs/architecture.md)
 
 ## Open models
@@ -120,7 +121,7 @@ The Meta API key never leaves the server: the browser never talks to Meta direct
 
 Every Glimmer call is logged with model, time and outcome, never the text.
 
-[Deploy the open models yourself →](docs/modal.md).
+[Deploy the open models yourself →](docs/modal.md)
 
 ## Privacy
 
@@ -142,7 +143,8 @@ Vale is designed for **PHI/PII** minimization:
 ## How we built it
 
 **One developer, a team of agents, 10 days.** Daniel set the direction; agents running on Meta Muse models wrote the specs, the code and the tests, as leads, builders and reviewers, orchestrated by hacki-chan. 
-[See how Vale was built →](docs/how-we-built.md).
+
+[See how Vale was built →](docs/how-we-built.md)
 
 ![Agent collaboration graph: 40 agents, 701 messages](docs/img/agent-graph.svg)
 
