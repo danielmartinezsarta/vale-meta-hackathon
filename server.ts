@@ -35,6 +35,23 @@ async function main(): Promise<void> {
       socket.destroy();
       return;
     }
+    // Replay (npm run demo): the browser must never meet Meta. Hold its
+    // conversation socket open and ignore it; turns ride the voice route,
+    // which already answers by turn index. Live mode still dials Meta.
+    if (process.env.VALE_REPLAY === "1") {
+      wss.handleUpgrade(req, socket, head, (browser) => {
+        const peer = browser as unknown as {
+          on(event: string, listener: (...args: never[]) => void): unknown;
+        };
+        peer.on("message", () => {
+          /* frames land nowhere; the POST answers the turn */
+        });
+        peer.on("error", () => {
+          /* a quiet socket never raises the lost banner */
+        });
+      });
+      return;
+    }
     wss.handleUpgrade(req, socket, head, (browser) => {
       const peer =
         (browser as unknown as { _socket?: { remoteAddress?: string } })

@@ -14,6 +14,24 @@ export const SUMMARY_MS = 5000;
 /** Good job shows 5 s, then Vale is awake again. */
 export const GOODBYE_MS = 5000;
 
+/**
+ * Display-only sheets hide by themselves after AUTO_HIDE_MS. Kinds with
+ * action buttons (price, confirm, camera_save_as, final_photo_confirm)
+ * wait for the tap; client_card never auto-hides, it closes by voice or X.
+ */
+export const AUTO_HIDE_WIDGET_KINDS: readonly WidgetKind[] = [
+  "booked",
+  "note",
+  "health_note",
+  "notice",
+  "goal",
+  "photos",
+  "shopping",
+  "low_stock",
+  "final_result",
+  "session_summary",
+];
+
 export type WidgetKind =
   | "client_card"
   | "goal"

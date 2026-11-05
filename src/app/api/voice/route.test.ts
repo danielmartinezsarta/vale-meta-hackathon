@@ -12,7 +12,7 @@ import {
   vi,
 } from "vitest";
 import { WebSocketServer, WebSocket } from "ws";
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 // Every turn-logging test owns its [voice-turn] file: the console now shows
 // the aligned vlog row, and the full JSON lives in the file for the harness.
@@ -250,6 +250,41 @@ describe("POST /api/voice", () => {
     expect(turns).toHaveLength(1);
     expect(turns[0].gate).toBe("typed");
     vi.unstubAllGlobals();
+  });
+
+  it("answers recorded typed turns in order with no key and no model", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { parseReplayRun } = await import("@/lib/replay");
+    const run = parseReplayRun(readFileSync(join(process.cwd(), "replay", "demo-run.json"), "utf8"));
+    vi.stubEnv("VALE_REPLAY", "1");
+    vi.stubEnv("META_API_KEY", "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("no model calls in replay mode");
+      }),
+    );
+    for (const turn of run.turns.slice(0, 2)) {
+      const request = new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "replay-order-1",
+        },
+        body: JSON.stringify({ transcript: turn.transcript, typed: true }),
+      });
+      const response = await POST(request);
+      const text = await response.text();
+      expect(response.status).toBe(200);
+      expect(text).toContain("event: final");
+      expect(text).toContain(turn.reply.slice(0, 40));
+      expect(text).toContain("event: done");
+      expect(text).not.toContain("event: error");
+    }
+    vi.unstubAllGlobals();
+    vi.stubEnv("VALE_REPLAY", "");
+    vi.stubEnv("META_API_KEY", "test-key");
   });
 
   it("narrates image generation at once, before the tool finishes", async () => {
@@ -780,5 +815,138 @@ describe("POST /api/voice", () => {
       expect(closedCount).toBeGreaterThan(0);
     });
     holdFinal = false;
+  });
+});
+
+describe("GET /api/voice replay controls", () => {
+  const control = (action: string, client: string) =>
+    GET(new Request(`http://localhost/api/voice?replay=${action}&client=${client}`));
+  const stateOf = async (client: string) =>
+    (await (await control("state", client)).json()) as {
+      cursor: number;
+      total: number;
+      paused: boolean;
+      done: boolean;
+      current: { scene: string; indexInScene: number; sceneCount: number } | null;
+    };
+  const typedTurn = (transcript: string, client: string) =>
+    POST(
+      new Request("http://localhost/api/voice", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": client,
+        },
+        body: JSON.stringify({ transcript, typed: true }),
+      }),
+    );
+
+  it("holds the reply while paused and answers after resume", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { parseReplayRun } = await import("@/lib/replay");
+    const run = parseReplayRun(readFileSync(join(process.cwd(), "replay", "demo-run.json"), "utf8"));
+    vi.stubEnv("VALE_REPLAY", "1");
+    vi.stubEnv("META_API_KEY", "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("no model calls in replay mode");
+      }),
+    );
+    try {
+      const client = "pill-pause-1";
+      const first = await typedTurn(run.turns[0].transcript, client);
+      expect(first.status).toBe(200);
+      expect(await first.text()).toContain("event: done");
+      expect((await stateOf(client)).cursor).toBe(1);
+
+      expect(((await (await control("pause", client)).json()) as { paused: boolean }).paused).toBe(
+        true,
+      );
+      const pendingBody = typedTurn(run.turns[1].transcript, client).then((response) =>
+        response.text(),
+      );
+      const winner = await Promise.race([
+        pendingBody.then(() => "answered" as const),
+        new Promise((resolve) => setTimeout(() => resolve("held" as const), 500)),
+      ]);
+      expect(winner).toBe("held");
+
+      expect(
+        ((await (await control("resume", client)).json()) as { paused: boolean }).paused,
+      ).toBe(false);
+      const resumedText = await pendingBody;
+      expect(resumedText).toContain("event: done");
+      expect((await stateOf(client)).cursor).toBe(2);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.stubEnv("VALE_REPLAY", "");
+      vi.stubEnv("META_API_KEY", "test-key");
+    }
+  });
+
+  it("moves the cursor with stop, prev and next", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { parseReplayRun } = await import("@/lib/replay");
+    const run = parseReplayRun(readFileSync(join(process.cwd(), "replay", "demo-run.json"), "utf8"));
+    vi.stubEnv("VALE_REPLAY", "1");
+    vi.stubEnv("META_API_KEY", "");
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({}) })));
+    try {
+      const client = "pill-jump-1";
+      const first = await typedTurn(run.turns[0].transcript, client);
+      expect(first.status).toBe(200);
+      await first.text();
+      expect((await stateOf(client)).cursor).toBe(1);
+
+      // Next jumps to the first turn of the following scene (t903).
+      expect(((await (await control("next", client)).json()) as { cursor: number }).cursor).toBe(2);
+      // Prev jumps back to the first turn of the current scene (t901).
+      expect(((await (await control("prev", client)).json()) as { cursor: number }).cursor).toBe(0);
+      // Stop parks at turn 0 and pauses.
+      const stopped = (await (await control("stop", client)).json()) as {
+        cursor: number;
+        paused: boolean;
+      };
+      expect(stopped.cursor).toBe(0);
+      expect(stopped.paused).toBe(true);
+      const state = await stateOf(client);
+      expect(state.paused).toBe(true);
+      expect(state.current?.scene).toBe("Daily agenda");
+      expect(state.current?.indexInScene).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.stubEnv("VALE_REPLAY", "");
+      vi.stubEnv("META_API_KEY", "test-key");
+    }
+  });
+
+  it("answers a jumped-over turn without moving the cursor", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { parseReplayRun } = await import("@/lib/replay");
+    const run = parseReplayRun(readFileSync(join(process.cwd(), "replay", "demo-run.json"), "utf8"));
+    vi.stubEnv("VALE_REPLAY", "1");
+    vi.stubEnv("META_API_KEY", "");
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({}) })));
+    try {
+      const client = "pill-scan-1";
+      // Second turn first: the cursor is still at 0, so this answers
+      // out of order and leaves the cursor where it was.
+      const outOfOrder = await typedTurn(run.turns[1].transcript, client);
+      expect(outOfOrder.status).toBe(200);
+      expect(await outOfOrder.text()).toContain(run.turns[1].reply.slice(0, 40));
+      expect((await stateOf(client)).cursor).toBe(0);
+      // The cursor turn still advances normally afterwards.
+      const inOrder = await typedTurn(run.turns[0].transcript, client);
+      expect(inOrder.status).toBe(200);
+      expect((await stateOf(client)).cursor).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.stubEnv("VALE_REPLAY", "");
+      vi.stubEnv("META_API_KEY", "test-key");
+    }
   });
 });

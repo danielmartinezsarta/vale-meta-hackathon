@@ -12,6 +12,7 @@ import type {
   UtteranceStats,
 } from "@/lib/capture";
 import type { Board } from "@/lib/board";
+import { getValeClientId } from "@/lib/client-id";
 import { hasVisibleContent, type Turn } from "@/lib/turn-view";
 import { parseSseStream } from "@/lib/sse";
 import { isCloseSheetIntent } from "@/lib/wake";
@@ -43,6 +44,7 @@ import {
 } from "@/lib/vale-language";
 import { useValeLanguage } from "@/components/useValeLanguage";
 import { uiStrings } from "@/lib/vale-ui";
+import { AUTO_HIDE_WIDGET_KINDS } from "@/lib/widget";
 import type { PhotosData, Widget } from "@/lib/widget";
 import { loadPhotosData as loadPhotosDataFromDb } from "@/components/photos-data";
 import {
@@ -124,23 +126,7 @@ export function TapToTalk({
   // Stable per-browser id so slots, pending actions and chain lanes survive
   // retaps even behind one shared IP; generated once, then reused.
   const convSocketRef = useRef<WebSocket | null>(null);
-  const [clientId] = useState<string>(() => {
-    if (typeof window === "undefined") return "unknown";
-    try {
-      const stored = window.localStorage.getItem("vale-client");
-      if (stored !== null && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(stored)) {
-        return stored;
-      }
-      const fresh =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `c${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
-      window.localStorage.setItem("vale-client", fresh);
-      return fresh;
-    } catch {
-      return "unknown";
-    }
-  });
+  const [clientId] = useState<string>(getValeClientId);
   const lastLevelRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef(false);
@@ -404,6 +390,16 @@ export function TapToTalk({
           showGoodJob();
         }, SUMMARY_MS);
       }
+      if (next !== null && AUTO_HIDE_WIDGET_KINDS.includes(next.kind)) {
+        // Display-only sheets hide themselves even when they arrive
+        // mid-speech, like every other widget that has no buttons. The
+        // schedule runs before the speaking early return below, the same
+        // way the summary chain already does.
+        widgetTimerRef.current = window.setTimeout(() => {
+          widgetTimerRef.current = 0;
+          closeWidgetByHand();
+        }, AUTO_HIDE_MS);
+      }
       if (next === null || valeStoreRef.current.get() === "speaking") return;
       if (next.kind === "good_job") {
         // Held through goodbye: done face and care icons stay 5 s.
@@ -422,12 +418,6 @@ export function TapToTalk({
         doneTimerRef.current = 0;
         settleToListening();
       }, 1500);
-      if (next.kind === "booked" || next.kind === "note" || next.kind === "health_note" || next.kind === "notice") {
-        widgetTimerRef.current = window.setTimeout(() => {
-          widgetTimerRef.current = 0;
-          closeWidgetByHand();
-        }, AUTO_HIDE_MS);
-      }
     },
     [clearDoneTimer, clearWidgetTimer, closeWidgetByHand, settleToListening, showGoodJob],
   );
@@ -538,6 +528,15 @@ export function TapToTalk({
     micMutedRef.current = next;
     setMicMuted(next);
     setMicTracksEnabled(!next);
+    if (!next) {
+      // Unmuting is a real gesture: resume a suspended capture context
+      // here. If it stays suspended the watchdogs report, as before.
+      try {
+        captureRef.current?.resume?.();
+      } catch {
+        /* the watchdogs report a context that stays suspended */
+      }
+    }
   }, [micMuted, setMicTracksEnabled]);
 
   // Typed turn: Enter or the send button sends, the field clears and keeps
@@ -1917,8 +1916,10 @@ export function TapToTalk({
             setLevel(value);
           },
           // iOS kept the context suspended past the gesture: zeros flow.
+          // Muted mic means no mic errors: the typed path needs no capture.
           onBlocked: () => {
             if (!sessionRef.current) return;
+            if (micMutedRef.current) return;
             endSessionWithAlert(
               turnErrorText("suspended", languageRef.current),
               null,
@@ -1955,6 +1956,9 @@ export function TapToTalk({
           // Her voice owns the session: the context is suspended on
           // purpose, so rebuilding here would yank her audio mid-reply.
           if (mutedRef.current) return;
+          // Muted mic means no mic errors: skip the track check and the
+          // restart while the typed path runs without capture.
+          if (micMutedRef.current) return;
           if (Date.now() - lastBeatAt < STALL_MS) return;
         const tracks =
           typeof stream.getTracks === "function" ? stream.getTracks() : [];

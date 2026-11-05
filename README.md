@@ -75,6 +75,33 @@ briefs on server start and after `npm run db:reset` for the clients with
 appointments today; a new note or a closed session regenerates that
 client's brief in the background.
 
+## Watch the demo without a key
+
+`npm run demo` plays the committed run from `replay/demo-run.json`
+through the real app: it starts the keyless replay server on a free port
+and drives a headed browser exactly like the manual steps — open the app,
+wake Vale, type every recorded turn, waiting for her to finish speaking
+and the sheet to show before the next turn. One voice at a time.
+
+```
+npm install
+npm run build
+npm run demo
+```
+
+To record a new run, reset an isolated database and fold the filtered
+log (never hand-edit the file):
+
+```
+VALE_DB_PATH=/tmp/vale-replay.db PORT=3222 npm run db:reset
+PORT=3222 VALE_DB_PATH=/tmp/vale-replay.db tsx --env-file=.env server.ts
+REPLAY_BASE=http://localhost:3222 VALE_DB_PATH=/tmp/vale-replay.db REPLAY_BANNED_WORDS=... npm run replay:record
+```
+
+`REPLAY_BANNED_WORDS` is an optional comma-separated blocklist (kept in
+the shell, never committed): the recording fails if a reply contains one
+of those words.
+
 ## Voice (Seamless, optional)
 
 The demo speaks with the browser voice unless `SEAMLESS_URL` is set. To serve

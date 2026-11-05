@@ -1,0 +1,146 @@
+.pill {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: max-content;
+  max-width: 230px;
+  background: rgba(17, 19, 28, 0.92);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 22px;
+  padding: 8px 10px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 6px 20px rgba(10, 18, 48, 0.35);
+  transition:
+    max-width 0.35s ease,
+    padding 0.35s ease;
+}
+
+.pill:focus-visible {
+  outline: 2px solid var(--aw-link);
+  outline-offset: 2px;
+}
+
+.shut {
+  max-width: 250px;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--aw-ok);
+}
+
+.shut .dot {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  min-width: 0;
+}
+
+.kicker {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.text {
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0;
+  flex: none;
+}
+
+.buttons button {
+  background: none;
+  border: 0;
+  color: #fff;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+}
+
+.buttons button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.buttons button:focus-visible {
+  outline: 2px solid var(--aw-link);
+  outline-offset: 1px;
+}
+
+.buttons svg {
+  width: 14px;
+  height: 14px;
+}
+
+.shut .optional {
+  display: none;
+}
+
+/* Slim bar while a sheet dialog is open: one row that fits the free band
+ * between the side icons and the close button, clearing sheet titles. */
+.slim {
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  max-width: 250px;
+  padding: 5px 8px;
+}
+
+.slim .kicker {
+  display: none;
+}
+
+.slim .top {
+  min-width: 0;
+}
+
+.slim .text {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slim .buttons button {
+  width: 16px;
+  height: 16px;
+  /* The global button floor is 44 px: lift it or the bar stays tall. */
+  min-width: 0;
+  min-height: 0;
+}
+
+.slim .buttons svg {
+  width: 11px;
+  height: 11px;
+}

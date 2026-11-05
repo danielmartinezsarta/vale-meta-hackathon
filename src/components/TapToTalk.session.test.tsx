@@ -226,3 +226,71 @@ describe("already-open session on connect", () => {
     expect(screen.getByText(/01:02:0[3-9]/)).toBeTruthy();
   });
 });
+
+describe("widget auto-hide (display-only sheets hide, client card stays)", () => {
+  const seen: CaptureCallbacks[] = [];
+  function driveAutoHide() {
+    seen.length = 0;
+    stubGetUserMedia();
+    mockStartCapture.mockImplementation((_stream, callbacks) => {
+      seen.push(callbacks);
+      return { stop: () => {}, state: () => "running", engine: () => "script" as const };
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("no post", { status: 500 })),
+    );
+  }
+
+  function widgetMessage(widget: unknown) {
+    FakeVoiceSocket.instances[0].serverMessage({ type: "widget", widget });
+  }
+
+  it("auto-hides a display-only goal sheet", async () => {
+    driveAutoHide();
+    render(<TapToTalk autoStart />);
+    await waitFor(() => {
+      expect(seen.length).toBe(1);
+    });
+    widgetMessage({
+      kind: "goal",
+      title: "Monthly goal",
+      size: "half",
+      data: { name: null, goal: 600, earned: 120 },
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Monthly goal" })).toBeTruthy();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3400));
+    expect(screen.queryByRole("dialog", { name: "Monthly goal" })).toBeNull();
+  }, 15000);
+
+  it("keeps the client card open past the auto-hide window", async () => {
+    driveAutoHide();
+    render(<TapToTalk autoStart />);
+    await waitFor(() => {
+      expect(seen.length).toBe(1);
+    });
+    widgetMessage({
+      kind: "client_card",
+      title: "Nina",
+      size: "full",
+      data: {
+        name: "Nina",
+        birthday: null,
+        sex: null,
+        phone: null,
+        email: null,
+        visits: [],
+        visitsMore: 0,
+        healthNotes: [],
+        noteTags: [],
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Client card" })).toBeTruthy();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 3400));
+    expect(screen.getByRole("dialog", { name: "Client card" })).toBeTruthy();
+  }, 15000);
+});

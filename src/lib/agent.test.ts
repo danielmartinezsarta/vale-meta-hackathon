@@ -1221,7 +1221,7 @@ describe("client card privacy", () => {
   it("answers the brief in one round and stores only its label in history", async () => {
     const SUMMARY_BRIEF = {
       spoken:
-        "David comes every 3 weeks and likes dark matte. He also has a health note; it's on screen.",
+        "David comes every 3 weeks and likes dark matte. There is also a health note; it's on screen.",
       summary: ["Prefers dark matte designs", "Hockey fan, ask about the Rangers"],
       has_health_note: true,
     };
