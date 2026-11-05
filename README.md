@@ -32,7 +32,7 @@ We start with nail technicians: it is the domain we know first-hand, with a prim
 
 Gloves on, gel curing, acetone in the air, the client in the chair asking how much. Stopping to type means losing the thread of the session.
 
-Video: [Watch the 3-minute demo link](https://www.youtube.com/watch?v=eoWEdRfhTug).
+Video: [Watch the 3-minute demo →](https://www.youtube.com/watch?v=eoWEdRfhTug)
 
 ## For judges
 
@@ -104,18 +104,18 @@ flowchart LR
 
 The Meta API key never leaves the server: the browser never talks to Meta directly.
 
-**What happens between Vale, Meta and the screen?** [The answer, on screen.](docs/architecture.md)
+**What happens between “Vale, …” and the answer on screen?** [Follow one request through the system →](docs/architecture.md)
 
 ## Open models, on our own GPU.
 
 **A client history is the most private thing a small business has.** Vale summarizes it with an open-weights model we deploy and control ourselves.
 
 - Muse Glimmer 30B writes each client brief before the appointment: what to say and what to show. Health notes never go in. It runs on our Modal GPU (A10G), quantized and with a speculative drafter, and scales to zero when idle.
-- SeamlessM4T v2 gives Vale its spoken voice, on our GPU too. It is optional: without it, the browser voice speaks.
+- SeamlessM4T v2 gives Vale its spoken voice in English, on our GPU too. It is optional: without it, the browser voice speaks.
 
 Every Glimmer call is logged with model, time and outcome, never the text.
 
-[Deploy it yourself](docs/modal.md).
+[Deploy it yourself →](docs/modal.md).
 
 ## Privacy
 
@@ -136,7 +136,7 @@ Vale is designed for PHI/PII minimization:
 
 ## How we built it
 
-**One developer, a team of agents, nine days.** Daniel set the direction; agents running on Meta Muse models wrote the specs, the code and the tests, as leads, builders and reviewers, coordinated by hacki-chan. [See how Vale was built](docs/how-we-built.md).
+**One developer, a team of agents, nine days.** Daniel set the direction; agents running on Meta Muse models wrote the specs, the code and the tests, as leads, builders and reviewers, coordinated by hacki-chan. [See how Vale was built →](docs/how-we-built.md).
 
 ![Agent collaboration graph: 40 agents, 701 messages](docs/img/agent-graph.svg)
 
