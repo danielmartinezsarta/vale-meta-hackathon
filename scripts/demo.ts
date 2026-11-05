@@ -117,25 +117,29 @@ async function main(): Promise<void> {
   try {
     await waitUp(port);
     ensureChromium();
-    const browser = await chromium.launch({
+    // Persistent context in app mode: one window, no tab bar, no address
+    // bar. The page sizes to the real window (viewport null), filling it
+    // edge to edge at any size, so no grey band can appear. Chrome will
+    // not go narrower than this phone-like window.
+    const profileDir = join(tmpdir(), `vale-demo-profile-${port}`);
+    rmSync(profileDir, { recursive: true, force: true });
+    const context = await chromium.launchPersistentContext(profileDir, {
       headless: false,
       args: [
         "--use-fake-ui-for-media-stream",
         // Let the AudioContext run: without it the capture posts zeros,
         // the app calls the mic blocked, and the session dies on turn 1.
         "--autoplay-policy=no-user-gesture-required",
-        "--window-size=390,844",
+        `--app=http://localhost:${port}/`,
+        "--window-size=430,932",
       ],
+      viewport: null,
+      colorScheme: "dark",
     });
+    const browser = context;
     try {
-      const context = await browser.newContext({
-        // Phone viewport at 2x, window sized the same: the page fills
-        // the window with no grey band anywhere.
-        viewport: { width: 390, height: 844 },
-        deviceScaleFactor: 2,
-        // The demo runs in dark mode. The theme key is set before the
-        // first load so the first paint is already dark.
-        colorScheme: "dark",
+      await context.grantPermissions(["microphone"], {
+        origin: `http://localhost:${port}`,
       });
       await context.grantPermissions(["microphone"], {
         origin: `http://localhost:${port}`,
@@ -193,7 +197,16 @@ async function main(): Promise<void> {
         };
         start();
       `);
-      const page = await context.newPage();
+      // The --app window opens the URL on its own: adopt that page
+      // instead of opening a second window.
+      let page: Page | null = null;
+      for (let i = 0; i < 30 && page === null; i += 1) {
+        const open = context.pages();
+        if (open.length > 0) page = open[0];
+        else await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      if (page === null) throw new Error("app window never opened");
+      await page.emulateMedia({ colorScheme: "dark" });
       // Measure, don't guess: every turn must fire exactly one POST, and
       // any exception in the submit chain shows up here, not as a hang.
       let voicePosts = 0;
@@ -326,6 +339,30 @@ async function main(): Promise<void> {
           }
         }
         if (turn.widget) await page.waitForTimeout(1500);
+        // A sheet dialog compacts the pill to its slim bar; the shot
+        // waits for it so no title or label hides behind the full pill.
+        // The 1 s pill poll can lag the shot, so this wait is explicit.
+        const dialogOpen = await page.evaluate(
+          () => document.querySelector('[role="dialog"]:not([aria-hidden="true"])') !== null,
+        );
+        // Shot turns need the compact pill while their sheet is open; a
+        // sheet that already auto-hid needs no pill and stops no run.
+        if (SHOT_TURNS[turn.turn] && dialogOpen) {
+          await page
+            .waitForSelector('[aria-label="Replay controls"][data-compact="true"]', { timeout: 8000 })
+            .catch(() => {});
+          await page.waitForTimeout(1200);
+          const stillOpen = await page.evaluate(
+            () => document.querySelector('[role="dialog"]:not([aria-hidden="true"])') !== null,
+          );
+          const compactNow = await page.evaluate(
+            () =>
+              document.querySelector('[aria-label="Replay controls"]')?.getAttribute("data-compact") ===
+              "true",
+          );
+          console.log(`[demo] shot-state ${turn.turn} dialog=${stillOpen} compact=${compactNow}`);
+          if (stillOpen && !compactNow) throw new Error(`pill covers the ${turn.turn} sheet`);
+        }
         // Shoot before quiet: display-only sheets auto-hide 3 s after
         // they open, so waiting for speech first would miss the card.
         const shot = SHOT_TURNS[turn.turn];

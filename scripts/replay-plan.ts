@@ -39,7 +39,7 @@ export const REPLAY_PLAN: ReplayPlanTurn[] = [
   { scene: "Nail photo studio", phrase: "Vale, open a session with David" },
   { scene: "Nail photo studio", phrase: "Vale, show me the before photo" },
   { scene: "Nail photo studio", phrase: "Vale, show me the reference" },
-  { scene: "Nail photo studio", phrase: "Vale, preview the design on her nails" },
+  { scene: "Nail photo studio", phrase: "Vale, preview the design on David nails" },
   { scene: "Nail photo studio", phrase: "Vale, show me the final photo" },
   { scene: "Nail photo studio", phrase: "Vale, close the session" },
   // Goals: the month at a glance.

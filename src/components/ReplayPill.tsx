@@ -59,6 +59,9 @@ function Icon({ d, rect }: { d?: string; rect?: boolean }) {
 export function ReplayPill() {
   const [enabled, setEnabled] = useState(false);
   const [status, setStatus] = useState<ReplayStatus | null>(null);
+  // A sheet dialog owns the top of the screen (titles, labels): while one
+  // is open the pill compacts to a slim bar that clears them.
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,7 +77,11 @@ export function ReplayPill() {
       });
     const tick = async () => {
       const next = await readState(client);
-      if (!cancelled && next) setStatus(next);
+      if (cancelled) return;
+      if (next) setStatus(next);
+      // The home menu lives in the DOM with aria-hidden while closed:
+      // only a shown dialog compacts the pill.
+      setSheetOpen(document.querySelector('[role="dialog"]:not([aria-hidden="true"])') !== null);
     };
     const timer = setInterval(() => {
       void tick();
@@ -137,9 +144,10 @@ export function ReplayPill() {
 
   return (
     <div
-      className={`${styles.pill} ${expanded ? styles.open : styles.shut}`}
+      className={`${styles.pill} ${expanded ? styles.open : styles.shut}${sheetOpen ? ` ${styles.slim}` : ""}`}
       role="region"
       aria-label="Replay controls"
+      data-compact={sheetOpen ? "true" : "false"}
       tabIndex={0}
       onKeyDown={onKeyDown}
     >

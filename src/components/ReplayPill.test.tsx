@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReplayPill } from "./ReplayPill";
+import styles from "./ReplayPill.module.css";
 
 afterEach(() => {
   cleanup();
@@ -77,5 +78,47 @@ describe("ReplayPill", () => {
     await vi.waitFor(() => {
       expect(calls.some((url) => url.includes("replay=next"))).toBe(true);
     });
+  });
+
+  it("stays full with no sheet, compacts to a slim bar while one is open", async () => {
+    mockFetch(playing);
+    render(<ReplayPill />);
+    const region = await screen.findByRole("region", { name: "Replay controls" });
+    expect(region.getAttribute("data-compact")).toBe("false");
+    expect(region.className).not.toContain(styles.slim);
+    const sheet = document.createElement("section");
+    sheet.setAttribute("role", "dialog");
+    sheet.setAttribute("aria-label", "Photos");
+    sheet.setAttribute("aria-hidden", "false");
+    document.body.appendChild(sheet);
+    await vi.waitFor(
+      () => {
+        expect(screen.getByRole("region", { name: "Replay controls" }).getAttribute("data-compact")).toBe(
+          "true",
+        );
+      },
+      { timeout: 3000 },
+    );
+    expect(screen.getByRole("region", { name: "Replay controls" }).className).toContain(styles.slim);
+    sheet.remove();
+    await vi.waitFor(
+      () => {
+        expect(screen.getByRole("region", { name: "Replay controls" }).getAttribute("data-compact")).toBe(
+          "false",
+        );
+      },
+      { timeout: 3000 },
+    );
+    // A hidden dialog (the home menu while closed) never compacts.
+    const menu = document.createElement("div");
+    menu.setAttribute("role", "dialog");
+    menu.setAttribute("aria-label", "Menu");
+    menu.setAttribute("aria-hidden", "true");
+    document.body.appendChild(menu);
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    expect(screen.getByRole("region", { name: "Replay controls" }).getAttribute("data-compact")).toBe(
+      "false",
+    );
+    menu.remove();
   });
 });

@@ -501,7 +501,7 @@
       "toolArgs": {
         "name": "Nina"
       },
-      "reply": "No prior visits on record, and she likes dark matte colors. He also has a health note; it's on screen.",
+      "reply": "Nina has no prior visits on file and likes dark matte colors. There is also a health note; it's on screen.",
       "widget": {
         "kind": "client_card",
         "title": "Client card",
@@ -523,9 +523,8 @@
           "brief": {
             "label": "Prepared privately by Muse Glimmer (open weights)",
             "lines": [
-              "No prior visits on record",
-              "Likes dark matte colors",
-              "No upcoming appointments"
+              "No prior visits on file",
+              "Likes dark matte colors"
             ]
           }
         }
@@ -555,7 +554,7 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.006013,
+      "costUsd": 0.0062925,
       "scene": "Client's card"
     },
     {
@@ -1061,7 +1060,7 @@
     },
     {
       "turn": "t922",
-      "transcript": "Vale, preview the design on her nails",
+      "transcript": "Vale, preview the design on David nails",
       "language": "en",
       "tool": "photo_preview_design",
       "toolArgs": null,
@@ -1082,7 +1081,7 @@
           "id": 8,
           "clientName": "David",
           "serviceName": "Semi-permanent manicure",
-          "startedAt": "2026-11-04T19:20:21.704Z"
+          "startedAt": "2026-11-04T23:36:40.687Z"
         },
         "card": {
           "name": "David",
@@ -1113,7 +1112,7 @@
           "Cotton pads"
         ]
       },
-      "costUsd": 0.00600725,
+      "costUsd": 0.00595075,
       "scene": "Nail photo studio"
     },
     {

@@ -303,7 +303,7 @@ describe("client_card_show (1.1)", () => {
 
 describe("client_summary", () => {
   const SUMMARY_BRIEF = {
-    spoken: "David comes every 3 weeks and likes dark matte. He also has a health note; it's on screen.",
+    spoken: "David comes every 3 weeks and likes dark matte. There is also a health note; it's on screen.",
     summary: ["Prefers dark matte designs", "Hockey fan, ask about the Rangers"],
     has_health_note: true,
   };

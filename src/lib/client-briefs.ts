@@ -143,16 +143,17 @@ function storeBrief(db: ValeDb, clientId: number, brief: ClientBrief, hash: stri
   return { brief, model: GLIMMER_MODEL, ms, created_at: created, source_hash: hash };
 }
 
-/** System prompt: the fixed schema plus the health-silence rule. */
-export function buildBriefSystemPrompt(sex: string): string {
-  const pronoun = sex.toLowerCase().startsWith("f") ? "She" : "He";
+/** System prompt: the fixed schema plus the health-silence rule. The health
+ * line is neutral on purpose: the record may carry no sex, and the brief
+ * must read the same for every client instead of guessing a pronoun. */
+export function buildBriefSystemPrompt(): string {
   return [
     "You are a private salon assistant. Write a pre-appointment brief as JSON only:",
     '{"spoken": "...", "summary": ["..."], "has_health_note": true|false}.',
     "spoken is English, at most 2 sentences: visit pattern, tastes and what to mention.",
     "Never write any health condition, allergy or product to avoid in spoken or summary.",
     "summary lists the practical points, longest first; has_health_note mirrors the record.",
-    `When a health note exists, end spoken with exactly: "${pronoun} also has a health note; it's on screen."`,
+    "When a health note exists, end spoken with exactly: \"There is also a health note; it's on screen.\"",
   ].join(" ");
 }
 
@@ -176,10 +177,26 @@ export class GlimmerLoadingError extends Error {
   }
 }
 
+/**
+ * The model does not always honor the exact health line (it keeps the old
+ * "He/She also has" shape on its own), so the tail is enforced here: any
+ * trailing variant becomes the one neutral sentence. Never adds one.
+ */
+export function normalizeBriefSpoken(spoken: string): string {
+  const exact = "There is also a health note; it's on screen.";
+  if (spoken.trimEnd().endsWith(exact)) return spoken;
+  const stripped = spoken.replace(
+    /\s*(?:He|She|There is|There)\s+also has a health note[^.]*\.?\s*$/i,
+    "",
+  );
+  if (stripped === spoken) return spoken;
+  const separator = stripped.endsWith(" ") || stripped === "" ? "" : " ";
+  return `${stripped}${separator}${exact}`;
+}
+
 /** One Glimmer call with the fixed schema; throws when unusable. */
 export async function fetchClientBrief(
   record: BriefRecord,
-  sex: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ brief: ClientBrief; ms: number }> {
   const base = process.env.GLIMMER_URL?.trim() ?? "";
@@ -192,7 +209,7 @@ export async function fetchClientBrief(
     body: JSON.stringify({
       model: GLIMMER_MODEL,
       messages: [
-        { role: "system", content: buildBriefSystemPrompt(sex) },
+        { role: "system", content: buildBriefSystemPrompt() },
         { role: "user", content: buildBriefUserPrompt(record) },
       ],
       max_tokens: 1024,
@@ -222,7 +239,7 @@ export async function fetchClientBrief(
   }
   const brief = parseBriefJson(parsed);
   if (!brief) throw new Error("private model returned no usable brief");
-  return { brief, ms: Date.now() - started };
+  return { brief: { ...brief, spoken: normalizeBriefSpoken(brief.spoken) }, ms: Date.now() - started };
 }
 
 /** Lowercase alphanumeric tokens, short glue words dropped. */
@@ -333,16 +350,13 @@ export async function refreshClientBrief(
   if (!glimmerConfigured()) return null;
   const record = briefSourceRecord(db, clientId);
   if (!record) return null;
-  const client = db.prepare("SELECT sex FROM clients WHERE id = ?").get(clientId) as
-    | { sex?: string }
-    | undefined;
   const tries = options.retryLoading === false ? 1 : REFRESH_ATTEMPTS;
   const baseDelay = options.retryDelayMs ?? 15000;
   const source = options.source ?? "refresh";
   let regenerated = false;
   for (let attempt = 0; attempt < tries; attempt += 1) {
     try {
-      const { brief, ms } = await fetchClientBrief(record, client?.sex ?? "", fetchImpl);
+      const { brief, ms } = await fetchClientBrief(record, fetchImpl);
       if (!briefLeaksHealth(brief, record)) {
         const stored = storeBrief(db, clientId, brief, hash, ms);
         logGlimmer({ clientId, source, result: regenerated ? "leak-regenerated" : "stored", ms });

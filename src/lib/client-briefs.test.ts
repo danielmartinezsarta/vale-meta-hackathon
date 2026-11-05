@@ -20,6 +20,7 @@ import {
   getStoredBrief,
   glimmerConfigured,
   logBriefCacheHit,
+  normalizeBriefSpoken,
   parseBriefJson,
   precomputeBriefsForClients,
   refreshClientBrief,
@@ -27,7 +28,7 @@ import {
 } from "./client-briefs";
 
 const BRIEF = {
-  spoken: "David comes every 3 weeks. He also has a health note; it's on screen.",
+  spoken: "David comes every 3 weeks. There is also a health note; it's on screen.",
   summary: ["Prefers dark matte designs", "Hockey fan, ask about the Rangers"],
   has_health_note: true,
 };
@@ -309,11 +310,28 @@ describe("client briefs store", () => {
     expect(prompt).not.toContain("+1-555-0101");
     expect(prompt).not.toContain("david@example.com");
     expect(prompt).not.toContain("1990-04-17");
-    expect(buildBriefSystemPrompt("male")).toContain("He also has a health note; it's on screen.");
-    expect(buildBriefSystemPrompt("female")).toContain("She also has a health note; it's on screen.");
-    expect(buildBriefSystemPrompt("")).not.toContain("latex");
+    // One consistent reference: the template never guesses a pronoun from
+    // the record, so a client with no recorded sex reads the same as any
+    // other (Nina's brief mixed "she" from her note with a default "He").
+    const system = buildBriefSystemPrompt();
+    expect(system).toContain("There is also a health note; it's on screen.");
+    expect(system).not.toMatch(/\b(He|She) also has a health note/);
+    expect(system).not.toContain("latex");
     expect(BRIEF_LABEL).toBe("Prepared privately by Muse Glimmer (open weights)");
     db.close();
+  });
+
+  it("enforces the neutral health line no matter which pronoun the model used", () => {
+    expect(normalizeBriefSpoken("Tastes vary. There is also a health note; it's on screen.")).toBe(
+      "Tastes vary. There is also a health note; it's on screen.",
+    );
+    expect(normalizeBriefSpoken("Tastes vary. He also has a health note; it's on screen.")).toBe(
+      "Tastes vary. There is also a health note; it's on screen.",
+    );
+    expect(normalizeBriefSpoken("Tastes vary. She also has a health note; it's on screen.")).toBe(
+      "Tastes vary. There is also a health note; it's on screen.",
+    );
+    expect(normalizeBriefSpoken("Tastes vary, nothing else.")).toBe("Tastes vary, nothing else.");
   });
 
   it("sends the fixed schema over the Modal endpoint", async () => {
@@ -322,7 +340,7 @@ describe("client briefs store", () => {
     const seen: { url: string; auth: string; body: string }[] = [];
     vi.stubEnv("GLIMMER_URL", "https://glimmer.test/");
     vi.stubEnv("GLIMMER_TOKEN", "secret");
-    const { brief } = await fetchClientBrief(record, "male", glimmerFetch(seen) as unknown as typeof fetch);
+    const { brief } = await fetchClientBrief(record, glimmerFetch(seen) as unknown as typeof fetch);
     expect(brief).toEqual(BRIEF);
     const body = JSON.parse(seen[0].body) as { model: string; response_format: unknown };
     expect(body.model).toBe("muse-glimmer-30B");
