@@ -1,10 +1,15 @@
-// Record the committed demo run: posts the demo phrases as
-// typed turns through the real app, then folds the unified log
-// (data/logs/*.jsonl) into replay/demo-run.json. Run it with the server up:
-//   PORT=3000 npm run dev   # or tsx server.ts with META_API_KEY set
-//   npm run replay:record
-// Meta cap for the whole recording: 0.50 USD. The server must run on a
-// fresh demo database: run npm run db:reset and (re)start the server first,
+// Record the committed demo run: posts the plan phrases as typed turns
+// through the real app, uploads the studio photos through the real
+// /api/session-photo endpoint, then folds the filtered unified log
+// (data/logs/*.jsonl) into replay/demo-run.json.
+//
+// Run it against an isolated server, never :3000 and never the live DB:
+//   VALE_DB_PATH=/tmp/vale-replay.db PORT=3222 npm run db:reset
+//   PORT=3222 VALE_DB_PATH=/tmp/vale-replay.db tsx --env-file=.env server.ts
+//   REPLAY_BASE=http://localhost:3222 VALE_DB_PATH=/tmp/vale-replay.db npm run replay:record
+//
+// Meta cap for the whole recording: 2.00 USD. The server must run on a
+// fresh demo database: run db:reset and (re)start the server first,
 // because replacing the file under a running server breaks its writes.
 // No user audio lands in the replay file: text and payloads only.
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";

@@ -42,8 +42,7 @@ Client records go only to Glimmer, the open-weights model on our deploy. The clo
 
 ## Replay
 
-The demo run file holds recorded turns: transcript, tool call, reply, widget and board, with health notes masked. A replay flag serves that file instead of the mic, and the screen plays it back labeled “Replay: recorded run”. A record script folds fresh live turns into a new run file.
-
+The demo run file holds recorded turns: transcript, tool call, reply, widget and board, with health notes masked. A replay flag serves that file instead of the mic; `npm run demo` plays it through the real app in a headed browser, with a slim pill tracking each scene. A record script folds fresh live turns into a new run file.
 
 
 ## Code map

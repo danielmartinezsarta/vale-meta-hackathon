@@ -43,11 +43,11 @@ Precomputing the private briefs never throws: without Glimmer configured the car
 
 ```bash
 npm install
-cp .env.example .env
-npm run replay
+npm run build
+npm run demo
 ```
 
-This is the clearly labeled mock-data path: it plays `replay/demo-run.json` end to end through the real app. Every reply spoken with the browser voice, every sheet shown, labeled “Replay: recorded run” with turn counters. No key, no network, no secrets in the file (health notes travel masked).
+This is the clearly labeled mock-data path: it plays `replay/demo-run.json` through the real app in a headed browser — open the app, wake Vale, type every recorded turn, one voice at a time. A slim pill tracks the run and prints the scene name per turn. No key needed.
 
 To record a fresh run from live turns, see [recording a replay](#recording-a-replay).
 
@@ -55,15 +55,17 @@ Without a key and without replay, the app says so on screen in the active langua
 
 ## Recording a replay
 
-Needs a running live server with your key, on a fresh database (`npm run db:reset`, then start the server):
+Reset an isolated database and fold the filtered log (never hand-edit the file):
 
 ```bash
-npm run replay:record
+VALE_DB_PATH=/tmp/vale-replay.db PORT=3222 npm run db:reset
+PORT=3222 VALE_DB_PATH=/tmp/vale-replay.db tsx --env-file=.env server.ts
+REPLAY_BASE=http://localhost:3222 VALE_DB_PATH=/tmp/vale-replay.db REPLAY_BANNED_WORDS=... npm run replay:record
 ```
 
-It posts each scripted line as a typed turn through the real app and folds the log into `replay/demo-run.json`, with transcripts, tool calls, answers and widgets, no audio and no secrets.
+`REPLAY_BANNED_WORDS` is an optional comma-separated blocklist (kept in the shell, never committed): the recording fails if a reply contains one of those words.
 
-The run caps itself at 0.50 USD of model calls.
+The run caps itself at 2.00 USD of model calls.
 
 ## Tests
 

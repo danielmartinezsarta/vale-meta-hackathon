@@ -36,15 +36,32 @@ Video: [Watch the 3-minute demo →](https://www.youtube.com/watch?v=eoWEdRfhTug
 
 ## For judges
 
-No key needed: this is the clearly labeled mock-data path. It plays the recorded run end to end, labeled “Replay: recorded run”:
+## Watch the demo without a key
 
-```bash
+`npm run demo` plays the committed run from `replay/demo-run.json`
+through the real app: it starts the keyless replay server on a free port
+and drives a headed browser exactly like the manual steps — open the app,
+wake Vale, type every recorded turn, waiting for her to finish speaking
+and the sheet to show before the next turn. One voice at a time.
+
+```
 npm install
-cp .env.example .env
-VALE_REPLAY=1 npm start
+npm run build
+npm run demo
 ```
 
-The empty `.env` is enough: no key needed.
+To record a new run, reset an isolated database and fold the filtered
+log (never hand-edit the file):
+
+```
+VALE_DB_PATH=/tmp/vale-replay.db PORT=3222 npm run db:reset
+PORT=3222 VALE_DB_PATH=/tmp/vale-replay.db tsx --env-file=.env server.ts
+REPLAY_BASE=http://localhost:3222 VALE_DB_PATH=/tmp/vale-replay.db REPLAY_BANNED_WORDS=... npm run replay:record
+```
+
+`REPLAY_BANNED_WORDS` is an optional comma-separated blocklist (kept in
+the shell, never committed): the recording fails if a reply contains one
+of those words.
 
 With your own Meta key, run it live instead:
 
