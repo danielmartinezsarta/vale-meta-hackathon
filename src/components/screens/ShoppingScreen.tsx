@@ -125,6 +125,7 @@ export function ShoppingScreen({ onBack }: { onBack: () => void }) {
             label="Add item"
             value={pick}
             onChange={setPick}
+            variant="chips"
             options={options.map((row) => ({ value: row.name, label: row.name }))}
           />
         </fieldset>

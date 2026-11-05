@@ -15,15 +15,12 @@ describe("TapToTalk smoke", () => {
     render(<TapToTalk autoStart />);
 
     const buttons = screen.getAllByRole("button");
-    expect(buttons).toHaveLength(4);
+    expect(buttons).toHaveLength(3);
     expect(
       screen.getByRole("button", { name: "Mute Vale" }),
     ).toBeDefined();
     expect(
       screen.getByRole("button", { name: "Mute microphone" }),
-    ).toBeDefined();
-    expect(
-      screen.getByRole("button", { name: "Settings" }),
     ).toBeDefined();
     expect(
       screen.getByRole("button", { name: "Put Vale to sleep" }),

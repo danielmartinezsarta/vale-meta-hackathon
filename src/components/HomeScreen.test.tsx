@@ -36,8 +36,8 @@ describe("HomeScreen (Vale asleep)", () => {
     expect(screen.getByRole("button", { name: "Wake Vale" })).toBeTruthy();
   });
 
-  it("opens the side menu and switches language from it", () => {
-    const { onLanguageChange } = renderHome();
+  it("opens the side menu without language or theme toggles", () => {
+    renderHome();
     fireEvent.click(screen.getByRole("button", { name: "Menu" }));
     expect(screen.getByRole("dialog", { name: "Menu" })).toBeTruthy();
     expect(
@@ -45,10 +45,25 @@ describe("HomeScreen (Vale asleep)", () => {
         .getByRole("dialog", { name: "Menu" })
         .querySelectorAll('path[d="M9 6l6 6-6 6"]').length,
     ).toBe(8);
-    fireEvent.click(screen.getByRole("radio", { name: "ES" }));
-    expect(onLanguageChange).toHaveBeenCalledWith("es");
+    expect(screen.queryByRole("radiogroup")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Close menu" }));
     expect(screen.queryByRole("dialog", { name: "Menu" })).toBeNull();
+  });
+
+  it("switches the app language from Preferences", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })),
+    );
+    try {
+      const { onLanguageChange } = renderHome();
+      fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+      fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
+      fireEvent.click(await screen.findByRole("radio", { name: "ES" }));
+      expect(onLanguageChange).toHaveBeenCalledWith("es");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("wakes Vale from the sleeper button", () => {

@@ -32,7 +32,6 @@ export interface UiStrings {
   micBlockedIPhone: string;
   micBlockedChrome: string;
   micError: string;
-  settings: string;
   voiceEngine: string;
   browserVoice: string;
   seamlessVoice: string;
@@ -91,7 +90,6 @@ const EN: UiStrings = {
     "Chrome: tap the lock (or tune) icon left of the address bar, choose Microphone > Allow, then reload.",
   micError:
     "Something went wrong with the microphone. Check that one is connected and reload.",
-  settings: "Settings",
   voiceEngine: "Voice",
   browserVoice: "Browser",
   seamlessVoice: "Seamless (open model)",
@@ -156,7 +154,6 @@ const ES: UiStrings = {
     "Chrome: toca el candado (o el icono de ajuste) junto a la barra de direcciones, elige Micrófono > Permitir, luego recarga.",
   micError:
     "Algo falló con el micrófono. Revisa que haya uno conectado y recarga.",
-  settings: "Ajustes",
   voiceEngine: "Voz",
   browserVoice: "Navegador",
   seamlessVoice: "Seamless (modelo abierto)",

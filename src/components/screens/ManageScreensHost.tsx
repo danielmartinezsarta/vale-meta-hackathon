@@ -23,7 +23,7 @@ export function ManageScreensHost({
   name: string;
   onBack: () => void;
   language: ValeLanguage;
-  onLanguageChange?: (next: ValeLanguage) => void;
+  onLanguageChange: (next: ValeLanguage) => void;
 }) {
   switch (name) {
     case "Agenda":
@@ -45,7 +45,7 @@ export function ManageScreensHost({
         <PreferencesScreen
           onBack={onBack}
           language={language}
-          onLanguageChange={onLanguageChange ?? (() => {})}
+          onLanguageChange={onLanguageChange}
         />
       );
     default:
