@@ -20,11 +20,13 @@ export function SegmentedControl<T extends string>({
   options,
   value,
   onChange,
+  variant,
 }: {
   label: string;
   options: SegmentOption<T>[];
   value: T;
   onChange: (next: T) => void;
+  variant?: "track" | "chips";
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const enabled = options.filter((option) => !option.disabled);
@@ -38,7 +40,11 @@ export function SegmentedControl<T extends string>({
   };
 
   return (
-    <div className={styles.seg} role="radiogroup" aria-label={label}>
+    <div
+      className={variant === "chips" ? `${styles.seg} ${styles.chips}` : styles.seg}
+      role="radiogroup"
+      aria-label={label}
+    >
       {options.map((option, index) => {
         const selected = option.value === value;
         const focusable =

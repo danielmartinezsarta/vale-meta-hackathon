@@ -8,8 +8,6 @@ import { PhoneFrame } from "@/components/PhoneFrame";
 import { ManageScreensHost } from "@/components/screens/ManageScreensHost";
 import { useScreenMode } from "@/components/useScreenMode";
 import type { ValeLanguage } from "@/lib/vale-language";
-import { ThemeSwitch } from "./ThemeSwitch";
-import { SegmentedControl } from "./SegmentedControl";
 import type { HomeData } from "@/lib/home-data";
 import styles from "./HomeScreen.module.css";
 
@@ -341,7 +339,12 @@ export function HomeScreen({
             </button>
           </div>
           {screen ? (
-            <ManageScreensHost name={screen} onBack={() => setScreen(null)} language={language} />
+            <ManageScreensHost
+              name={screen}
+              onBack={() => setScreen(null)}
+              language={language}
+              onLanguageChange={onLanguageChange}
+            />
           ) : (
           <ul className={styles.items}>
             {MENU_ITEMS.map((item, index) => (
@@ -380,22 +383,6 @@ export function HomeScreen({
             ))}
           </ul>
           )}
-          <fieldset className={styles.lang}>
-            <legend>Language</legend>
-            <SegmentedControl<ValeLanguage>
-              label="Language"
-              value={language}
-              onChange={onLanguageChange}
-              options={[
-                { value: "en", label: "EN" },
-                { value: "es", label: "ES" },
-              ]}
-            />
-          </fieldset>
-          <fieldset className={styles.lang}>
-            <legend>{ui.theme}</legend>
-            <ThemeSwitch language={language} />
-          </fieldset>
           </nav>
         </div>
       </div>

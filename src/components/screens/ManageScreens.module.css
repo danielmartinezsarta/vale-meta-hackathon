@@ -160,6 +160,32 @@ div.row {
   resize: vertical;
 }
 
+/** Labels inside manage fieldsets align with field labels. */
+.mg legend.h {
+  display: block;
+  margin: 0 0 6px;
+  padding: 0;
+}
+
+.mg fieldset:not(.seg) {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/** Inline quantity field: same paint as field inputs, shrinks in a row. */
+.qty {
+  min-height: 48px;
+  min-width: 0;
+  border-radius: 12px;
+  border: 1px solid var(--vs-line, #b9c8f5);
+  background: var(--vs-bg, #d5e0ff);
+  color: inherit;
+  font: inherit;
+  font-size: 1rem;
+  padding: 10px 12px;
+}
+
 /** Standalone select outside a ManageField: same paint as field inputs. */
 .select {
   min-height: 48px;

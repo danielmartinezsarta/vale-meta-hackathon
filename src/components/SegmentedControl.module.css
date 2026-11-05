@@ -47,4 +47,25 @@
 
 .opt svg {
   display: block;
+  margin: 0 auto;
+}
+
+/** Wrapped chip list: no track, each option is an app chip. */
+.seg.chips {
+  border: 0;
+  padding: 0;
+  gap: 8px;
+  background: none;
+}
+
+.seg.chips .opt {
+  flex: none;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--vs-line, var(--aw-line));
+  border-radius: 12px;
+}
+
+.seg.chips .opt.on {
+  border-color: transparent;
 }

@@ -202,13 +202,13 @@ export function ServicesScreen({ onBack }: { onBack: () => void }) {
             </div>
           ))}
           <div className={styles.inline}>
-            <select className={styles.select} aria-label="Supply" value={lineSupply} onChange={(event) => setLineSupply(event.target.value)} style={{ flex: 2, minHeight: 48 }}>
+            <select className={styles.select} aria-label="Supply" value={lineSupply} onChange={(event) => setLineSupply(event.target.value)} style={{ flex: 2, minHeight: 48, minWidth: 0 }}>
               <option value="">Select a supply</option>
               {supplies.map((supply) => (
                 <option key={supply.id} value={supply.name}>{supply.name}</option>
               ))}
             </select>
-            <input aria-label="Quantity" type="number" min="0" step="any" value={lineQty} onChange={(event) => setLineQty(event.target.value)} style={{ flex: 1, minHeight: 48 }} />
+            <input className={styles.qty} aria-label="Quantity" type="number" min="0" step="any" value={lineQty} onChange={(event) => setLineQty(event.target.value)} style={{ flex: 1 }} />
             <button className={styles.action} style={{ width: "auto", padding: "0 16px" }} type="button" onClick={addLine}>+ Add</button>
           </div>
           {!creating && (
