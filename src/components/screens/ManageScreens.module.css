@@ -112,6 +112,14 @@ div.row {
   min-width: 0;
 }
 
+/** Every text line inside a row wraps inside the card. */
+.row > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .sub {
   display: block;
   font-weight: 400;
